@@ -1,38 +1,34 @@
 """
-Main entry point for showing the functionality in this project.
+Main entry point for the VW California AI Trip Planner.
+
+Orchestrates the B.L.A.S.T. protocol phases and showcases
+project functionality.
 """
 
-from algorithms import binary_search, bubble_sort
+from tools.verify_connections import run_all_handshakes
 
 
-def example_algorithms():
+def example_verify_connections():
     """
-    Example code to showcase binary search and bubble sort algorithms.
+    Phase 2: Link — Run all API handshake verifications.
+
+    Verifies connectivity to:
+    - Google Gemini API (chat completions)
+    - Google Maps Platform (geocoding)
+    - PostgreSQL + PostGIS (database)
     """
-    # Demonstrate bubble sort
-    unsorted_list = [64, 34, 25, 12, 22, 11, 90]
-    print(f"Unsorted list: {unsorted_list}")
-    
-    sorted_list = bubble_sort(unsorted_list)
-    print(f"Sorted list using Bubble Sort: {sorted_list}")
-    
-    # Demonstrate binary search
-    target_value = 25
-    print(f"\nSearching for {target_value} in the sorted list...")
-    
-    index = binary_search(sorted_list, target_value)
-    if index != -1:
-        print(f"Target {target_value} found at index: {index}")
-    else:
-        print(f"Target {target_value} not found in the list.")
+    results, all_passed = run_all_handshakes()
+    return results, all_passed
 
 
 def main():
     """
     Main execution method.
     """
-    print("--- Algorithm Examples ---\n")
-    example_algorithms()
+    print("🚐 VW California AI Trip Planner")
+    print("=" * 55)
+    print()
+    example_verify_connections()
 
 
 if __name__ == "__main__":

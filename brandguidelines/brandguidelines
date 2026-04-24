@@ -1,0 +1,33 @@
+Colors
+Primary:
+#001E50
+Secondary:
+#000E26
+Accent:
+#0000EE
+Background:
+#FFFFFF
+Text Primary:
+#000000
+Link:
+#0000EE
+Fonts
+vw-text(body)
+Helvetica(body)
+Arial(body)
+vw-head(heading)
+Typography
+primary: vw-text
+heading: vw-head
+h1: 51.936px
+h2: 38.048px
+body: 20px
+Spacing
+Base Unit:
+4
+Border Radius:
+8px
+Personality
+Tone: professional
+Energy: medium
+Audience: consumers interested in Volkswagen vehicles

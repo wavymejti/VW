@@ -1,0 +1,27 @@
+# =============================================================
+# VW California AI Trip Planner — Python Dependencies
+# =============================================================
+
+# Environment & configuration
+python-dotenv>=1.0.0
+
+# Google Gemini API client
+google-genai>=1.0.0
+
+# Google Maps API client
+googlemaps>=4.10.0
+
+# PostgreSQL driver with PostGIS support
+psycopg2-binary>=2.9.9
+SQLAlchemy>=2.0.0
+GeoAlchemy2>=0.14.0
+
+# EXIF extraction for Travel Memory
+Pillow>=10.0.0
+exifread>=3.0.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Testing
+pytest>=8.0.0
