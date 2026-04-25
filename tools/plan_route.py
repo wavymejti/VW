@@ -2,7 +2,7 @@
 Route planning tool for the VW California AI Trip Planner.
 
 Generates a multi-day driving itinerary with waypoints,
-campground stops, and daily schedules.
+campground stops, daily schedules, and precise route polylines.
 
 See: architecture/routing_sop.md
 """
@@ -56,6 +56,7 @@ def plan_route(
 
     total_duration_hours = total_route["duration_hours"]
     total_distance_km = total_route["distance_km"]
+    legs = total_route.get("legs", [])
 
     # Validate feasibility
     if total_duration_hours > num_days * max_daily_drive_hours:
@@ -69,19 +70,17 @@ def plan_route(
             ),
         }
 
-    # Step 2: Divide route into daily segments
-    daily_drive_hours = total_duration_hours / num_days
-    daily_km = total_distance_km / num_days
-
-    # Step 3: Calculate intermediate stopping points
-    # Interpolate points along the route for overnight stops
-    intermediate_points = _interpolate_stops(
-        origin, destination, num_days
+    # Step 2: Divide route into daily segments using actual steps
+    total_duration_s = total_duration_hours * 3600
+    intermediate_points = _interpolate_stops_along_route(
+        legs, total_duration_s, num_days
     )
 
-    # Step 4: Find campgrounds at each stopping point
+    # Step 3: Find campgrounds and precise daily routes
     daily_schedules = []
     start = datetime.strptime(start_date, "%Y-%m-%d")
+
+    client = get_maps_client()
 
     for day_num in range(1, num_days + 1):
         day_date = start + timedelta(days=day_num - 1)
@@ -108,8 +107,32 @@ def plan_route(
                 vw_compatible=True,
                 limit=1,
             )
-            if camping_results["results"]:
+            if camping_results.get("results"):
                 overnight_camping = camping_results["results"][0]
+
+        # Get exact directions for this day
+        target_end = overnight_camping if overnight_camping else day_end
+        try:
+            day_directions = client.directions(
+                origin=f"{day_start['lat']},{day_start['lng']}",
+                destination=f"{target_end['lat']},{target_end['lng']}",
+                mode="driving"
+            )
+            if day_directions:
+                day_route = day_directions[0]
+                day_legs = day_route.get("legs", [])
+                day_distance_km = sum(l["distance"]["value"] for l in day_legs) / 1000
+                day_duration_hours = sum(l["duration"]["value"] for l in day_legs) / 3600
+                route_polyline = day_route["overview_polyline"]["points"]
+            else:
+                day_distance_km = total_distance_km / num_days
+                day_duration_hours = total_duration_hours / num_days
+                route_polyline = None
+        except Exception as e:
+            print(f"Failed to get daily route for day {day_num}: {e}")
+            day_distance_km = total_distance_km / num_days
+            day_duration_hours = total_duration_hours / num_days
+            route_polyline = None
 
         # Build waypoints for this day
         waypoints = [
@@ -148,15 +171,16 @@ def plan_route(
             "id": str(uuid.uuid4()),
             "day_number": day_num,
             "date": day_date.strftime("%Y-%m-%d"),
-            "driving_hours": round(daily_drive_hours, 1),
-            "driving_km": round(daily_km, 1),
+            "driving_hours": round(day_duration_hours, 1),
+            "driving_km": round(day_distance_km, 1),
             "waypoints": waypoints,
             "overnight_camping": overnight_camping,
+            "route_polyline": route_polyline,
         }
 
         daily_schedules.append(schedule)
 
-    # Step 5: Build trip object
+    # Step 4: Build trip object
     trip = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -170,11 +194,11 @@ def plan_route(
             start + timedelta(days=num_days - 1)
         ).strftime("%Y-%m-%d"),
         "status": "planned",
-        "total_driving_hours": round(total_duration_hours, 1),
-        "total_driving_km": round(total_distance_km, 1),
+        "total_driving_hours": round(sum(d["driving_hours"] for d in daily_schedules), 1),
+        "total_driving_km": round(sum(d["driving_km"] for d in daily_schedules), 1),
     }
 
-    # Step 6: Persist to database if user_id provided
+    # Step 5: Persist to database if user_id provided
     if user_id:
         _persist_trip(trip, daily_schedules)
 
@@ -182,8 +206,8 @@ def plan_route(
         "status": "success",
         "trip": trip,
         "daily_schedules": daily_schedules,
-        "total_driving_hours": round(total_duration_hours, 1),
-        "total_driving_km": round(total_distance_km, 1),
+        "total_driving_hours": trip["total_driving_hours"],
+        "total_driving_km": trip["total_driving_km"],
     }
 
 
@@ -193,7 +217,7 @@ def _compute_total_route(origin, destination):
     using Google Maps Directions API.
 
     Returns:
-        dict: Route info with distance_km and duration_hours.
+        dict: Route info with distance_km, duration_hours, and legs.
     """
     try:
         client = get_maps_client()
@@ -227,6 +251,7 @@ def _compute_total_route(origin, destination):
             "status": "success",
             "distance_km": total_distance_m / 1000,
             "duration_hours": total_duration_s / 3600,
+            "legs": legs,
         }
 
     except Exception as e:
@@ -236,34 +261,48 @@ def _compute_total_route(origin, destination):
         }
 
 
-def _interpolate_stops(origin, destination, num_days):
+def _interpolate_stops_along_route(legs, total_duration_s, num_days):
     """
-    Calculate intermediate stopping points by linear
-    interpolation between origin and destination.
+    Find intermediate stopping points by accumulating driving time 
+    along actual route steps.
 
     Args:
-        origin (dict): Origin coordinates.
-        destination (dict): Destination coordinates.
+        legs (list): Route legs from Google Maps Directions API.
+        total_duration_s (int): Total route duration in seconds.
         num_days (int): Number of travel days.
 
     Returns:
-        list: List of intermediate point dicts
-              (num_days - 1 points).
+        list: List of intermediate point dicts (num_days - 1 points).
     """
+    if num_days <= 1:
+        return []
+
+    target_interval = total_duration_s / num_days
     points = []
-    for i in range(1, num_days):
-        fraction = i / num_days
-        lat = origin["lat"] + (
-            destination["lat"] - origin["lat"]
-        ) * fraction
-        lng = origin["lng"] + (
-            destination["lng"] - origin["lng"]
-        ) * fraction
-        points.append({
-            "label": f"Waypoint {i}",
-            "lat": round(lat, 6),
-            "lng": round(lng, 6),
-        })
+    current_time = 0
+    current_target = target_interval
+    
+    for leg in legs:
+        for step in leg.get("steps", []):
+            step_duration = step["duration"]["value"]
+            current_time += step_duration
+            
+            if current_time >= current_target:
+                # We reached or passed the target time for this day.
+                points.append({
+                    "label": f"Waypoint {len(points) + 1}",
+                    "lat": step["end_location"]["lat"],
+                    "lng": step["end_location"]["lng"],
+                })
+                current_target += target_interval
+                
+                if len(points) == num_days - 1:
+                    return points
+                    
+    # Fallback if we didn't get enough points
+    while len(points) < num_days - 1:
+        points.append(points[-1] if points else {"label": "Fallback", "lat": 0, "lng": 0})
+        
     return points
 
 
@@ -324,26 +363,23 @@ def _persist_trip(trip, daily_schedules):
                             (id, trip_id, day_number,
                              schedule_date, driving_hours,
                              driving_km, waypoints,
-                             overnight_camping_id)
+                             overnight_camping_id, route_polyline)
                         VALUES
                             (:id, :trip_id, :day_number,
                              :schedule_date, :driving_hours,
                              :driving_km, :waypoints::jsonb,
-                             :camping_id)
+                             :camping_id, :route_polyline)
                     """),
                     {
                         "id": schedule["id"],
                         "trip_id": trip["id"],
                         "day_number": schedule["day_number"],
                         "schedule_date": schedule["date"],
-                        "driving_hours": schedule[
-                            "driving_hours"
-                        ],
+                        "driving_hours": schedule["driving_hours"],
                         "driving_km": schedule["driving_km"],
-                        "waypoints": json.dumps(
-                            schedule["waypoints"]
-                        ),
+                        "waypoints": json.dumps(schedule["waypoints"]),
                         "camping_id": camping_id,
+                        "route_polyline": schedule.get("route_polyline"),
                     },
                 )
 
@@ -387,6 +423,7 @@ if __name__ == "__main__":
             if day.get("overnight_camping"):
                 print(f"    🏕️  Overnight: "
                       f"{day['overnight_camping']['name']}")
+            print(f"    (Polyline included: {bool(day.get('route_polyline'))})")
             print()
     else:
         print(f"  ❌ {result['message']}")

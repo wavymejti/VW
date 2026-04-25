@@ -8,7 +8,7 @@ Tests:
 """
 
 import pytest
-from tools.plan_route import plan_route, _interpolate_stops
+from tools.plan_route import plan_route, _interpolate_stops_along_route
 
 
 class TestPlanRoute:
@@ -16,28 +16,24 @@ class TestPlanRoute:
 
     def test_interpolate_stops_count(self):
         """Should generate num_days - 1 intermediate points."""
-        origin = {"label": "A", "lat": 48.0, "lng": 11.0}
-        destination = {"label": "B", "lat": 43.0, "lng": 16.0}
-
-        points = _interpolate_stops(origin, destination, 5)
-        assert len(points) == 4  # 5 days → 4 stops
+        legs = [{"steps": [{"duration": {"value": 3600}, "end_location": {"lat": 1.0, "lng": 1.0}} for _ in range(5)]}]
+        points = _interpolate_stops_along_route(legs, 5 * 3600, 5)
+        assert len(points) == 4
 
     def test_interpolate_stops_midpoint(self):
-        """Midpoint should be the average of origin + dest."""
-        origin = {"label": "A", "lat": 0.0, "lng": 0.0}
-        destination = {"label": "B", "lat": 10.0, "lng": 10.0}
-
-        points = _interpolate_stops(origin, destination, 2)
+        """Midpoint should pick the step exactly when target interval is reached."""
+        legs = [{"steps": [
+            {"duration": {"value": 3600}, "end_location": {"lat": 5.0, "lng": 5.0}},
+            {"duration": {"value": 3600}, "end_location": {"lat": 10.0, "lng": 10.0}}
+        ]}]
+        points = _interpolate_stops_along_route(legs, 7200, 2)
         assert len(points) == 1
         assert abs(points[0]["lat"] - 5.0) < 0.001
-        assert abs(points[0]["lng"] - 5.0) < 0.001
 
     def test_interpolate_single_day(self):
         """One-day trip should have zero intermediate stops."""
-        origin = {"label": "A", "lat": 48.0, "lng": 11.0}
-        destination = {"label": "B", "lat": 43.0, "lng": 16.0}
-
-        points = _interpolate_stops(origin, destination, 1)
+        legs = [{"steps": [{"duration": {"value": 3600}, "end_location": {"lat": 1.0, "lng": 1.0}}]}]
+        points = _interpolate_stops_along_route(legs, 3600, 1)
         assert len(points) == 0
 
     def test_plan_route_valid(self):

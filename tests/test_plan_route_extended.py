@@ -18,7 +18,7 @@ class TestPlanRouteExtended:
     @patch("tools.plan_route._compute_total_route")
     def test_plan_route_infeasible(self, mock_compute):
         # Requires 30 hours, but only 2 days * 6 hours = 12 hours available
-        mock_compute.return_value = {"status": "success", "duration_hours": 30.0, "distance_km": 3000.0}
+        mock_compute.return_value = {"status": "success", "duration_hours": 30.0, "distance_km": 3000.0, "legs": []}
         
         origin = {"label": "A", "lat": 0, "lng": 0}
         destination = {"label": "B", "lat": 1, "lng": 1}
@@ -47,11 +47,16 @@ class TestPlanRouteExtended:
         assert res["status"] == "error"
         assert "Route computation failed" in res["message"]
 
+    @patch("tools.plan_route.get_maps_client")
     @patch("tools.plan_route.search_campings")
     @patch("tools.plan_route._compute_total_route")
     @patch("tools.plan_route._persist_trip")
-    def test_plan_route_with_persistence(self, mock_persist, mock_compute, mock_search):
-        mock_compute.return_value = {"status": "success", "duration_hours": 10.0, "distance_km": 1000.0}
+    def test_plan_route_with_persistence(self, mock_persist, mock_compute, mock_search, mock_get_client):
+        mock_compute.return_value = {"status": "success", "duration_hours": 10.0, "distance_km": 1000.0, "legs": [{"steps": [{"duration": {"value": 18000}, "end_location": {"lat": 0.5, "lng": 0.5}}]}]}
+        
+        mock_client = MagicMock()
+        mock_client.directions.return_value = [{"legs": [{"duration": {"value": 18000}, "distance": {"value": 500000}}], "overview_polyline": {"points": "encoded_string"}}]
+        mock_get_client.return_value = mock_client
         
         # Will find a camping for intermediate stops
         mock_search.return_value = {

@@ -8,7 +8,7 @@ const state = {
     currentMode: 'planning',    // 'planning' | 'memory'
     map: null,                   // Google Maps instance
     markers: [],                 // Active map markers
-    routePolyline: null,         // Active route line
+    routePolylines: [],          // Active route lines
     currentTrip: null,           // Current trip data
     chatHistory: [],             // Chat messages
     isTyping: false,             // AI typing state
@@ -73,10 +73,10 @@ function initMap() {
 function clearMapOverlays() {
     state.markers.forEach(m => m.setMap(null));
     state.markers = [];
-    if (state.routePolyline) {
-        state.routePolyline.setMap(null);
-        state.routePolyline = null;
+    if (state.routePolylines) {
+        state.routePolylines.forEach(p => p.setMap(null));
     }
+    state.routePolylines = [];
 }
 
 function clearCampingMarkers() {
@@ -112,20 +112,32 @@ function addMarker(lat, lng, title, icon, label) {
     return marker;
 }
 
-function drawRoute(waypoints, color = '#001E50') {
-    if (state.routePolyline) {
-        state.routePolyline.setMap(null);
-    }
+function drawDailyRoutes(daily_schedules, color = '#001E50') {
+    if (!state.routePolylines) state.routePolylines = [];
+    
+    state.routePolylines.forEach(p => p.setMap(null));
+    state.routePolylines = [];
 
-    const path = waypoints.map(wp => ({ lat: wp.lat, lng: wp.lng }));
+    daily_schedules.forEach(day => {
+        let path = [];
+        // Decode precise path if available
+        if (day.route_polyline && google.maps.geometry && google.maps.geometry.encoding) {
+            path = google.maps.geometry.encoding.decodePath(day.route_polyline);
+        } else {
+            // Fallback to straight lines
+            path = day.waypoints.map(wp => ({ lat: wp.lat, lng: wp.lng }));
+        }
 
-    state.routePolyline = new google.maps.Polyline({
-        path: path,
-        geodesic: true,
-        strokeColor: color,
-        strokeOpacity: 0.85,
-        strokeWeight: 4,
-        map: state.map,
+        const polyline = new google.maps.Polyline({
+            path: path,
+            geodesic: true,
+            strokeColor: color,
+            strokeOpacity: 0.85,
+            strokeWeight: 4,
+            map: state.map,
+        });
+        
+        state.routePolylines.push(polyline);
     });
 }
 
@@ -167,9 +179,9 @@ function displayTripOnMap(tripData) {
         });
     });
 
-    // Draw route line
-    if (allWaypoints.length > 1) {
-        drawRoute(allWaypoints);
+    // Draw precise daily route lines
+    if (daily_schedules && daily_schedules.length > 0) {
+        drawDailyRoutes(daily_schedules);
     }
 
     // Update trip info card
