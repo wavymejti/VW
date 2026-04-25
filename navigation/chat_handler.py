@@ -304,3 +304,49 @@ if __name__ == "__main__":
 
         result = send_message(session, user_input)
         print(f"\nAssistant: {result['text']}\n")
+                        (id, trip_id, role, content, tool_calls)
+                    VALUES
+                        (:id, :trip_id, :role, :content,
+                         :tool_calls::jsonb)
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "trip_id": trip_id,
+                    "role": role,
+                    "content": content,
+                    "tool_calls": json.dumps(
+                        tool_calls or [], default=str
+                    ),
+                },
+            )
+            conn.commit()
+    except Exception as e:
+        # Non-critical — log but don't fail
+        print(f"  ⚠️  Failed to store message: {e}")
+
+
+if __name__ == "__main__":
+    # Interactive chat demo
+    print("🚐 VW California Trip Planner — Chat Demo")
+    print("=" * 55)
+    print("Type your trip planning questions below.")
+    print("Type 'quit' to exit.\n")
+
+    session = create_chat_session()
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n\nGoodbye! 🚐")
+            break
+
+        if user_input.lower() in ("quit", "exit", "q"):
+            print("\nGoodbye! 🚐")
+            break
+
+        if not user_input:
+            continue
+
+        result = send_message(session, user_input)
+        print(f"\nAssistant: {result['text']}\n")

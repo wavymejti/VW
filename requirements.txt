@@ -5,8 +5,8 @@
 # Environment & configuration
 python-dotenv>=1.0.0
 
-# OpenAI API client
-openai>=1.0.0
+# Google Gemini API client
+google-genai>=1.0.0
 
 # Google Maps API client
 googlemaps>=4.10.0
