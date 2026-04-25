@@ -505,4 +505,49 @@ document.addEventListener('DOMContentLoaded', () => {
     photoInput.addEventListener('change', () => {
         handlePhotoUpload(photoInput.files);
     });
+
+    // Generate Summary
+    const btnGenerateSummary = document.getElementById('btn-generate-summary');
+    const summaryModal = document.getElementById('summary-modal');
+    const summaryClose = document.getElementById('summary-close-btn');
+    const summaryCarousel = document.getElementById('summary-carousel');
+    const summaryLoading = document.getElementById('summary-loading');
+
+    btnGenerateSummary.addEventListener('click', async () => {
+        if (!state.currentTrip) {
+            alert("Please plan a trip first before generating a summary!");
+            return;
+        }
+
+        // Show loading state
+        summaryModal.style.display = 'flex';
+        summaryCarousel.innerHTML = '';
+        summaryLoading.style.display = 'block';
+
+        const result = await apiCall('generate_summary', {
+            trip_id: state.currentTrip.trip.id,
+            format: 'image_slideshow'
+        });
+
+        summaryLoading.style.display = 'none';
+
+        if (result.status === 'success' && result.all_slides) {
+            result.all_slides.forEach(slideUrl => {
+                const img = document.createElement('img');
+                img.src = slideUrl;
+                img.style.maxHeight = '70vh';
+                img.style.scrollSnapAlign = 'center';
+                img.style.borderRadius = '8px';
+                img.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+                summaryCarousel.appendChild(img);
+            });
+        } else {
+            alert(result.message || "Failed to generate summary.");
+            summaryModal.style.display = 'none';
+        }
+    });
+
+    summaryClose.addEventListener('click', () => {
+        summaryModal.style.display = 'none';
+    });
 });

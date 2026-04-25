@@ -11,13 +11,14 @@ Usage:
 import os
 import json
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from navigation.chat_handler import create_chat_session, send_message
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo
+from tools.generate_summary import generate_summary
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +66,17 @@ def index():
         "index.html",
         google_maps_key=os.getenv("GOOGLE_MAPS_API_KEY", ""),
     )
+
+
+@app.route("/summaries/<path:filename>")
+def serve_summary(filename):
+    """Serve generated summary images/files."""
+    summary_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ".tmp",
+        "summaries",
+    )
+    return send_from_directory(summary_dir, filename)
 
 
 # ── API Routes ────────────────────────────────────────────────
@@ -196,6 +208,42 @@ def api_upload_photo():
         filepath=filepath,
         user_id=DEFAULT_USER_ID,
     )
+
+    return jsonify(result)
+
+
+@app.route("/api/generate_summary", methods=["POST"])
+def api_generate_summary():
+    """
+    Generate a visual trip summary.
+
+    Expects JSON with trip_id and optional format.
+    """
+    data = request.get_json()
+    trip_id = data.get("trip_id")
+
+    if not trip_id:
+        return jsonify({
+            "status": "error",
+            "message": "trip_id is required.",
+        }), 400
+
+    format = data.get("format", "image_slideshow")
+
+    result = generate_summary(
+        trip_id=trip_id,
+        format=format,
+    )
+
+    # Convert absolute paths to frontend-accessible relative URLs
+    if result["status"] == "success":
+        if result.get("file_url"):
+            result["file_url"] = f"/summaries/{os.path.basename(result['file_url'])}"
+        if result.get("all_slides"):
+            result["all_slides"] = [
+                f"/summaries/{os.path.basename(path)}"
+                for path in result["all_slides"]
+            ]
 
     return jsonify(result)
 
