@@ -19,7 +19,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Default model for all interactions
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 # VW brand system prompt for all chat interactions
 SYSTEM_PROMPT = (

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="VW California AI Trip Planner — Plan your camper van adventure with AI-powered route planning, campground discovery, and travel memories.">
+    <title>VW California — AI Trip Planner</title>
+
+    <!-- VW Brand Design System -->
+    <link rel="stylesheet" href="/static/styles.css">
+
+    <!-- Google Maps JavaScript SDK -->
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>
+</head>
+<body>
+
+<div id="app">
+
+    <!-- ═══════════════════════════════════════════════════════
+         Sidebar — Chat & Travel Memory
+         ═══════════════════════════════════════════════════════ -->
+    <aside id="sidebar">
+
+        <!-- Logo -->
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">VW</div>
+                <div class="logo-text">
+                    California Trip Planner
+                    <span>AI-Powered Adventure</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mode Tabs -->
+        <div class="mode-tabs">
+            <button class="mode-tab active" data-mode="planning" id="tab-planning">
+                <span class="tab-icon">🗺️</span> Planning
+            </button>
+            <button class="mode-tab" data-mode="memory" id="tab-memory">
+                <span class="tab-icon">📸</span> Memory
+            </button>
+        </div>
+
+        <!-- Sidebar Content -->
+        <div class="sidebar-content">
+
+            <!-- ── Planning Mode (Chat) ───────────────────── -->
+            <div class="chat-panel" id="planning-panel">
+
+                <!-- Chat Messages Area -->
+                <div class="chat-messages" id="chat-messages">
+
+                    <!-- Welcome Screen -->
+                    <div class="chat-welcome" id="chat-welcome">
+                        <span class="welcome-icon">🚐</span>
+                        <h3>Ready to explore?</h3>
+                        <p>Tell me about your dream trip and I'll plan the perfect VW California adventure.</p>
+
+                        <div class="quick-actions">
+                            <button class="quick-action" data-prompt="Plan a 5-day trip from Munich to Croatia with stops at scenic locations">
+                                <span class="action-icon">🏔️</span> Munich → Croatia road trip
+                            </button>
+                            <button class="quick-action" data-prompt="Find campgrounds with power and showers near Lake Bled, Slovenia">
+                                <span class="action-icon">🏕️</span> Find camping near Lake Bled
+                            </button>
+                            <button class="quick-action" data-prompt="Show me VW-compatible campsites along the Adriatic coast under 30 euros per night">
+                                <span class="action-icon">🌊</span> Adriatic coast campsites
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Typing Indicator -->
+                    <div class="typing-indicator" id="typing-indicator">
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                    </div>
+                </div>
+
+                <!-- Chat Input -->
+                <div class="chat-input-wrapper">
+                    <div class="chat-input-container">
+                        <textarea id="chat-input"
+                                  placeholder="Plan a trip, find campgrounds..."
+                                  rows="1"
+                                  aria-label="Chat input"></textarea>
+                        <button class="send-btn" id="send-btn" aria-label="Send message">
+                            ➤
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Travel Memory Mode ─────────────────────── -->
+            <div class="memory-panel" id="memory-panel">
+                <div class="memory-header">
+                    <div class="upload-zone" id="upload-zone">
+                        <span class="upload-icon">📷</span>
+                        <p>Drop photos here or click to upload</p>
+                        <input type="file" id="photo-upload"
+                               accept="image/*" multiple
+                               style="display: none;">
+                    </div>
+                </div>
+                <div class="photo-grid" id="photo-grid">
+                    <!-- Photos will be dynamically inserted here -->
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+    <!-- ═══════════════════════════════════════════════════════
+         Map Area
+         ═══════════════════════════════════════════════════════ -->
+    <main id="map-container">
+        <div id="map"></div>
+
+        <!-- Map Overlay Controls -->
+        <div class="map-overlay">
+            <button class="map-control-btn" id="btn-center-map"
+                    aria-label="Center map" title="Center map">
+                ◎
+            </button>
+            <button class="map-control-btn" id="btn-toggle-campings"
+                    aria-label="Toggle campgrounds" title="Show campgrounds">
+                🏕️
+            </button>
+        </div>
+
+        <!-- Trip Info Card (shown when a trip is planned) -->
+        <div class="trip-info-card" id="trip-info-card">
+            <div class="trip-info-header">
+                <h3 id="trip-title">—</h3>
+                <button class="trip-info-close" id="trip-info-close">✕</button>
+            </div>
+            <div class="trip-stats">
+                <div class="trip-stat">
+                    <span class="stat-value" id="stat-days">—</span>
+                    <span class="stat-label">Days</span>
+                </div>
+                <div class="trip-stat">
+                    <span class="stat-value" id="stat-km">—</span>
+                    <span class="stat-label">Kilometers</span>
+                </div>
+                <div class="trip-stat">
+                    <span class="stat-value" id="stat-hours">—</span>
+                    <span class="stat-label">Driving</span>
+                </div>
+                <div class="trip-stat">
+                    <span class="stat-value" id="stat-campings">—</span>
+                    <span class="stat-label">Stops</span>
+                </div>
+            </div>
+            <div class="day-cards" id="day-cards">
+                <!-- Day cards will be dynamically inserted -->
+            </div>
+        </div>
+    </main>
+
+</div>
+
+<!-- Application Logic -->
+<script src="/static/app.js"></script>
+
+</body>
+</html>
