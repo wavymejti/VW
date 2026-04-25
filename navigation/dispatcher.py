@@ -67,145 +67,154 @@ def dispatch(function_name, arguments):
         }
 
 
-# ── Gemini Tool Definitions ────────────────────────────────
-# These are the schema definitions passed to Gemini's
+# ── OpenAI Tool Definitions ────────────────────────────────
+# These are the schema definitions passed to OpenAI's
 # Function Calling so it knows what tools are available.
 # ────────────────────────────────────────────────────────────
 
-GEMINI_TOOL_DEFINITIONS = [
+OPENAI_TOOL_DEFINITIONS = [
     {
-        "name": "search_campings",
-        "description": (
-            "Search for campgrounds near a given location. "
-            "Filters by amenities, cost, and VW California "
-            "vehicle compatibility."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "lat": {
-                    "type": "number",
-                    "description": "Latitude of search center.",
+        "type": "function",
+        "function": {
+            "name": "search_campings",
+            "description": (
+                "Search for campgrounds near a given location. "
+                "Filters by amenities, cost, and VW California "
+                "vehicle compatibility."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lat": {
+                        "type": "number",
+                        "description": "Latitude of search center.",
+                    },
+                    "lng": {
+                        "type": "number",
+                        "description": "Longitude of search center.",
+                    },
+                    "radius_km": {
+                        "type": "number",
+                        "description": (
+                            "Search radius in kilometers. "
+                            "Default: 50."
+                        ),
+                    },
+                    "amenities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Required amenities: power, water, "
+                            "wifi, showers, toilets, waste_disposal."
+                        ),
+                    },
+                    "max_cost_eur": {
+                        "type": "number",
+                        "description": (
+                            "Maximum cost per night in EUR."
+                        ),
+                    },
+                    "vw_compatible": {
+                        "type": "boolean",
+                        "description": (
+                            "Only show VW California compatible "
+                            "campgrounds. Default: true."
+                        ),
+                    },
                 },
-                "lng": {
-                    "type": "number",
-                    "description": "Longitude of search center.",
-                },
-                "radius_km": {
-                    "type": "number",
-                    "description": (
-                        "Search radius in kilometers. "
-                        "Default: 50."
-                    ),
-                },
-                "amenities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Required amenities: power, water, "
-                        "wifi, showers, toilets, waste_disposal."
-                    ),
-                },
-                "max_cost_eur": {
-                    "type": "number",
-                    "description": (
-                        "Maximum cost per night in EUR."
-                    ),
-                },
-                "vw_compatible": {
-                    "type": "boolean",
-                    "description": (
-                        "Only show VW California compatible "
-                        "campgrounds. Default: true."
-                    ),
-                },
+                "required": ["lat", "lng"],
             },
-            "required": ["lat", "lng"],
-        },
+        }
     },
     {
-        "name": "plan_route",
-        "description": (
-            "Plan a multi-day driving route with campground "
-            "stops. Generates daily schedules with waypoints "
-            "and driving time estimates."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "origin": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "lat": {"type": "number"},
-                        "lng": {"type": "number"},
+        "type": "function",
+        "function": {
+            "name": "plan_route",
+            "description": (
+                "Plan a multi-day driving route with campground "
+                "stops. Generates daily schedules with waypoints "
+                "and driving time estimates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "origin": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "lat": {"type": "number"},
+                            "lng": {"type": "number"},
+                        },
+                        "required": ["label", "lat", "lng"],
+                        "description": "Starting location.",
                     },
-                    "required": ["label", "lat", "lng"],
-                    "description": "Starting location.",
-                },
-                "destination": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "lat": {"type": "number"},
-                        "lng": {"type": "number"},
+                    "destination": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "lat": {"type": "number"},
+                            "lng": {"type": "number"},
+                        },
+                        "required": ["label", "lat", "lng"],
+                        "description": "Ending location.",
                     },
-                    "required": ["label", "lat", "lng"],
-                    "description": "Ending location.",
+                    "num_days": {
+                        "type": "integer",
+                        "description": "Number of travel days.",
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": (
+                            "Trip start date in YYYY-MM-DD format."
+                        ),
+                    },
+                    "max_daily_drive_hours": {
+                        "type": "number",
+                        "description": (
+                            "Maximum driving hours per day. "
+                            "Default: 6."
+                        ),
+                    },
+                    "preferred_amenities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Preferred camping amenities."
+                        ),
+                    },
+                    "budget_per_night_eur": {
+                        "type": "number",
+                        "description": (
+                            "Maximum nightly budget in EUR."
+                        ),
+                    },
                 },
-                "num_days": {
-                    "type": "integer",
-                    "description": "Number of travel days.",
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": (
-                        "Trip start date in YYYY-MM-DD format."
-                    ),
-                },
-                "max_daily_drive_hours": {
-                    "type": "number",
-                    "description": (
-                        "Maximum driving hours per day. "
-                        "Default: 6."
-                    ),
-                },
-                "preferred_amenities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Preferred camping amenities."
-                    ),
-                },
-                "budget_per_night_eur": {
-                    "type": "number",
-                    "description": (
-                        "Maximum nightly budget in EUR."
-                    ),
-                },
+                "required": [
+                    "origin", "destination", "num_days",
+                    "start_date",
+                ],
             },
-            "required": [
-                "origin", "destination", "num_days",
-                "start_date",
-            ],
-        },
+        }
     },
     {
-        "name": "get_trip_summary",
-        "description": (
-            "Retrieve the current trip overview, including "
-            "all daily schedules, campgrounds, and driving "
-            "statistics."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "trip_id": {
-                    "type": "string",
-                    "description": "UUID of the trip.",
+        "type": "function",
+        "function": {
+            "name": "get_trip_summary",
+            "description": (
+                "Retrieve the current trip overview, including "
+                "all daily schedules, campgrounds, and driving "
+                "statistics."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {
+                        "type": "string",
+                        "description": "UUID of the trip.",
+                    },
                 },
+                "required": ["trip_id"],
             },
-            "required": ["trip_id"],
-        },
+        }
     },
 ]

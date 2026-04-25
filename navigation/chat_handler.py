@@ -1,8 +1,8 @@
 """
-Gemini chat handler for the VW California AI Trip Planner.
+OpenAI chat handler for the VW California AI Trip Planner.
 
 Manages the conversational flow between the user and the
-Gemini AI model, dispatching function calls to tools via
+OpenAI model, dispatching function calls to tools via
 the dispatcher.
 
 See: architecture/chat_orchestration_sop.md
@@ -12,21 +12,19 @@ import json
 import uuid
 from datetime import datetime
 
-from google import genai
-from google.genai import types
 from sqlalchemy import text
 
-from tools.gemini_client import get_client, SYSTEM_PROMPT, MODEL_NAME
+from tools.openai_client import get_client, SYSTEM_PROMPT, MODEL_NAME
 from tools.db import get_engine
 from navigation.dispatcher import (
     dispatch,
-    GEMINI_TOOL_DEFINITIONS,
+    OPENAI_TOOL_DEFINITIONS,
 )
 
 
 def create_chat_session(trip_id=None):
     """
-    Create a new chat session with Gemini, configured with
+    Create a new chat session with OpenAI, configured with
     VW trip planning tools.
 
     Args:
@@ -36,25 +34,18 @@ def create_chat_session(trip_id=None):
         dict: Session info with client and config.
     """
     client = get_client()
+    tools = OPENAI_TOOL_DEFINITIONS
 
-    # Convert tool definitions to Gemini format
-    function_declarations = []
-    for tool_def in GEMINI_TOOL_DEFINITIONS:
-        function_declarations.append(
-            types.FunctionDeclaration(
-                name=tool_def["name"],
-                description=tool_def["description"],
-                parameters=tool_def["parameters"],
-            )
-        )
-
-    tools = [types.Tool(function_declarations=function_declarations)]
+    # Initialize history with system prompt
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT}
+    ]
 
     return {
         "client": client,
         "tools": tools,
         "trip_id": trip_id,
-        "history": [],
+        "history": history,
     }
 
 
@@ -77,41 +68,25 @@ def send_message(session, user_message, trip_id=None):
     if effective_trip_id:
         _store_message(effective_trip_id, "user", user_message)
 
-    # Build conversation contents
-    contents = []
-
-    # Add history
-    for msg in session["history"]:
-        contents.append(msg)
-
-    # Add new user message
-    contents.append(
-        types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=user_message)],
-        )
+    # Append user message to history
+    session["history"].append(
+        {"role": "user", "content": user_message}
     )
 
     try:
         client = session["client"]
 
-        # Send to Gemini with tools
-        response = client.models.generate_content(
+        # Send to OpenAI with tools
+        response = client.chat.completions.create(
             model=MODEL_NAME,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                tools=session["tools"],
-            ),
+            messages=session["history"],
+            tools=session["tools"],
         )
 
         # Process the response
         result = _process_response(
-            session, response, contents, effective_trip_id
+            session, response, effective_trip_id
         )
-
-        # Update history
-        session["history"] = contents
 
         return result
 
@@ -127,14 +102,13 @@ def send_message(session, user_message, trip_id=None):
         }
 
 
-def _process_response(session, response, contents, trip_id):
+def _process_response(session, response, trip_id):
     """
-    Process Gemini response, handling function calls if present.
+    Process OpenAI response, handling function calls if present.
 
     Args:
         session (dict): Active chat session.
-        response: Gemini API response.
-        contents (list): Conversation contents.
+        response: OpenAI API response.
         trip_id (str): Trip UUID.
 
     Returns:
@@ -142,17 +116,14 @@ def _process_response(session, response, contents, trip_id):
     """
     tool_calls = []
 
+    message = response.choices[0].message
+    
     # Check if response contains function calls
-    candidate = response.candidates[0]
-    parts = candidate.content.parts
-
-    function_call_parts = [
-        p for p in parts if p.function_call is not None
-    ]
-
-    if not function_call_parts:
+    if not message.tool_calls:
         # Text-only response
-        response_text = response.text
+        response_text = message.content
+        session["history"].append({"role": "assistant", "content": response_text})
+
         if trip_id:
             _store_message(trip_id, "assistant", response_text)
         return {
@@ -162,17 +133,18 @@ def _process_response(session, response, contents, trip_id):
         }
 
     # Process function calls
-    # Add model's response to contents
-    contents.append(candidate.content)
+    # Add model's response to history
+    session["history"].append(message.model_dump(exclude_unset=True))
 
-    function_response_parts = []
+    for tc in message.tool_calls:
+        fn_name = tc.function.name
+        
+        try:
+            fn_args = json.loads(tc.function.arguments)
+        except json.JSONDecodeError:
+            fn_args = {}
 
-    for part in function_call_parts:
-        fc = part.function_call
-        fn_name = fc.name
-        fn_args = dict(fc.args) if fc.args else {}
-
-        print(f"  🔧 Tool call: {fn_name}({json.dumps(fn_args, default=str)[:100]}...)")
+        print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
 
         # Dispatch to the appropriate tool
         tool_result = dispatch(fn_name, fn_args)
@@ -182,33 +154,25 @@ def _process_response(session, response, contents, trip_id):
             "result": tool_result,
         })
 
-        # Build function response for Gemini
-        function_response_parts.append(
-            types.Part.from_function_response(
-                name=fn_name,
-                response={"result": json.dumps(tool_result, default=str)},
-            )
-        )
+        # Build function response for OpenAI
+        session["history"].append({
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "name": fn_name,
+            "content": json.dumps(tool_result, default=str)
+        })
 
-    # Send function results back to Gemini
-    contents.append(
-        types.Content(
-            role="user",
-            parts=function_response_parts,
-        )
-    )
-
-    # Get final text response from Gemini
+    # Get final text response from OpenAI
     try:
-        final_response = session["client"].models.generate_content(
+        final_response = session["client"].chat.completions.create(
             model=MODEL_NAME,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-            ),
+            messages=session["history"],
+            tools=session["tools"],
         )
 
-        final_text = final_response.text
+        final_message = final_response.choices[0].message
+        final_text = final_message.content
+        session["history"].append({"role": "assistant", "content": final_text})
 
         # Store assistant response with tool calls
         if trip_id:
@@ -234,6 +198,8 @@ def _process_response(session, response, contents, trip_id):
                 summary += (
                     f"error - {tc['result'].get('message', '')}\n"
                 )
+        
+        session["history"].append({"role": "assistant", "content": summary})
 
         return {
             "status": "partial",

@@ -12,8 +12,8 @@ Usage:
 
 import sys
 
-from tools.gemini_client import (
-    verify_connection as verify_gemini,
+from tools.openai_client import (
+    verify_connection as verify_openai,
 )
 from tools.maps_client import (
     verify_connection as verify_maps,
@@ -31,18 +31,18 @@ def run_all_handshakes():
     results = {}
     all_passed = True
 
-    # ── Gemini API ──────────────────────────────────────────
+    # ── OpenAI API ──────────────────────────────────────────
     print("=" * 55)
-    print("🔗 [1/3] Gemini API Handshake")
+    print("🔗 [1/3] OpenAI API Handshake")
     print("=" * 55)
-    gemini_result = verify_gemini()
-    results["gemini"] = gemini_result
+    openai_result = verify_openai()
+    results["openai"] = openai_result
 
-    if gemini_result["status"] == "connected":
-        print(f"  ✅ Model: {gemini_result['model']}")
-        print(f"  ✅ Response: {gemini_result['response_preview']}")
+    if openai_result["status"] == "connected":
+        print(f"  ✅ Model: {openai_result['model']}")
+        print(f"  ✅ Response: {openai_result['response_preview']}")
     else:
-        print(f"  ❌ {gemini_result['message']}")
+        print(f"  ❌ {openai_result['message']}")
         all_passed = False
 
     print()

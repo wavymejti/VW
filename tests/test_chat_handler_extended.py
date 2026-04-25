@@ -9,7 +9,7 @@ class TestChatHandlerExtended:
         session = create_chat_session(trip_id="test-trip")
         
         mock_client = MagicMock()
-        mock_client.models.generate_content.side_effect = Exception("API limit reached")
+        mock_client.chat.completions.create.side_effect = Exception("API limit reached")
         
         session["client"] = mock_client
         
@@ -26,25 +26,27 @@ class TestChatHandlerExtended:
         session = create_chat_session()
         
         # We need a response with a function call
-        mock_part = MagicMock()
-        mock_part.function_call = MagicMock()
-        mock_part.function_call.name = "search_campings"
-        mock_part.function_call.args = {}
+        mock_tc = MagicMock()
+        mock_tc.id = "call_123"
+        mock_tc.function.name = "search_campings"
+        mock_tc.function.arguments = "{}"
         
-        mock_candidate = MagicMock()
-        mock_candidate.content.parts = [mock_part]
+        mock_message = MagicMock()
+        mock_message.tool_calls = [mock_tc]
+        # mock_dump must be provided for message.model_dump()
+        mock_message.model_dump.return_value = {"role": "assistant", "tool_calls": [{"id": "call_123", "type": "function", "function": {"name": "search_campings", "arguments": "{}"}}]}
         
         mock_response = MagicMock()
-        mock_response.candidates = [mock_candidate]
+        mock_response.choices = [MagicMock(message=mock_message)]
         
         mock_dispatch.return_value = {"status": "success"}
         
         # Setup the client to fail on the SECOND call (final response)
         mock_client = MagicMock()
-        mock_client.models.generate_content.side_effect = Exception("Second try failed")
+        mock_client.chat.completions.create.side_effect = Exception("Second try failed")
         session["client"] = mock_client
         
-        result = _process_response(session, mock_response, [], trip_id="trip-1")
+        result = _process_response(session, mock_response, trip_id="trip-1")
         assert result["status"] == "partial"
         assert "Here's what I found" in result["text"]
         
