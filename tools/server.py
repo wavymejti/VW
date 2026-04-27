@@ -203,10 +203,14 @@ def api_upload_photo():
     filepath = os.path.join(tmp_dir, photo_file.filename)
     photo_file.save(filepath)
 
+    # Optional trip_id from frontend
+    trip_id = request.form.get("trip_id")
+
     # Process the photo
     result = store_photo(
         filepath=filepath,
         user_id=DEFAULT_USER_ID,
+        trip_id=trip_id,
     )
 
     return jsonify(result)

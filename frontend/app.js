@@ -421,6 +421,9 @@ async function handlePhotoUpload(files) {
         // Upload to server
         const formData = new FormData();
         formData.append('photo', file);
+        if (state.currentTrip && state.currentTrip.trip) {
+            formData.append('trip_id', state.currentTrip.trip.id);
+        }
 
         try {
             const response = await fetch(`${API_BASE}/api/upload_photo`, {
@@ -431,7 +434,12 @@ async function handlePhotoUpload(files) {
 
             // If photo has GPS, add marker to map
             if (result.photo && result.photo.lat && result.photo.lng) {
-                addMarker(result.photo.lat, result.photo.lng, file.name, null, '📷');
+                let markerLabel = '📷';
+                if (result.linked && result.photo.day_number) {
+                    markerLabel = `Day ${result.photo.day_number} 📷`;
+                    card.innerHTML += `<div style="position: absolute; top: 8px; right: 8px; background: #00875A; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; z-index: 10;">Day ${result.photo.day_number}</div>`;
+                }
+                addMarker(result.photo.lat, result.photo.lng, file.name, null, markerLabel);
             }
         } catch (error) {
             console.error('Upload failed:', error);

@@ -349,11 +349,81 @@ def store_photo(filepath, user_id, trip_id=None):
     except Exception as e:
         print(f"  ⚠️  Failed to store photo: {e}")
 
+    # Auto-link the photo if possible
+    link_info = _auto_link_photo(photo["id"], user_id, trip_id)
+    if link_info:
+        photo["trip_id"] = link_info["trip_id"]
+        photo["tagged_day_schedule_id"] = link_info["tagged_day_schedule_id"]
+        photo["day_number"] = link_info["day_number"]
+
     return {
         "status": exif_result.get("status", "success"),
         "photo": photo,
         "message": exif_result.get("message", ""),
+        "linked": bool(link_info)
     }
+
+def _auto_link_photo(photo_id, user_id, trip_id_hint=None):
+    """
+    Attempt to auto-link a photo to a trip and daily schedule
+    based on location proximity and timestamp.
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # Check if photo has location
+            photo_res = conn.execute(
+                text("SELECT lat, lng, captured_at FROM photos WHERE id = :photo_id"),
+                {"photo_id": photo_id}
+            ).fetchone()
+            
+            if not photo_res or photo_res.lat is None or photo_res.lng is None:
+                return None
+                
+            query = """
+                UPDATE photos p
+                SET trip_id = ds.trip_id,
+                    tagged_day_schedule_id = ds.id
+                FROM daily_schedules ds
+                JOIN trips t ON t.id = ds.trip_id
+                WHERE p.id = :photo_id
+                  AND t.user_id = :user_id
+                  AND ds.route_polyline IS NOT NULL
+                  -- Temporal filter if captured_at exists
+                  AND (
+                      p.captured_at IS NULL OR
+                      (p.captured_at >= t.start_date AND p.captured_at < t.end_date + interval '1 day')
+                  )
+                  -- Spatial filter (5km threshold)
+                  AND ST_DWithin(
+                      p.location,
+                      ST_LineFromEncodedPolyline(ds.route_polyline, 5)::geography,
+                      5000
+                  )
+            """
+            
+            params = {"photo_id": photo_id, "user_id": user_id}
+            if trip_id_hint:
+                query += " AND t.id = :trip_id_hint"
+                params["trip_id_hint"] = trip_id_hint
+                
+            query += " RETURNING ds.trip_id, ds.id, ds.day_number;"
+            
+            result = conn.execute(text(query), params).fetchone()
+            conn.commit()
+            
+            if result:
+                print(f"  🔗 Auto-linked to Trip {result[0]}, Day {result[2]}")
+                return {
+                    "trip_id": str(result[0]),
+                    "tagged_day_schedule_id": str(result[1]),
+                    "day_number": result[2]
+                }
+            return None
+            
+    except Exception as e:
+        print(f"  ⚠️ Auto-linking failed: {e}")
+        return None
 
 
 if __name__ == "__main__":
