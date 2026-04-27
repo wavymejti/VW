@@ -33,7 +33,7 @@ async function apiCall(endpoint, data = {}) {
 }
 
 // ── Map Initialization ───────────────────────────────────────
-function initMap() {
+window.initMap = function() {
     // Center on Central Europe (VW California territory)
     state.map = new google.maps.Map(document.getElementById('map'), {
         center: { lat: 47.5, lng: 13.0 },

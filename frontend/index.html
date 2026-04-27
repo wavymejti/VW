@@ -9,8 +9,7 @@
     <!-- VW Brand Design System -->
     <link rel="stylesheet" href="/static/styles.css">
 
-    <!-- Google Maps JavaScript SDK -->
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>
+    <!-- Google Maps script moved to end of body -->
 </head>
 <body>
 
@@ -24,7 +23,7 @@
         <!-- Logo -->
         <div class="sidebar-header">
             <div class="logo">
-                <div class="logo-icon">VW</div>
+                <img src="/static/vw-logo-2x.png" alt="Volkswagen Logo" class="logo-image">
                 <div class="logo-text">
                     California Trip Planner
                     <span>AI-Powered Adventure</span>
@@ -181,6 +180,9 @@
 
 <!-- Application Logic -->
 <script src="/static/app.js"></script>
+
+<!-- Google Maps JavaScript SDK -->
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>
 
 </body>
 </html>

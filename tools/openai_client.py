@@ -19,7 +19,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Default model for all interactions
-MODEL_NAME = "gpt-4o-mini"
+MODEL_NAME = "gpt-5.4-mini"
 
 # VW brand system prompt for all chat interactions
 SYSTEM_PROMPT = (

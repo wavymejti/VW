@@ -159,17 +159,10 @@ input, textarea {
     gap: var(--sp-3);
 }
 
-.logo-icon {
-    width: 40px;
+.logo-image {
     height: 40px;
-    background: var(--vw-accent);
-    border-radius: var(--radius);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.3rem;
-    color: white;
-    font-weight: 700;
+    width: auto;
+    object-fit: contain;
 }
 
 .logo-text {

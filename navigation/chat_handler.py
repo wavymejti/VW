@@ -142,7 +142,15 @@ def _process_response(session, response, trip_id):
         try:
             fn_args = json.loads(tc.function.arguments)
         except json.JSONDecodeError:
-            fn_args = {}
+            try:
+                import ast
+                # gpt-4o-mini sometimes outputs Python dict string instead of JSON
+                # or adds trailing commas. ast.literal_eval can parse some of these.
+                cleaned = tc.function.arguments.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+                fn_args = ast.literal_eval(cleaned)
+            except Exception:
+                print(f"  ⚠️ Failed to parse JSON or AST: {tc.function.arguments}")
+                fn_args = {}
 
         print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
 
