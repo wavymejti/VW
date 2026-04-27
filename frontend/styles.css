@@ -1,0 +1,785 @@
+/* =============================================================
+   VW California AI Trip Planner — Design System
+   Based on VW Brand Guidelines
+   ============================================================= */
+
+/* ── CSS Custom Properties (Design Tokens) ────────────────── */
+:root {
+    /* Colors */
+    --vw-primary: #001E50;
+    --vw-secondary: #000E26;
+    --vw-accent: #0040C1;
+    --vw-accent-hover: #0050E0;
+    --vw-link: #0000EE;
+    --vw-bg: #FFFFFF;
+    --vw-bg-alt: #F4F6F9;
+    --vw-bg-dark: #0A1628;
+    --vw-text: #000000;
+    --vw-text-secondary: #4A5568;
+    --vw-text-light: #FFFFFF;
+    --vw-text-muted: #8896A7;
+    --vw-border: #DFE3EA;
+    --vw-border-light: #EDF0F5;
+    --vw-success: #00875A;
+    --vw-warning: #E6A817;
+    --vw-error: #CC3340;
+
+    /* Surfaces */
+    --vw-surface-glass: rgba(255, 255, 255, 0.88);
+    --vw-surface-dark-glass: rgba(0, 30, 80, 0.92);
+    --vw-shadow-sm: 0 1px 3px rgba(0, 14, 38, 0.08);
+    --vw-shadow-md: 0 4px 16px rgba(0, 14, 38, 0.10);
+    --vw-shadow-lg: 0 8px 32px rgba(0, 14, 38, 0.14);
+    --vw-shadow-xl: 0 16px 48px rgba(0, 14, 38, 0.18);
+
+    /* Typography */
+    --vw-font-body: 'vw-text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --vw-font-heading: 'vw-head', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --vw-text-h1: 2.8rem;
+    --vw-text-h2: 2rem;
+    --vw-text-h3: 1.4rem;
+    --vw-text-body: 1rem;
+    --vw-text-sm: 0.875rem;
+    --vw-text-xs: 0.75rem;
+
+    /* Spacing (4px base) */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-8: 32px;
+    --sp-10: 40px;
+    --sp-12: 48px;
+    --sp-16: 64px;
+
+    /* Layout */
+    --sidebar-width: 380px;
+    --header-height: 64px;
+    --radius: 8px;
+    --radius-sm: 4px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-full: 9999px;
+
+    /* Transitions */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+    --duration-fast: 150ms;
+    --duration-normal: 250ms;
+    --duration-slow: 400ms;
+}
+
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: var(--vw-font-body);
+    font-size: var(--vw-text-body);
+    color: var(--vw-text);
+    background: var(--vw-bg);
+    line-height: 1.5;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--vw-font-heading);
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+h1 { font-size: var(--vw-text-h1); }
+h2 { font-size: var(--vw-text-h2); }
+h3 { font-size: var(--vw-text-h3); }
+
+a {
+    color: var(--vw-link);
+    text-decoration: none;
+    transition: color var(--duration-fast) var(--ease-out);
+}
+
+a:hover {
+    color: var(--vw-accent-hover);
+}
+
+button {
+    font-family: var(--vw-font-body);
+    cursor: pointer;
+    border: none;
+    outline: none;
+}
+
+input, textarea {
+    font-family: var(--vw-font-body);
+    font-size: var(--vw-text-body);
+}
+
+/* ── App Layout ───────────────────────────────────────────── */
+#app {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+#sidebar {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+    height: 100vh;
+    background: var(--vw-secondary);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10;
+    box-shadow: 4px 0 24px rgba(0, 14, 38, 0.25);
+}
+
+/* Sidebar Header / Logo */
+.sidebar-header {
+    padding: var(--sp-6) var(--sp-6) var(--sp-4);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+}
+
+.logo-image {
+    height: 40px;
+    width: auto;
+    object-fit: contain;
+}
+
+.logo-text {
+    color: var(--vw-text-light);
+    font-family: var(--vw-font-heading);
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.logo-text span {
+    color: var(--vw-text-muted);
+    font-weight: 400;
+    font-size: var(--vw-text-sm);
+    display: block;
+    margin-top: -2px;
+}
+
+/* Mode Tabs */
+.mode-tabs {
+    display: flex;
+    gap: var(--sp-1);
+    padding: var(--sp-4) var(--sp-6);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.mode-tab {
+    flex: 1;
+    padding: var(--sp-3) var(--sp-4);
+    background: transparent;
+    color: var(--vw-text-muted);
+    border-radius: var(--radius);
+    font-size: var(--vw-text-sm);
+    font-weight: 600;
+    text-align: center;
+    transition: all var(--duration-normal) var(--ease-out);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+}
+
+.mode-tab:hover {
+    color: var(--vw-text-light);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.mode-tab.active {
+    background: var(--vw-accent);
+    color: white;
+    box-shadow: 0 2px 12px rgba(0, 64, 193, 0.4);
+}
+
+.mode-tab .tab-icon {
+    font-size: 1rem;
+}
+
+/* Sidebar Content Areas */
+.sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.sidebar-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-full);
+}
+
+/* ── Chat Panel ───────────────────────────────────────────── */
+.chat-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--sp-4) var(--sp-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+}
+
+.chat-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-full);
+}
+
+/* Message Bubbles */
+.message {
+    max-width: 92%;
+    animation: messageSlideIn var(--duration-normal) var(--ease-out);
+}
+
+@keyframes messageSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message.user {
+    align-self: flex-end;
+}
+
+.message.assistant {
+    align-self: flex-start;
+}
+
+.message-bubble {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius-lg);
+    font-size: var(--vw-text-sm);
+    line-height: 1.6;
+    position: relative;
+}
+
+.message.user .message-bubble {
+    background: var(--vw-accent);
+    color: white;
+    border-bottom-right-radius: var(--radius-sm);
+}
+
+.message.assistant .message-bubble {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--vw-text-light);
+    border-bottom-left-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.message-meta {
+    font-size: var(--vw-text-xs);
+    color: var(--vw-text-muted);
+    margin-top: var(--sp-1);
+    padding: 0 var(--sp-1);
+}
+
+.message.user .message-meta {
+    text-align: right;
+}
+
+/* Welcome Message */
+.chat-welcome {
+    text-align: center;
+    padding: var(--sp-10) var(--sp-6);
+    color: var(--vw-text-muted);
+}
+
+.chat-welcome .welcome-icon {
+    font-size: 3rem;
+    margin-bottom: var(--sp-4);
+    display: block;
+}
+
+.chat-welcome h3 {
+    color: var(--vw-text-light);
+    margin-bottom: var(--sp-2);
+    font-size: var(--vw-text-h3);
+}
+
+.chat-welcome p {
+    font-size: var(--vw-text-sm);
+    line-height: 1.6;
+    max-width: 280px;
+    margin: 0 auto var(--sp-6);
+}
+
+.quick-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    max-width: 280px;
+    margin: 0 auto;
+}
+
+.quick-action {
+    padding: var(--sp-3) var(--sp-4);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius);
+    color: var(--vw-text-light);
+    font-size: var(--vw-text-sm);
+    text-align: left;
+    transition: all var(--duration-fast) var(--ease-out);
+}
+
+.quick-action:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: var(--vw-accent);
+    transform: translateX(4px);
+}
+
+.quick-action .action-icon {
+    margin-right: var(--sp-2);
+}
+
+/* Chat Input */
+.chat-input-wrapper {
+    padding: var(--sp-4) var(--sp-6) var(--sp-6);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chat-input-container {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--sp-2);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-2);
+    transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.chat-input-container:focus-within {
+    border-color: var(--vw-accent);
+    box-shadow: 0 0 0 3px rgba(0, 64, 193, 0.15);
+}
+
+#chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--vw-text-light);
+    padding: var(--sp-2) var(--sp-3);
+    font-size: var(--vw-text-sm);
+    resize: none;
+    min-height: 40px;
+    max-height: 120px;
+    line-height: 1.5;
+    outline: none;
+}
+
+#chat-input::placeholder {
+    color: var(--vw-text-muted);
+}
+
+.send-btn {
+    width: 40px;
+    height: 40px;
+    background: var(--vw-accent);
+    color: white;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    transition: all var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
+}
+
+.send-btn:hover {
+    background: var(--vw-accent-hover);
+    transform: scale(1.05);
+}
+
+.send-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Typing Indicator */
+.typing-indicator {
+    display: none;
+    align-self: flex-start;
+    padding: var(--sp-3) var(--sp-4);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-lg);
+    border-bottom-left-radius: var(--radius-sm);
+}
+
+.typing-indicator.visible {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.typing-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--vw-text-muted);
+    border-radius: 50%;
+    animation: typingBounce 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Travel Memory Panel ──────────────────────────────────── */
+.memory-panel {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+}
+
+.memory-panel.active {
+    display: flex;
+}
+
+.memory-header {
+    padding: var(--sp-4) var(--sp-6);
+}
+
+.upload-zone {
+    border: 2px dashed rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-8) var(--sp-4);
+    text-align: center;
+    color: var(--vw-text-muted);
+    cursor: pointer;
+    transition: all var(--duration-normal) var(--ease-out);
+}
+
+.upload-zone:hover {
+    border-color: var(--vw-accent);
+    background: rgba(0, 64, 193, 0.06);
+    color: var(--vw-text-light);
+}
+
+.upload-zone .upload-icon {
+    font-size: 2rem;
+    display: block;
+    margin-bottom: var(--sp-2);
+}
+
+.upload-zone p {
+    font-size: var(--vw-text-sm);
+}
+
+.photo-grid {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--sp-4) var(--sp-6);
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--sp-3);
+    align-content: start;
+}
+
+.photo-card {
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 1;
+    background: rgba(255, 255, 255, 0.04);
+    position: relative;
+    cursor: pointer;
+    transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.photo-card:hover {
+    transform: scale(1.03);
+}
+
+.photo-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.photo-card .photo-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: var(--sp-2) var(--sp-3);
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+    color: white;
+    font-size: var(--vw-text-xs);
+}
+
+/* ── Map Container ────────────────────────────────────────── */
+#map-container {
+    flex: 1;
+    position: relative;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+}
+
+/* Map Overlay Controls */
+.map-overlay {
+    position: absolute;
+    top: var(--sp-4);
+    right: var(--sp-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    z-index: 5;
+}
+
+.map-control-btn {
+    width: 44px;
+    height: 44px;
+    background: var(--vw-surface-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--vw-border-light);
+    border-radius: var(--radius);
+    color: var(--vw-primary);
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--vw-shadow-md);
+    transition: all var(--duration-fast) var(--ease-out);
+}
+
+.map-control-btn:hover {
+    background: var(--vw-bg);
+    box-shadow: var(--vw-shadow-lg);
+    transform: scale(1.05);
+}
+
+/* Trip Info Card (floating on map) */
+.trip-info-card {
+    position: absolute;
+    bottom: var(--sp-6);
+    left: var(--sp-6);
+    right: var(--sp-6);
+    background: var(--vw-surface-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--vw-border-light);
+    border-radius: var(--radius-xl);
+    padding: var(--sp-5) var(--sp-6);
+    box-shadow: var(--vw-shadow-xl);
+    z-index: 5;
+    display: none;
+    animation: slideUp var(--duration-slow) var(--ease-out);
+}
+
+.trip-info-card.visible {
+    display: block;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.trip-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--sp-3);
+}
+
+.trip-info-header h3 {
+    color: var(--vw-primary);
+    font-size: 1.1rem;
+}
+
+.trip-info-close {
+    width: 28px;
+    height: 28px;
+    background: var(--vw-bg-alt);
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    color: var(--vw-text-secondary);
+    transition: background var(--duration-fast) var(--ease-out);
+}
+
+.trip-info-close:hover {
+    background: var(--vw-border);
+}
+
+.trip-stats {
+    display: flex;
+    gap: var(--sp-6);
+}
+
+.trip-stat {
+    display: flex;
+    flex-direction: column;
+}
+
+.trip-stat .stat-value {
+    font-family: var(--vw-font-heading);
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--vw-primary);
+}
+
+.trip-stat .stat-label {
+    font-size: var(--vw-text-xs);
+    color: var(--vw-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* ── Day Schedule Cards ───────────────────────────────────── */
+.day-cards {
+    display: flex;
+    gap: var(--sp-3);
+    margin-top: var(--sp-4);
+    overflow-x: auto;
+    padding-bottom: var(--sp-2);
+}
+
+.day-cards::-webkit-scrollbar {
+    height: 3px;
+}
+
+.day-cards::-webkit-scrollbar-thumb {
+    background: var(--vw-border);
+    border-radius: var(--radius-full);
+}
+
+.day-card {
+    flex: 0 0 200px;
+    background: var(--vw-bg-alt);
+    border-radius: var(--radius);
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--vw-border-light);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-out);
+}
+
+.day-card:hover {
+    border-color: var(--vw-accent);
+    box-shadow: var(--vw-shadow-sm);
+}
+
+.day-card.active {
+    border-color: var(--vw-accent);
+    background: rgba(0, 64, 193, 0.06);
+}
+
+.day-card .day-number {
+    font-family: var(--vw-font-heading);
+    font-weight: 700;
+    font-size: var(--vw-text-sm);
+    color: var(--vw-accent);
+    margin-bottom: var(--sp-1);
+}
+
+.day-card .day-label {
+    font-size: var(--vw-text-xs);
+    color: var(--vw-text-secondary);
+}
+
+.day-card .day-stats {
+    display: flex;
+    gap: var(--sp-3);
+    margin-top: var(--sp-2);
+    font-size: var(--vw-text-xs);
+    color: var(--vw-text-muted);
+}
+
+/* ── Loading States ───────────────────────────────────────── */
+.loading-spinner {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--vw-accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+    :root {
+        --sidebar-width: 100vw;
+    }
+
+    #app {
+        flex-direction: column;
+    }
+
+    #sidebar {
+        width: 100%;
+        min-width: 100%;
+        height: 50vh;
+        order: 2;
+    }
+
+    #map-container {
+        height: 50vh;
+        order: 1;
+    }
+}

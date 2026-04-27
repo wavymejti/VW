@@ -1,5 +1,5 @@
 """
-Google Gemini API client for the VW California AI Trip Planner.
+OpenAI API client for the VW California AI Trip Planner.
 
 Provides wrapper functions for:
 - Chat completions with function calling
@@ -10,16 +10,16 @@ Provides wrapper functions for:
 import os
 import sys
 from dotenv import load_dotenv
-from google import genai
+from openai import OpenAI
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Gemini API key from environment
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# OpenAI API key from environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Default model for all interactions
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gpt-5.4-mini"
 
 # VW brand system prompt for all chat interactions
 SYSTEM_PROMPT = (
@@ -37,25 +37,25 @@ SYSTEM_PROMPT = (
 
 def get_client():
     """
-    Create and return a Google GenAI client.
+    Create and return an OpenAI client.
 
     Returns:
-        google.genai.Client: Configured Gemini client.
+        openai.OpenAI: Configured OpenAI client.
 
     Raises:
-        ValueError: If GEMINI_API_KEY is not set.
+        ValueError: If OPENAI_API_KEY is not set.
     """
-    if not GEMINI_API_KEY:
+    if not OPENAI_API_KEY:
         raise ValueError(
-            "GEMINI_API_KEY is not set. "
+            "OPENAI_API_KEY is not set. "
             "Please configure it in your .env file."
         )
-    return genai.Client(api_key=GEMINI_API_KEY)
+    return OpenAI(api_key=OPENAI_API_KEY)
 
 
 def verify_connection():
     """
-    Verify that the Gemini API key is valid by sending
+    Verify that the OpenAI API key is valid by sending
     a minimal generation request.
 
     Returns:
@@ -65,15 +65,17 @@ def verify_connection():
         client = get_client()
 
         # Test with a minimal generation
-        response = client.models.generate_content(
+        response = client.chat.completions.create(
             model=MODEL_NAME,
-            contents="Hello, confirm connection.",
+            messages=[
+                {"role": "user", "content": "Hello, confirm connection."}
+            ]
         )
 
         return {
             "status": "connected",
             "model": MODEL_NAME,
-            "response_preview": response.text[:100],
+            "response_preview": response.choices[0].message.content[:100],
         }
     except ValueError as e:
         return {"status": "error", "message": str(e)}
@@ -83,7 +85,7 @@ def verify_connection():
 
 if __name__ == "__main__":
     # Run as standalone handshake verification
-    print("🔗 Verifying Gemini API connection...")
+    print("🔗 Verifying OpenAI API connection...")
     result = verify_connection()
 
     if result["status"] == "connected":
