@@ -646,27 +646,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryClose = document.getElementById('summary-close-btn');
     const summaryCarousel = document.getElementById('summary-carousel');
     const summaryLoading = document.getElementById('summary-loading');
+    const summaryOptions = document.getElementById('summary-options');
+    const summaryResultView = document.getElementById('summary-result-view');
+    const btnExportSlideshow = document.getElementById('btn-export-slideshow');
+    const btnExportVideo = document.getElementById('btn-export-video');
 
-    btnGenerateSummary.addEventListener('click', async () => {
-        if (!state.currentTrip) {
-            alert("Please plan a trip first before generating a summary!");
-            return;
-        }
-
-        // Show loading state
-        summaryModal.style.display = 'flex';
+    async function triggerSummaryGeneration(format) {
+        summaryOptions.style.display = 'none';
+        summaryResultView.style.display = 'flex';
         summaryCarousel.innerHTML = '';
         summaryLoading.style.display = 'block';
 
         const result = await apiCall('generate_summary', {
             trip_id: state.currentTrip.trip.id,
-            format: 'video'
+            format: format
         });
 
         summaryLoading.style.display = 'none';
 
         if (result.status === 'success') {
-            if (result.summary && result.summary.format === 'video' && result.file_url) {
+            if (format === 'video' && result.file_url) {
                 const video = document.createElement('video');
                 video.src = result.file_url;
                 video.controls = true;
@@ -690,7 +689,20 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(result.message || "Failed to generate summary.");
             summaryModal.style.display = 'none';
         }
+    }
+
+    btnGenerateSummary.addEventListener('click', () => {
+        if (!state.currentTrip) {
+            alert("Please plan a trip first before generating a summary!");
+            return;
+        }
+        summaryModal.style.display = 'flex';
+        summaryOptions.style.display = 'block';
+        summaryResultView.style.display = 'none';
     });
+
+    btnExportSlideshow.addEventListener('click', () => triggerSummaryGeneration('image_slideshow'));
+    btnExportVideo.addEventListener('click', () => triggerSummaryGeneration('video'));
 
     summaryClose.addEventListener('click', () => {
         summaryModal.style.display = 'none';
