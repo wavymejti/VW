@@ -32,6 +32,123 @@ async function apiCall(endpoint, data = {}) {
     }
 }
 
+// ── Auth Elements ─────────────────────────────────────────────
+const authModal = document.getElementById('auth-modal');
+const loginView = document.getElementById('login-view');
+const registerView = document.getElementById('register-view');
+const btnLogin = document.getElementById('btn-login');
+const btnRegister = document.getElementById('btn-register');
+const btnLogout = document.getElementById('btn-logout');
+const linkShowRegister = document.getElementById('link-show-register');
+const linkShowLogin = document.getElementById('link-show-login');
+const authError = document.getElementById('auth-error');
+const userProfile = document.getElementById('user-profile');
+const userDisplayName = document.getElementById('user-display-name');
+
+// ── Authentication Logic ──────────────────────────────────────
+async function checkAuth() {
+    try {
+        const response = await fetch(`${API_BASE}/api/me`);
+        const result = await response.json();
+        
+        if (result.status === 'success' && result.user) {
+            authModal.style.display = 'none';
+            userProfile.style.display = 'block';
+            userDisplayName.textContent = result.user.display_name;
+        } else {
+            authModal.style.display = 'flex';
+            userProfile.style.display = 'none';
+        }
+    } catch (error) {
+        console.error("Auth check failed:", error);
+        authModal.style.display = 'flex';
+    }
+}
+
+linkShowRegister.addEventListener('click', (e) => {
+    e.preventDefault();
+    loginView.style.display = 'none';
+    registerView.style.display = 'block';
+    authError.style.display = 'none';
+});
+
+linkShowLogin.addEventListener('click', (e) => {
+    e.preventDefault();
+    registerView.style.display = 'none';
+    loginView.style.display = 'block';
+    authError.style.display = 'none';
+});
+
+btnLogin.addEventListener('click', async () => {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    if (!email || !password) return;
+    
+    authError.style.display = 'none';
+    btnLogin.disabled = true;
+    btnLogin.textContent = "Logging in...";
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            checkAuth();
+        } else {
+            authError.textContent = result.message || "Login failed";
+            authError.style.display = 'block';
+        }
+    } catch (error) {
+        authError.textContent = "Network error";
+        authError.style.display = 'block';
+    } finally {
+        btnLogin.disabled = false;
+        btnLogin.textContent = "Log In";
+    }
+});
+
+btnRegister.addEventListener('click', async () => {
+    const email = document.getElementById('register-email').value;
+    const password = document.getElementById('register-password').value;
+    const name = document.getElementById('register-name').value;
+    if (!email || !password || !name) return;
+    
+    authError.style.display = 'none';
+    btnRegister.disabled = true;
+    btnRegister.textContent = "Creating...";
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, display_name: name })
+        });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            checkAuth();
+        } else {
+            authError.textContent = result.message || "Registration failed";
+            authError.style.display = 'block';
+        }
+    } catch (error) {
+        authError.textContent = "Network error";
+        authError.style.display = 'block';
+    } finally {
+        btnRegister.disabled = false;
+        btnRegister.textContent = "Create Account";
+    }
+});
+
+btnLogout.addEventListener('click', async () => {
+    await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
+    window.location.reload();
+});
+
 // ── Map Initialization ───────────────────────────────────────
 window.initMap = function() {
     // Center on Central Europe (VW California territory)
@@ -198,9 +315,18 @@ function displayTripOnMap(tripData) {
     daily_schedules.forEach(day => {
         const card = document.createElement('div');
         card.className = 'day-card';
+        
+        const weatherHtml = day.weather ? `
+            <div class="day-weather" title="${day.weather.description}">
+                <span class="weather-icon">${day.weather.description.split(' ').pop()}</span>
+                <span class="weather-temp">${Math.round(day.weather.temp_max)}°C</span>
+            </div>
+        ` : '';
+
         card.innerHTML = `
             <div class="day-number">Day ${day.day_number}</div>
             <div class="day-label">${day.date}</div>
+            ${weatherHtml}
             <div class="day-stats">
                 <span>🚗 ${day.driving_hours}h</span>
                 <span>📏 ${Math.round(day.driving_km)}km</span>
@@ -534,21 +660,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const result = await apiCall('generate_summary', {
             trip_id: state.currentTrip.trip.id,
-            format: 'image_slideshow'
+            format: 'video'
         });
 
         summaryLoading.style.display = 'none';
 
-        if (result.status === 'success' && result.all_slides) {
-            result.all_slides.forEach(slideUrl => {
-                const img = document.createElement('img');
-                img.src = slideUrl;
-                img.style.maxHeight = '70vh';
-                img.style.scrollSnapAlign = 'center';
-                img.style.borderRadius = '8px';
-                img.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
-                summaryCarousel.appendChild(img);
-            });
+        if (result.status === 'success') {
+            if (result.summary && result.summary.format === 'video' && result.file_url) {
+                const video = document.createElement('video');
+                video.src = result.file_url;
+                video.controls = true;
+                video.autoplay = true;
+                video.style.maxHeight = '70vh';
+                video.style.borderRadius = '8px';
+                video.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+                summaryCarousel.appendChild(video);
+            } else if (result.all_slides) {
+                result.all_slides.forEach(slideUrl => {
+                    const img = document.createElement('img');
+                    img.src = slideUrl;
+                    img.style.maxHeight = '70vh';
+                    img.style.scrollSnapAlign = 'center';
+                    img.style.borderRadius = '8px';
+                    img.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+                    summaryCarousel.appendChild(img);
+                });
+            }
         } else {
             alert(result.message || "Failed to generate summary.");
             summaryModal.style.display = 'none';
@@ -559,3 +696,5 @@ document.addEventListener('DOMContentLoaded', () => {
         summaryModal.style.display = 'none';
     });
 });
+// Initialize on load
+checkAuth();

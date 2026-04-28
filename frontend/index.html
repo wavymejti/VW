@@ -29,6 +29,14 @@
                     <span>AI-Powered Adventure</span>
                 </div>
             </div>
+            
+            <!-- User Profile Area -->
+            <div id="user-profile" style="margin-top: 15px; font-size: 14px; display: none; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; color: white;">
+                    <strong id="user-display-name"></strong>
+                    <button id="btn-logout" style="background: none; border: none; color: #4DA1FF; cursor: pointer; padding: 0; font-weight: bold;">Logout</button>
+                </div>
+            </div>
         </div>
 
         <!-- Mode Tabs -->
@@ -175,6 +183,33 @@
     </div>
     <div class="summary-controls" id="summary-controls" style="color: white; margin-top: 10px;">
         <span id="summary-loading" style="display: none;">Generating your adventure summary... 🚐</span>
+    </div>
+</div>
+
+<!-- Auth Modal -->
+<div id="auth-modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,14,38,0.9); z-index: 2000; align-items: center; justify-content: center;">
+    <div style="background: white; border-radius: 8px; padding: 30px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <h2 style="margin-top: 0; color: #001E50; text-align: center; margin-bottom: 20px;">VW Trip Planner</h2>
+        
+        <div id="login-view">
+            <input type="email" id="login-email" placeholder="Email" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
+            <input type="password" id="login-password" placeholder="Password" class="chat-input" style="width: 100%; margin-bottom: 20px; box-sizing: border-box;" />
+            <button id="btn-login" class="btn-primary" style="width: 100%; margin-bottom: 12px;">Log In</button>
+            <div style="text-align: center; font-size: 14px; color: #666;">
+                Don't have an account? <a href="#" id="link-show-register" style="color: #0000EE; text-decoration: none;">Sign Up</a>
+            </div>
+        </div>
+
+        <div id="register-view" style="display: none;">
+            <input type="text" id="register-name" placeholder="Display Name" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
+            <input type="email" id="register-email" placeholder="Email" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
+            <input type="password" id="register-password" placeholder="Password" class="chat-input" style="width: 100%; margin-bottom: 20px; box-sizing: border-box;" />
+            <button id="btn-register" class="btn-primary" style="width: 100%; margin-bottom: 12px;">Create Account</button>
+            <div style="text-align: center; font-size: 14px; color: #666;">
+                Already have an account? <a href="#" id="link-show-login" style="color: #0000EE; text-decoration: none;">Log In</a>
+            </div>
+        </div>
+        <div id="auth-error" style="color: #E2001A; text-align: center; margin-top: 15px; font-size: 14px; display: none;"></div>
     </div>
 </div>
 

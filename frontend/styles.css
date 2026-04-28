@@ -734,8 +734,30 @@ input, textarea {
 }
 
 .day-card .day-label {
-    font-size: var(--vw-text-xs);
+    font-size: var(--vw-text-sm);
     color: var(--vw-text-secondary);
+    margin-bottom: var(--sp-2);
+}
+
+.day-card .day-weather {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+    padding: var(--sp-1) var(--sp-2);
+    background: var(--vw-bg-alt);
+    border-radius: 4px;
+    width: fit-content;
+}
+
+.day-card .weather-icon {
+    font-size: 1.1rem;
+}
+
+.day-card .weather-temp {
+    font-size: var(--vw-text-sm);
+    font-weight: 700;
+    color: var(--vw-primary);
 }
 
 .day-card .day-stats {

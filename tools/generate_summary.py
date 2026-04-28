@@ -12,6 +12,8 @@ See: architecture/summary_export_sop.md
 import os
 import uuid
 import json
+import subprocess
+import requests
 from datetime import datetime
 
 from sqlalchemy import text
@@ -65,16 +67,20 @@ def get_trip_summary(trip_id):
             trip["id"] = str(trip["id"])
             trip["user_id"] = str(trip["user_id"])
 
-            # Fetch daily schedules
+            # Fetch daily schedules with camping info
             sched_rows = conn.execute(
-                text(
-                    "SELECT id, day_number, schedule_date, "
-                    "driving_hours, driving_km, waypoints, "
-                    "overnight_camping_id "
-                    "FROM daily_schedules "
-                    "WHERE trip_id = :tid "
-                    "ORDER BY day_number"
-                ),
+                text("""
+                    SELECT 
+                        ds.id, ds.day_number, ds.schedule_date, 
+                        ds.driving_hours, ds.driving_km, ds.waypoints, 
+                        ds.overnight_camping_id,
+                        c.name as camping_name,
+                        c.photos as camping_photos
+                    FROM daily_schedules ds
+                    LEFT JOIN campings c ON ds.overnight_camping_id = c.id
+                    WHERE ds.trip_id = :tid 
+                    ORDER BY ds.day_number
+                """),
                 {"tid": trip_id},
             ).fetchall()
 
@@ -92,6 +98,8 @@ def get_trip_summary(trip_id):
                     "overnight_camping_id": (
                         str(row[6]) if row[6] else None
                     ),
+                    "camping_name": row[7],
+                    "camping_photos": row[8] if row[8] else [],
                 }
                 total_hours += sched["driving_hours"]
                 total_km += sched["driving_km"]
@@ -173,7 +181,7 @@ def generate_summary(
     elif format == "pdf":
         result = _generate_pdf_report(trip_data)
     elif format == "video":
-        result = _generate_video_placeholder(trip_data)
+        result = _generate_video(trip_data)
     else:
         return {
             "status": "error",
@@ -254,16 +262,26 @@ def _generate_slideshow(trip_data):
         ]
         route_text = " → ".join(waypoint_labels) if waypoint_labels else "No waypoints"
 
+        day_body = (
+            f"Drive: {day['driving_hours']}h · "
+            f"Dist: {day['driving_km']}km\n\n"
+            f"{route_text}"
+        )
+        if day.get("camping_name"):
+            day_body += f"\n\nCamping: {day['camping_name']}"
+
+        # Try to get a camping photo
+        camping_photo_path = None
+        if day.get("camping_photos") and len(day["camping_photos"]) > 0:
+            camping_photo_path = _download_image(day["camping_photos"][0])
+
         day_slide = _create_slide(
-            title=f"Day {day['day_number']}",
+            title=f"[Day {day['day_number']}]",
             subtitle=day.get("date", ""),
-            body=(
-                f"🚗 {day['driving_hours']}h · "
-                f"{day['driving_km']}km\n\n"
-                f"{route_text}"
-            ),
+            body=day_body,
             color_bg=(244, 246, 249),
             color_text=(0, 30, 80),
+            image_path=camping_photo_path
         )
         slides.append(day_slide)
 
@@ -351,33 +369,100 @@ def _generate_pdf_report(trip_data):
     }
 
 
-def _generate_video_placeholder(trip_data):
+def _generate_video(trip_data):
     """
-    Placeholder for video generation.
-
-    Full video generation requires ffmpeg and is planned
-    for a future iteration.
-
+    Generate an MP4 video summary using ffmpeg.
+    
     Returns:
-        dict: Result with placeholder message.
+        dict: Result with file_url.
     """
-    # For now, generate a slideshow and note video is planned
+    # First generate the individual slides
     slideshow = _generate_slideshow(trip_data)
+    if slideshow["status"] != "success":
+        return slideshow
 
-    return {
-        "status": "success",
-        "file_url": slideshow.get("file_url", ""),
-        "message": (
-            "Video generation requires ffmpeg. "
-            "Slideshow generated as fallback."
-        ),
-    }
+    slides = slideshow.get("all_slides", [])
+    if not slides:
+        return {"status": "error", "message": "No slides generated."}
+
+    trip = trip_data["trip"]
+    trip_slug = trip["id"][:8]
+    list_file_path = os.path.join(OUTPUT_DIR, f"slides_list_{trip_slug}.txt")
+    output_mp4 = os.path.join(OUTPUT_DIR, f"summary_{trip_slug}.mp4")
+
+    try:
+        # Create ffmpeg concat file
+        with open(list_file_path, "w") as f:
+            for slide_path in slides:
+                f.write(f"file '{slide_path}'\n")
+                f.write("duration 3\n")
+            # The concat demuxer ignores the duration of the last file,
+            # so we add the last file again without a duration to finish cleanly.
+            f.write(f"file '{slides[-1]}'\n")
+
+        # Run ffmpeg to stitch images into an MP4
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", list_file_path,
+            "-vf", "format=yuv420p",
+            output_mp4
+        ]
+        
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        return {
+            "status": "success",
+            "file_url": output_mp4,
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "status": "error",
+            "message": f"FFmpeg failed: {e.stderr.decode('utf-8', errors='ignore')}"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Video generation failed: {str(e)}"
+        }
+
+
+def _download_image(url):
+    """
+    Download an image from a URL and save it to a temporary file.
+    
+    Args:
+        url (str): Image URL.
+        
+    Returns:
+        str: Path to the downloaded image, or None if failed.
+    """
+    if not url or not url.startswith("http"):
+        return None
+        
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            ext = url.split(".")[-1].split("?")[0]
+            if len(ext) > 4: ext = "jpg"
+            filename = f"tmp_img_{uuid.uuid4().hex[:8]}.{ext}"
+            path = os.path.join(OUTPUT_DIR, filename)
+            with open(path, "wb") as f:
+                f.write(response.content)
+            return path
+    except Exception as e:
+        print(f"  ⚠️  Failed to download image {url}: {e}")
+        
+    return None
 
 
 def _create_slide(
     title, subtitle="", body="",
     color_bg=(0, 30, 80), color_text=(255, 255, 255),
-    width=1200, height=675,
+    width=1280, height=720,
+    image_path=None
 ):
     """
     Create a single summary slide as a PIL Image.
@@ -390,6 +475,7 @@ def _create_slide(
         color_text (tuple): RGB text color.
         width (int): Slide width in pixels.
         height (int): Slide height in pixels.
+        image_path (str): Optional path to an image to display on the right.
 
     Returns:
         PIL.Image: The rendered slide.
@@ -437,11 +523,37 @@ def _create_slide(
     if body:
         y_pos += 50
         for line in body.split("\n"):
+            # Simple line wrap (crude)
+            if len(line) > 50 and not image_path:
+                pass # TODO: wrap
+            
             draw.text(
                 (60, y_pos), line,
                 fill=color_text, font=font_body,
             )
             y_pos += 28
+
+    # Draw image if provided
+    if image_path and os.path.exists(image_path):
+        try:
+            overlay = Image.open(image_path)
+            # Maintain aspect ratio, fit into 500x500 square on the right
+            max_size = (500, 500)
+            overlay.thumbnail(max_size, Image.Resampling.LANCZOS)
+            
+            # Position on the right side
+            img_x = width - overlay.width - 60
+            img_y = (height - overlay.height) // 2
+            
+            # Draw a subtle border/frame for the image
+            draw.rectangle(
+                [img_x - 5, img_y - 5, img_x + overlay.width + 5, img_y + overlay.height + 5],
+                fill=(255, 255, 255) if sum(color_bg) < 384 else (0, 30, 80)
+            )
+            
+            img.paste(overlay, (img_x, img_y))
+        except Exception as e:
+            print(f"  ⚠️  Failed to overlay image {image_path}: {e}")
 
     # VW watermark
     watermark = "VW California Trip Planner"

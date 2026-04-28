@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client
 from tools.search_campings import search_campings
+from tools.get_weather import get_weather_forecast
 
 from sqlalchemy import text
 
@@ -116,7 +117,9 @@ def plan_route(
             day_directions = client.directions(
                 origin=f"{day_start['lat']},{day_start['lng']}",
                 destination=f"{target_end['lat']},{target_end['lng']}",
-                mode="driving"
+                mode="driving",
+                departure_time=max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
+                traffic_model="best_guess"
             )
             if day_directions:
                 day_route = day_directions[0]
@@ -167,6 +170,11 @@ def plan_route(
                 "lng": day_end["lng"],
             })
 
+        # Fetch weather for the end location of the day
+        weather = get_weather_forecast(
+            day_end["lat"], day_end["lng"], day_date.strftime("%Y-%m-%d")
+        )
+
         schedule = {
             "id": str(uuid.uuid4()),
             "day_number": day_num,
@@ -176,6 +184,7 @@ def plan_route(
             "waypoints": waypoints,
             "overnight_camping": overnight_camping,
             "route_polyline": route_polyline,
+            "weather": weather if weather["status"] == "success" else None
         }
 
         daily_schedules.append(schedule)
@@ -227,6 +236,8 @@ def _compute_total_route(origin, destination):
                 f"{destination['lat']},{destination['lng']}"
             ),
             mode="driving",
+            departure_time="now",
+            traffic_model="best_guess"
         )
 
         if not directions:
