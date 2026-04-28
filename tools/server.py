@@ -11,14 +11,18 @@ Usage:
 import os
 import json
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, session
 from flask_cors import CORS
+from sqlalchemy import text
+from werkzeug.security import generate_password_hash, check_password_hash
+import uuid
 
 from navigation.chat_handler import create_chat_session, send_message
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo
 from tools.generate_summary import generate_summary
+from tools.db import get_engine
 
 # Load environment variables
 load_dotenv()
@@ -41,8 +45,127 @@ CORS(app)
 # Global chat session (per-server instance for MVP)
 chat_session = None
 
-# User ID for MVP (single-user mode)
-DEFAULT_USER_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+# User ID for MVP (single-user mode) - REMOVED
+# DEFAULT_USER_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_vw_planner")
+
+# --- Authentication ---
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    display_name = data.get("display_name", "VW Explorer")
+    
+    if not email or not password:
+        return jsonify({"status": "error", "message": "Email and password required."}), 400
+        
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            existing = conn.execute(text("SELECT id FROM users WHERE email = :email"), {"email": email}).fetchone()
+            if existing:
+                return jsonify({"status": "error", "message": "Email already registered."}), 400
+                
+            pwd_hash = generate_password_hash(password, method='pbkdf2:sha256')
+            user_id = str(uuid.uuid4())
+            conn.execute(
+                text("INSERT INTO users (id, email, password_hash, display_name) VALUES (:id, :email, :hash, :name)"),
+                {"id": user_id, "email": email, "hash": pwd_hash, "name": display_name}
+            )
+            
+            session["user_id"] = user_id
+            return jsonify({"status": "success", "user": {"id": user_id, "email": email, "display_name": display_name}})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            user = conn.execute(
+                text("SELECT id, email, display_name, password_hash FROM users WHERE email = :email"), 
+                {"email": email}
+            ).fetchone()
+            
+            if user and user[3] and check_password_hash(user[3], password):
+                session["user_id"] = str(user[0])
+                return jsonify({"status": "success", "user": {"id": str(user[0]), "email": user[1], "display_name": user[2]}})
+            else:
+                return jsonify({"status": "error", "message": "Invalid email or password."}), 401
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.pop("user_id", None)
+    return jsonify({"status": "success"})
+
+@app.route("/api/trips", methods=["GET"])
+def api_get_trips():
+    """Get all trips for the authenticated user."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            trips = conn.execute(
+                text("SELECT id, title, start_date, end_date, status FROM trips WHERE user_id = :uid ORDER BY created_at DESC"),
+                {"uid": user_id}
+            ).fetchall()
+            
+            trip_list = [
+                {"id": str(t[0]), "title": t[1], "start_date": str(t[2]), "end_date": str(t[3]), "status": t[4]}
+                for t in trips
+            ]
+            
+            return jsonify({
+                "status": "success",
+                "trips": trip_list
+            })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/me", methods=["GET"])
+def api_me():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            user = conn.execute(
+                text("SELECT id, email, display_name FROM users WHERE id = :id"), 
+                {"id": user_id}
+            ).fetchone()
+            if user:
+                return jsonify({"status": "success", "user": {"id": str(user[0]), "email": user[1], "display_name": user[2]}})
+            return jsonify({"status": "error", "message": "User not found"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/trip/<trip_id>", methods=["GET"])
+def api_get_trip(trip_id):
+    """Get details for a specific trip."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+    
+    # Implementation placeholder or fetch from DB
+    return jsonify({"status": "success", "trip_id": trip_id})
+
 
 
 def get_chat_session():
@@ -143,6 +266,9 @@ def api_plan_route():
     and start_date.
     """
     data = request.get_json()
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
 
     required = ["origin", "destination", "num_days", "start_date"]
     for field in required:
@@ -176,6 +302,10 @@ def api_upload_photo():
 
     Accepts multipart form data with a 'photo' file.
     """
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+
     if "photo" not in request.files:
         return jsonify({
             "status": "error",
@@ -209,7 +339,7 @@ def api_upload_photo():
     # Process the photo
     result = store_photo(
         filepath=filepath,
-        user_id=DEFAULT_USER_ID,
+        user_id=user_id,
         trip_id=trip_id,
     )
 
@@ -224,6 +354,10 @@ def api_generate_summary():
     Expects JSON with trip_id and optional format.
     """
     data = request.get_json()
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
     trip_id = data.get("trip_id")
 
     if not trip_id:

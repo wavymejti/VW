@@ -51,9 +51,9 @@ class TestCreateSlide:
     """Tests for slide image generation."""
 
     def test_slide_dimensions(self):
-        """Slide should have correct dimensions."""
-        slide = _create_slide("Test Title", width=1200, height=675)
-        assert slide.size == (1200, 675)
+        """Slide should have correct dimensions (standard 720p)."""
+        slide = _create_slide("Test Title", width=1280, height=720)
+        assert slide.size == (1280, 720)
 
     def test_custom_dimensions(self):
         """Custom dimensions should be respected."""
@@ -92,3 +92,14 @@ class TestGenerateSummary:
         """Summary for non-existent trip should fail."""
         result = generate_summary(FAKE_TRIP_ID)
         assert result["status"] == "error"
+
+    def test_video_generation(self):
+        """Video generation for seed trip should succeed."""
+        result = generate_summary(
+            SEED_TRIP_ID, format="video"
+        )
+        assert result["status"] == "success"
+        assert "file_url" in result
+        assert result["file_url"].endswith(".mp4")
+        # File should exist on disk
+        assert os.path.exists(result["file_url"])

@@ -132,8 +132,9 @@ OPENAI_TOOL_DEFINITIONS = [
             "name": "plan_route",
             "description": (
                 "Plan a multi-day driving route with campground "
-                "stops. Generates daily schedules with waypoints "
-                "and driving time estimates."
+                "stops. Generates daily schedules with waypoints, "
+                "traffic-aware driving time estimates, and real-time "
+                "weather forecasts for each stop."
             ),
             "parameters": {
                 "type": "object",
