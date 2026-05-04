@@ -383,8 +383,13 @@ function displayCampingsOnMap(campings) {
         if (camp.has_wifi) amenities.push('📶 WiFi');
         if (camp.has_showers) amenities.push('🚿 Showers');
 
+        const photoHtml = (camp.photos && camp.photos.length > 0) 
+            ? `<img src="${camp.photos[0]}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">`
+            : '';
+
         const infoContent = `
             <div style="font-family: Helvetica, Arial, sans-serif; padding: 4px; max-width: 220px;">
+                ${photoHtml}
                 <strong style="color: #001E50; font-size: 14px;">${camp.name}</strong>
                 ${camp.cost_per_night_eur ? `<div style="color: #00875A; font-weight: 600; margin: 4px 0;">€${camp.cost_per_night_eur}/night</div>` : ''}
                 ${camp.rating ? `<div style="color: #666; font-size: 12px;">⭐ ${camp.rating}/5 (${camp.review_count || 0} reviews)</div>` : ''}
