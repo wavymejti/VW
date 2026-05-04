@@ -288,7 +288,7 @@ def api_plan_route():
         ),
         preferred_amenities=data.get("preferred_amenities"),
         budget_per_night_eur=data.get("budget_per_night_eur"),
-        user_id=DEFAULT_USER_ID,
+        user_id=user_id,
         title=data.get("title"),
     )
 

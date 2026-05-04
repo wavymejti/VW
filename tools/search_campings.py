@@ -132,7 +132,7 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
 
     query = f"""
         SELECT id, name, lat, lng, place_id, address, country,
-               cost_per_night_eur,
+               cost_per_night_eur, photos,
                has_power, has_water, has_wifi, has_showers,
                has_toilets, has_waste_disposal,
                shore_power_hookup, max_vehicle_length_m,
@@ -199,9 +199,21 @@ def _search_google_maps(lat, lng, radius_km):
             type="campground",
         )
 
+        key = os.getenv("GOOGLE_MAPS_API_KEY")
         campings = []
         for place in result.get("results", []):
             location = place.get("geometry", {}).get("location", {})
+            
+            photo_urls = []
+            photo_refs = place.get("photos", [])
+            if photo_refs:
+                ref = photo_refs[0].get("photo_reference")
+                if ref and key:
+                    photo_urls.append(
+                        f"https://maps.googleapis.com/maps/api/place/photo"
+                        f"?maxwidth=400&photoreference={ref}&key={key}"
+                    )
+
             campings.append({
                 "id": None,
                 "name": place.get("name", "Unknown"),
@@ -221,9 +233,8 @@ def _search_google_maps(lat, lng, radius_km):
                 "max_vehicle_length_m": None,
                 "level_ground": None,
                 "rating": place.get("rating"),
-                "review_count": place.get(
-                    "user_ratings_total", 0
-                ),
+                "review_count": place.get("user_ratings_total", 0),
+                "photos": photo_urls,
                 "source": "google_maps",
             })
 
@@ -268,13 +279,13 @@ def _cache_maps_results(campings):
                     text("""
                         INSERT INTO campings
                             (name, lat, lng, location, place_id,
-                             address, rating, review_count, source)
+                             address, rating, review_count, photos, source)
                         VALUES
                             (:name, :lat, :lng,
                              ST_SetSRID(ST_MakePoint(:lng, :lat),
                              4326)::geography,
                              :place_id, :address, :rating,
-                             :review_count, 'google_maps')
+                             :review_count, :photos, 'google_maps')
                     """),
                     {
                         "name": camp["name"],
@@ -284,6 +295,7 @@ def _cache_maps_results(campings):
                         "address": camp.get("address"),
                         "rating": camp.get("rating"),
                         "review_count": camp.get("review_count", 0),
+                        "photos": camp.get("photos", []),
                     },
                 )
 
