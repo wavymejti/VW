@@ -5,10 +5,15 @@ Manages the conversational flow between the user and the
 OpenAI model, dispatching function calls to tools via
 the dispatcher.
 
+Slot-filling: the AI embeds a <slot_state> JSON block in every
+response. This handler strips it from the visible text and
+returns it as a structured field in the API response.
+
 See: architecture/chat_orchestration_sop.md
 """
 
 import json
+import re
 import uuid
 from datetime import datetime
 
@@ -102,6 +107,66 @@ def send_message(session, user_message, trip_id=None):
         }
 
 
+def _parse_slot_state(text):
+    """
+    Extract the <slot_state> JSON block from the AI response text.
+
+    The AI appends a machine-readable slot_state block after its
+    conversational reply. This function parses it and strips it
+    from the visible message.
+
+    Args:
+        text (str): Raw assistant message content.
+
+    Returns:
+        tuple: (clean_text, slot_state_dict)
+    """
+    # Default empty slot state
+    default_state = {
+        "vibe": None,
+        "experience": None,
+        "pace": None,
+        "infrastructure": None,
+        "duration": None,
+    }
+
+    if not text:
+        return text, default_state
+
+    # Match <slot_state>...</slot_state> block
+    pattern = r"<slot_state>\s*(.+?)\s*</slot_state>"
+    match = re.search(pattern, text, re.DOTALL)
+
+    if not match:
+        return text, default_state
+
+    try:
+        slot_state = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        slot_state = default_state
+
+    # Strip the block from visible text and trim whitespace
+    clean_text = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+
+    return clean_text, slot_state
+
+
+def _slots_complete(slot_state):
+    """
+    Return True if all 5 required slots have been filled.
+
+    Args:
+        slot_state (dict): Slot values dict.
+
+    Returns:
+        bool: True when all slots are non-null.
+    """
+    return all(
+        slot_state.get(k) is not None
+        for k in ("vibe", "experience", "pace", "infrastructure", "duration")
+    )
+
+
 def _process_response(session, response, trip_id):
     """
     Process OpenAI response, handling function calls if present.
@@ -120,8 +185,11 @@ def _process_response(session, response, trip_id):
     
     # Check if response contains function calls
     if not message.tool_calls:
-        # Text-only response
-        response_text = message.content
+        # Text-only response — parse and strip slot_state block
+        raw_text = message.content
+        response_text, slot_state = _parse_slot_state(raw_text)
+
+        # Store clean text (without slot_state block) in history
         session["history"].append({"role": "assistant", "content": response_text})
 
         if trip_id:
@@ -130,6 +198,8 @@ def _process_response(session, response, trip_id):
             "status": "success",
             "text": response_text,
             "tool_calls": [],
+            "slot_state": slot_state,
+            "slots_complete": _slots_complete(slot_state),
         }
 
     # Process function calls
@@ -189,10 +259,16 @@ def _process_response(session, response, trip_id):
                 tool_calls=tool_calls,
             )
 
+        # Parse slot_state from final text (usually all slots complete here)
+        final_text, slot_state = _parse_slot_state(final_text)
+        session["history"][-1]["content"] = final_text
+
         return {
             "status": "success",
             "text": final_text,
             "tool_calls": tool_calls,
+            "slot_state": slot_state,
+            "slots_complete": _slots_complete(slot_state),
         }
 
     except Exception as e:
@@ -213,6 +289,11 @@ def _process_response(session, response, trip_id):
             "status": "partial",
             "text": summary,
             "tool_calls": tool_calls,
+            "slot_state": {
+                "vibe": None, "experience": None,
+                "pace": None, "infrastructure": None, "duration": None,
+            },
+            "slots_complete": False,
         }
 
 

@@ -5,17 +5,24 @@
 
 // ── State ────────────────────────────────────────────────────
 const state = {
-    currentMode: 'planning',    // 'planning' | 'memory'
+    currentView: 'chat',         // 'chat' | 'map' | 'memory'
     map: null,                   // Google Maps instance
+    mapInitialized: false,       // Lazy init flag
     markers: [],                 // Active map markers
     routePolylines: [],          // Active route lines
     currentTrip: null,           // Current trip data
     chatHistory: [],             // Chat messages
     isTyping: false,             // AI typing state
     campingMarkers: [],          // Camping location markers
+    slotState: {                 // Current slot-filling state
+        vibe: null,
+        experience: null,
+        pace: null,
+        infrastructure: null,
+        duration: null
+    }
 };
 
-// ── API Client ───────────────────────────────────────────────
 const API_BASE = '';
 
 async function apiCall(endpoint, data = {}) {
@@ -28,130 +35,46 @@ async function apiCall(endpoint, data = {}) {
         return await response.json();
     } catch (error) {
         console.error(`API error (${endpoint}):`, error);
-        return { status: 'error', message: 'Connection failed. Please try again.' };
+        return { status: 'error', message: 'Błąd połączenia. Spróbuj ponownie.' };
     }
 }
 
-// ── Auth Elements ─────────────────────────────────────────────
-const authModal = document.getElementById('auth-modal');
-const loginView = document.getElementById('login-view');
-const registerView = document.getElementById('register-view');
-const btnLogin = document.getElementById('btn-login');
-const btnRegister = document.getElementById('btn-register');
-const btnLogout = document.getElementById('btn-logout');
-const linkShowRegister = document.getElementById('link-show-register');
-const linkShowLogin = document.getElementById('link-show-login');
-const authError = document.getElementById('auth-error');
-const userProfile = document.getElementById('user-profile');
-const userDisplayName = document.getElementById('user-display-name');
-
-// ── Authentication Logic ──────────────────────────────────────
-async function checkAuth() {
-    try {
-        const response = await fetch(`${API_BASE}/api/me`);
-        const result = await response.json();
-        
-        if (result.status === 'success' && result.user) {
-            authModal.style.display = 'none';
-            userProfile.style.display = 'block';
-            userDisplayName.textContent = result.user.display_name;
-        } else {
-            authModal.style.display = 'flex';
-            userProfile.style.display = 'none';
+// ── View Switching ───────────────────────────────────────────
+function switchView(viewName) {
+    if (viewName === state.currentView) return;
+    
+    // Update nav icons
+    document.querySelectorAll('.nav-item').forEach(item => {
+        if (item.id.startsWith('nav-')) {
+            item.classList.toggle('active', item.dataset.view === viewName);
         }
-    } catch (error) {
-        console.error("Auth check failed:", error);
-        authModal.style.display = 'flex';
+    });
+
+    // Update view containers
+    document.querySelectorAll('.view').forEach(view => {
+        view.classList.toggle('active', view.id === `view-${viewName}`);
+    });
+
+    state.currentView = viewName;
+
+    // Lazy init map
+    if (viewName === 'map' && !state.mapInitialized && window.google) {
+        initGoogleMap();
     }
 }
-
-linkShowRegister.addEventListener('click', (e) => {
-    e.preventDefault();
-    loginView.style.display = 'none';
-    registerView.style.display = 'block';
-    authError.style.display = 'none';
-});
-
-linkShowLogin.addEventListener('click', (e) => {
-    e.preventDefault();
-    registerView.style.display = 'none';
-    loginView.style.display = 'block';
-    authError.style.display = 'none';
-});
-
-btnLogin.addEventListener('click', async () => {
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-    if (!email || !password) return;
-    
-    authError.style.display = 'none';
-    btnLogin.disabled = true;
-    btnLogin.textContent = "Logging in...";
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-        });
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            checkAuth();
-        } else {
-            authError.textContent = result.message || "Login failed";
-            authError.style.display = 'block';
-        }
-    } catch (error) {
-        authError.textContent = "Network error";
-        authError.style.display = 'block';
-    } finally {
-        btnLogin.disabled = false;
-        btnLogin.textContent = "Log In";
-    }
-});
-
-btnRegister.addEventListener('click', async () => {
-    const email = document.getElementById('register-email').value;
-    const password = document.getElementById('register-password').value;
-    const name = document.getElementById('register-name').value;
-    if (!email || !password || !name) return;
-    
-    authError.style.display = 'none';
-    btnRegister.disabled = true;
-    btnRegister.textContent = "Creating...";
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, display_name: name })
-        });
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            checkAuth();
-        } else {
-            authError.textContent = result.message || "Registration failed";
-            authError.style.display = 'block';
-        }
-    } catch (error) {
-        authError.textContent = "Network error";
-        authError.style.display = 'block';
-    } finally {
-        btnRegister.disabled = false;
-        btnRegister.textContent = "Create Account";
-    }
-});
-
-btnLogout.addEventListener('click', async () => {
-    await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
-    window.location.reload();
-});
 
 // ── Map Initialization ───────────────────────────────────────
 window.initMap = function() {
-    // Center on Central Europe (VW California territory)
+    // Map script loaded, but we don't render it until View 2 is opened
+    console.log("Google Maps API loaded");
+    if (state.currentView === 'map') {
+        initGoogleMap();
+    }
+}
+
+function initGoogleMap() {
+    if (state.mapInitialized || !window.google) return;
+
     state.map = new google.maps.Map(document.getElementById('map'), {
         center: { lat: 47.5, lng: 13.0 },
         zoom: 6,
@@ -159,30 +82,24 @@ window.initMap = function() {
         streetViewControl: false,
         fullscreenControl: false,
         zoomControl: true,
-        zoomControlOptions: {
-            position: google.maps.ControlPosition.RIGHT_CENTER,
-        },
+        zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER },
         styles: [
-            // Subtle VW-branded map styling
             { featureType: 'water', stylers: [{ color: '#C5D7E8' }] },
             { featureType: 'landscape', stylers: [{ color: '#F0F3F7' }] },
             { featureType: 'road.highway', stylers: [{ color: '#E0E4EA' }] },
-            { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#4A5568' }] },
             { featureType: 'poi.park', stylers: [{ color: '#D4E6D0' }] },
             { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
         ],
     });
-
-    // Map control buttons
+    
+    state.mapInitialized = true;
+    
+    // Wire up map controls
     document.getElementById('btn-center-map').addEventListener('click', () => {
-        if (state.currentTrip) {
-            fitMapToTrip();
-        } else {
-            state.map.setCenter({ lat: 47.5, lng: 13.0 });
-            state.map.setZoom(6);
-        }
+        if (state.currentTrip) fitMapToTrip();
+        else { state.map.setCenter({ lat: 47.5, lng: 13.0 }); state.map.setZoom(6); }
     });
-
+    
     document.getElementById('btn-toggle-campings').addEventListener('click', loadCampingsOnMap);
 }
 
@@ -190,9 +107,7 @@ window.initMap = function() {
 function clearMapOverlays() {
     state.markers.forEach(m => m.setMap(null));
     state.markers = [];
-    if (state.routePolylines) {
-        state.routePolylines.forEach(p => p.setMap(null));
-    }
+    state.routePolylines.forEach(p => p.setMap(null));
     state.routePolylines = [];
 }
 
@@ -202,65 +117,48 @@ function clearCampingMarkers() {
 }
 
 function addMarker(lat, lng, title, icon, label) {
+    if (!state.map) return null;
     const marker = new google.maps.Marker({
         position: { lat, lng },
         map: state.map,
         title: title,
         label: label || undefined,
-        icon: icon ? {
-            url: icon,
-            scaledSize: new google.maps.Size(32, 32),
-        } : undefined,
+        icon: icon ? { url: icon, scaledSize: new google.maps.Size(32, 32) } : undefined,
         animation: google.maps.Animation.DROP,
     });
 
-    // Info window
     const infoWindow = new google.maps.InfoWindow({
-        content: `<div style="font-family: Helvetica, Arial, sans-serif; padding: 4px;">
-            <strong style="color: #001E50;">${title}</strong>
-        </div>`,
+        content: `<div style="font-family: Arial; padding: 4px;"><strong style="color: #001E50;">${title}</strong></div>`,
     });
 
-    marker.addListener('click', () => {
-        infoWindow.open(state.map, marker);
-    });
-
+    marker.addListener('click', () => infoWindow.open(state.map, marker));
     state.markers.push(marker);
     return marker;
 }
 
 function drawDailyRoutes(daily_schedules, color = '#001E50') {
-    if (!state.routePolylines) state.routePolylines = [];
-    
+    if (!state.map) return;
     state.routePolylines.forEach(p => p.setMap(null));
     state.routePolylines = [];
 
     daily_schedules.forEach(day => {
         let path = [];
-        // Decode precise path if available
-        if (day.route_polyline && google.maps.geometry && google.maps.geometry.encoding) {
+        if (day.route_polyline && google.maps.geometry) {
             path = google.maps.geometry.encoding.decodePath(day.route_polyline);
         } else {
-            // Fallback to straight lines
             path = day.waypoints.map(wp => ({ lat: wp.lat, lng: wp.lng }));
         }
 
         const polyline = new google.maps.Polyline({
-            path: path,
-            geodesic: true,
-            strokeColor: color,
-            strokeOpacity: 0.85,
-            strokeWeight: 4,
-            map: state.map,
+            path: path, geodesic: true, strokeColor: color,
+            strokeOpacity: 0.85, strokeWeight: 4, map: state.map,
         });
-        
         state.routePolylines.push(polyline);
     });
 }
 
 function fitMapToTrip() {
-    if (!state.currentTrip) return;
-
+    if (!state.currentTrip || !state.map) return;
     const bounds = new google.maps.LatLngBounds();
     state.markers.forEach(m => bounds.extend(m.getPosition()));
     state.map.fitBounds(bounds, { padding: 80 });
@@ -268,154 +166,101 @@ function fitMapToTrip() {
 
 // ── Display Trip on Map ──────────────────────────────────────
 function displayTripOnMap(tripData) {
+    if (!state.mapInitialized) initGoogleMap();
     clearMapOverlays();
 
     const { trip, daily_schedules } = tripData;
     state.currentTrip = tripData;
 
-    // Collect all waypoints for the route
-    const allWaypoints = [];
     let totalStops = 0;
-
     daily_schedules.forEach((day, idx) => {
         day.waypoints.forEach(wp => {
-            allWaypoints.push(wp);
-
-            // Add marker with appropriate icon
             let markerLabel = '';
-            if (wp.type === 'start' && idx === 0) {
-                markerLabel = 'A';
-            } else if (wp.type === 'end' || (wp.type === 'camping' && idx === daily_schedules.length - 1)) {
-                markerLabel = 'B';
-            } else if (wp.type === 'camping') {
-                markerLabel = '🏕️';
-                totalStops++;
-            }
-
-            addMarker(wp.lat, wp.lng, wp.label, null, markerLabel || undefined);
+            if (wp.type === 'start' && idx === 0) markerLabel = 'A';
+            else if (wp.type === 'end' || (wp.type === 'camping' && idx === daily_schedules.length - 1)) markerLabel = 'B';
+            else if (wp.type === 'camping') { markerLabel = '🏕️'; totalStops++; }
+            
+            addMarker(wp.lat, wp.lng, wp.label, null, markerLabel);
         });
     });
 
-    // Draw precise daily route lines
     if (daily_schedules && daily_schedules.length > 0) {
         drawDailyRoutes(daily_schedules);
     }
 
-    // Update trip info card
     document.getElementById('trip-title').textContent = trip.title;
     document.getElementById('stat-days').textContent = daily_schedules.length;
     document.getElementById('stat-km').textContent = Math.round(tripData.total_driving_km || 0);
     document.getElementById('stat-hours').textContent = `${(tripData.total_driving_hours || 0).toFixed(1)}h`;
     document.getElementById('stat-campings').textContent = totalStops;
 
-    // Build day cards
     const dayCardsContainer = document.getElementById('day-cards');
     dayCardsContainer.innerHTML = '';
 
     daily_schedules.forEach(day => {
         const card = document.createElement('div');
         card.className = 'day-card';
-        
-        const weatherHtml = day.weather ? `
-            <div class="day-weather" title="${day.weather.description}">
-                <span class="weather-icon">${day.weather.description.split(' ').pop()}</span>
-                <span class="weather-temp">${Math.round(day.weather.temp_max)}°C</span>
-            </div>
-        ` : '';
-
         card.innerHTML = `
-            <div class="day-number">Day ${day.day_number}</div>
+            <div class="day-number">Dzień ${day.day_number}</div>
             <div class="day-label">${day.date}</div>
-            ${weatherHtml}
-            <div class="day-stats">
+            <div style="font-size: 0.8rem; color: #666; margin-top: 8px;">
                 <span>🚗 ${day.driving_hours}h</span>
-                <span>📏 ${Math.round(day.driving_km)}km</span>
+                <span style="margin-left: 8px;">📏 ${Math.round(day.driving_km)}km</span>
             </div>
         `;
-
         card.addEventListener('click', () => {
-            // Zoom to this day's waypoints
             const bounds = new google.maps.LatLngBounds();
-            day.waypoints.forEach(wp => {
-                bounds.extend({ lat: wp.lat, lng: wp.lng });
-            });
+            day.waypoints.forEach(wp => bounds.extend({ lat: wp.lat, lng: wp.lng }));
             state.map.fitBounds(bounds, { padding: 100 });
-
-            // Highlight active card
             document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active'));
             card.classList.add('active');
         });
-
         dayCardsContainer.appendChild(card);
     });
 
-    // Show trip info card
     document.getElementById('trip-info-card').classList.add('visible');
-
-    // Fit map to show entire trip
+    document.getElementById('btn-show-map').style.display = 'flex'; // Show floating button in chat
+    
     fitMapToTrip();
 }
 
-// ── Display Campings on Map ──────────────────────────────────
-function displayCampingsOnMap(campings) {
-    clearCampingMarkers();
-
-    campings.forEach(camp => {
-        const marker = new google.maps.Marker({
-            position: { lat: camp.lat, lng: camp.lng },
-            map: state.map,
-            title: camp.name,
-            icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                fillColor: '#00875A',
-                fillOpacity: 0.9,
-                strokeColor: '#FFFFFF',
-                strokeWeight: 2,
-                scale: 8,
-            },
-            animation: google.maps.Animation.DROP,
+async function loadCampingsOnMap() {
+    if (!state.map) return;
+    const center = state.map.getCenter();
+    const result = await apiCall('search_campings', { lat: center.lat(), lng: center.lng(), radius_km: 80 });
+    
+    if (result.status === 'success' && result.results) {
+        clearCampingMarkers();
+        result.results.forEach(camp => {
+            const marker = new google.maps.Marker({
+                position: { lat: camp.lat, lng: camp.lng },
+                map: state.map, title: camp.name,
+                icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: '#00875A', fillOpacity: 0.9, strokeColor: '#FFFFFF', strokeWeight: 2, scale: 8 },
+            });
+            const infoWindow = new google.maps.InfoWindow({ content: `<div style="padding:4px"><strong>${camp.name}</strong></div>` });
+            marker.addListener('click', () => infoWindow.open(state.map, marker));
+            state.campingMarkers.push(marker);
         });
-
-        // Build info content
-        let amenities = [];
-        if (camp.has_power) amenities.push('⚡ Power');
-        if (camp.has_water) amenities.push('💧 Water');
-        if (camp.has_wifi) amenities.push('📶 WiFi');
-        if (camp.has_showers) amenities.push('🚿 Showers');
-
-        const photoHtml = (camp.photos && camp.photos.length > 0) 
-            ? `<img src="${camp.photos[0]}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">`
-            : '';
-
-        const infoContent = `
-            <div style="font-family: Helvetica, Arial, sans-serif; padding: 4px; max-width: 220px;">
-                ${photoHtml}
-                <strong style="color: #001E50; font-size: 14px;">${camp.name}</strong>
-                ${camp.cost_per_night_eur ? `<div style="color: #00875A; font-weight: 600; margin: 4px 0;">€${camp.cost_per_night_eur}/night</div>` : ''}
-                ${camp.rating ? `<div style="color: #666; font-size: 12px;">⭐ ${camp.rating}/5 (${camp.review_count || 0} reviews)</div>` : ''}
-                ${amenities.length ? `<div style="color: #666; font-size: 12px; margin-top: 4px;">${amenities.join(' · ')}</div>` : ''}
-                ${camp.distance_km ? `<div style="color: #999; font-size: 11px; margin-top: 4px;">${camp.distance_km}km away</div>` : ''}
-            </div>
-        `;
-
-        const infoWindow = new google.maps.InfoWindow({ content: infoContent });
-        marker.addListener('click', () => infoWindow.open(state.map, marker));
-
-        state.campingMarkers.push(marker);
-    });
+    }
 }
 
-async function loadCampingsOnMap() {
-    const center = state.map.getCenter();
-    const result = await apiCall('search_campings', {
-        lat: center.lat(),
-        lng: center.lng(),
-        radius_km: 80,
+// ── Slot Progress Tracking ───────────────────────────────────
+function updateSlotProgress(slotState) {
+    if (!slotState) return;
+    state.slotState = { ...state.slotState, ...slotState };
+    
+    // Update UI progress bar
+    const slots = ['vibe', 'experience', 'pace', 'infrastructure', 'duration'];
+    slots.forEach(slot => {
+        const stepEl = document.getElementById(`slot-${slot}`);
+        if (stepEl) {
+            if (state.slotState[slot] !== null && state.slotState[slot] !== undefined) {
+                stepEl.classList.add('filled');
+            } else {
+                stepEl.classList.remove('filled');
+            }
+        }
     });
-
-    if (result.status === 'success' && result.results) {
-        displayCampingsOnMap(result.results);
-    }
 }
 
 // ── Chat Logic ───────────────────────────────────────────────
@@ -423,20 +268,14 @@ function addMessage(role, text) {
     const messagesEl = document.getElementById('chat-messages');
     const welcome = document.getElementById('chat-welcome');
 
-    // Hide welcome on first message
-    if (welcome) {
-        welcome.style.display = 'none';
-    }
+    if (welcome) welcome.style.display = 'none';
 
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
 
-    // Parse markdown-like formatting for assistant messages
     let formattedText = text;
     if (role === 'assistant') {
-        formattedText = text
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\n/g, '<br>');
+        formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
     }
 
     msgDiv.innerHTML = `
@@ -444,13 +283,9 @@ function addMessage(role, text) {
         <div class="message-meta">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
     `;
 
-    // Insert before typing indicator
     const typingEl = document.getElementById('typing-indicator');
     messagesEl.insertBefore(msgDiv, typingEl);
-
-    // Scroll to bottom
     messagesEl.scrollTop = messagesEl.scrollHeight;
-
     state.chatHistory.push({ role, text });
 }
 
@@ -458,7 +293,6 @@ function showTyping(show) {
     state.isTyping = show;
     const typingEl = document.getElementById('typing-indicator');
     typingEl.classList.toggle('visible', show);
-
     if (show) {
         const messagesEl = document.getElementById('chat-messages');
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -468,88 +302,70 @@ function showTyping(show) {
 async function sendMessage(text) {
     if (!text.trim() || state.isTyping) return;
 
-    // Add user message
     addMessage('user', text);
 
-    // Clear input
     const input = document.getElementById('chat-input');
     input.value = '';
     input.style.height = 'auto';
+    document.getElementById('char-counter').textContent = `0/1000`;
+    document.getElementById('send-btn').disabled = true;
 
-    // Show typing indicator
     showTyping(true);
-
-    // Send to API
     const result = await apiCall('chat', { message: text });
-
-    // Hide typing
     showTyping(false);
 
     if (result.status === 'success' || result.status === 'partial') {
         addMessage('assistant', result.text);
+        
+        // Update slot progress
+        if (result.slot_state) {
+            updateSlotProgress(result.slot_state);
+        }
 
-        // If tool calls returned trip data, display on map
+        // Process tool calls (like plan_route)
+        let routePlanned = false;
         if (result.tool_calls) {
             result.tool_calls.forEach(tc => {
                 if (tc.function_name === 'plan_route' && tc.result && tc.result.status === 'success') {
                     displayTripOnMap(tc.result);
-                }
-                if (tc.function_name === 'search_campings' && tc.result && tc.result.results) {
-                    displayCampingsOnMap(tc.result.results);
+                    routePlanned = true;
                 }
             });
         }
 
-        // Check for embedded trip/camping data in response
         if (result.trip_data) {
             displayTripOnMap(result.trip_data);
+            routePlanned = true;
         }
-        if (result.camping_data) {
-            displayCampingsOnMap(result.camping_data);
+
+        // Auto-redirect to map if a route was just planned
+        if (routePlanned) {
+            setTimeout(() => {
+                switchView('map');
+            }, 1200);
         }
     } else {
-        addMessage('assistant', result.message || 'Sorry, something went wrong. Please try again.');
+        addMessage('assistant', result.message || 'Wystąpił błąd. Spróbuj ponownie.');
     }
 }
 
-// ── Mode Switching ───────────────────────────────────────────
-function switchMode(mode) {
-    state.currentMode = mode;
-
-    // Update tab styles
-    document.querySelectorAll('.mode-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.mode === mode);
-    });
-
-    // Show/hide panels
-    document.getElementById('planning-panel').style.display =
-        mode === 'planning' ? 'flex' : 'none';
-    document.getElementById('memory-panel').style.display =
-        mode === 'memory' ? 'flex' : 'none';
-    document.getElementById('memory-panel').classList.toggle('active', mode === 'memory');
-}
-
-// ── Photo Upload (Travel Memory) ─────────────────────────────
+// ── Travel Memory ────────────────────────────────────────────
 async function handlePhotoUpload(files) {
     const grid = document.getElementById('photo-grid');
+    const emptyState = document.getElementById('photo-empty');
+    if (emptyState) emptyState.style.display = 'none';
 
     for (const file of files) {
-        // Create preview card
         const card = document.createElement('div');
         card.className = 'photo-card';
 
         const reader = new FileReader();
         reader.onload = (e) => {
-            card.innerHTML = `
-                <img src="${e.target.result}" alt="${file.name}">
-                <div class="photo-overlay">${file.name}</div>
-            `;
+            card.innerHTML = `<img src="${e.target.result}" alt="${file.name}"><div class="photo-overlay">${file.name}</div>`;
         };
         reader.readAsDataURL(file);
-
         grid.appendChild(card);
 
-        // Upload to server
         const formData = new FormData();
         formData.append('photo', file);
         if (state.currentTrip && state.currentTrip.trip) {
@@ -557,45 +373,46 @@ async function handlePhotoUpload(files) {
         }
 
         try {
-            const response = await fetch(`${API_BASE}/api/upload_photo`, {
-                method: 'POST',
-                body: formData,
-            });
+            const response = await fetch(`${API_BASE}/api/upload_photo`, { method: 'POST', body: formData });
             const result = await response.json();
 
-            // If photo has GPS, add marker to map
             if (result.photo && result.photo.lat && result.photo.lng) {
                 let markerLabel = '📷';
                 if (result.linked && result.photo.day_number) {
-                    markerLabel = `Day ${result.photo.day_number} 📷`;
-                    card.innerHTML += `<div style="position: absolute; top: 8px; right: 8px; background: #00875A; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; z-index: 10;">Day ${result.photo.day_number}</div>`;
+                    markerLabel = `Dzień ${result.photo.day_number} 📷`;
                 }
                 addMarker(result.photo.lat, result.photo.lng, file.name, null, markerLabel);
             }
-        } catch (error) {
-            console.error('Upload failed:', error);
-        }
+        } catch (error) { console.error('Upload failed:', error); }
     }
 }
 
 // ── Event Listeners ──────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    // Mode tabs
-    document.querySelectorAll('.mode-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+    
+    // View Navigation
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', () => {
+            if (item.dataset.view) switchView(item.dataset.view);
+        });
     });
+
+    document.getElementById('btn-show-map').addEventListener('click', () => switchView('map'));
+    document.getElementById('btn-back-to-chat').addEventListener('click', () => switchView('chat'));
 
     // Chat input
     const chatInput = document.getElementById('chat-input');
     const sendBtn = document.getElementById('send-btn');
+    const charCounter = document.getElementById('char-counter');
 
-    // Auto-resize textarea
     chatInput.addEventListener('input', () => {
         chatInput.style.height = 'auto';
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+        const len = chatInput.value.length;
+        charCounter.textContent = `${len}/1000`;
+        sendBtn.disabled = len === 0;
     });
 
-    // Send on Enter (Shift+Enter for newline)
     chatInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -603,49 +420,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Send button click
-    sendBtn.addEventListener('click', () => {
-        sendMessage(chatInput.value);
-    });
+    sendBtn.addEventListener('click', () => sendMessage(chatInput.value));
 
-    // Quick action buttons
+    // Quick actions
     document.querySelectorAll('.quick-action').forEach(btn => {
-        btn.addEventListener('click', () => {
-            sendMessage(btn.dataset.prompt);
-        });
+        btn.addEventListener('click', () => sendMessage(btn.dataset.prompt));
     });
 
-    // Trip info card close
     document.getElementById('trip-info-close').addEventListener('click', () => {
         document.getElementById('trip-info-card').classList.remove('visible');
     });
 
-    // Photo upload
+    // Travel Memory
     const uploadZone = document.getElementById('upload-zone');
     const photoInput = document.getElementById('photo-upload');
 
     uploadZone.addEventListener('click', () => photoInput.click());
-
-    uploadZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        uploadZone.style.borderColor = '#0040C1';
-    });
-
-    uploadZone.addEventListener('dragleave', () => {
-        uploadZone.style.borderColor = '';
-    });
-
+    uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor = '#0040C1'; });
+    uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
     uploadZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadZone.style.borderColor = '';
+        e.preventDefault(); uploadZone.style.borderColor = '';
         handlePhotoUpload(e.dataTransfer.files);
     });
+    photoInput.addEventListener('change', () => handlePhotoUpload(photoInput.files));
 
-    photoInput.addEventListener('change', () => {
-        handlePhotoUpload(photoInput.files);
-    });
-
-    // Generate Summary
+    // Summary Generator
     const btnGenerateSummary = document.getElementById('btn-generate-summary');
     const summaryModal = document.getElementById('summary-modal');
     const summaryClose = document.getElementById('summary-close-btn');
@@ -653,8 +452,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryLoading = document.getElementById('summary-loading');
     const summaryOptions = document.getElementById('summary-options');
     const summaryResultView = document.getElementById('summary-result-view');
-    const btnExportSlideshow = document.getElementById('btn-export-slideshow');
-    const btnExportVideo = document.getElementById('btn-export-video');
 
     async function triggerSummaryGeneration(format) {
         summaryOptions.style.display = 'none';
@@ -662,31 +459,19 @@ document.addEventListener('DOMContentLoaded', () => {
         summaryCarousel.innerHTML = '';
         summaryLoading.style.display = 'block';
 
-        const result = await apiCall('generate_summary', {
-            trip_id: state.currentTrip.trip.id,
-            format: format
-        });
-
+        const result = await apiCall('generate_summary', { trip_id: state.currentTrip.trip.id, format: format });
         summaryLoading.style.display = 'none';
 
         if (result.status === 'success') {
             if (format === 'video' && result.file_url) {
                 const video = document.createElement('video');
-                video.src = result.file_url;
-                video.controls = true;
-                video.autoplay = true;
-                video.style.maxHeight = '70vh';
-                video.style.borderRadius = '8px';
-                video.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+                video.src = result.file_url; video.controls = true; video.autoplay = true;
+                video.style.maxHeight = '70vh'; video.style.borderRadius = '8px';
                 summaryCarousel.appendChild(video);
             } else if (result.all_slides) {
                 result.all_slides.forEach(slideUrl => {
                     const img = document.createElement('img');
-                    img.src = slideUrl;
-                    img.style.maxHeight = '70vh';
-                    img.style.scrollSnapAlign = 'center';
-                    img.style.borderRadius = '8px';
-                    img.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
+                    img.src = slideUrl; img.style.maxHeight = '70vh'; img.style.borderRadius = '8px';
                     summaryCarousel.appendChild(img);
                 });
             }
@@ -697,21 +482,84 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     btnGenerateSummary.addEventListener('click', () => {
-        if (!state.currentTrip) {
-            alert("Please plan a trip first before generating a summary!");
-            return;
-        }
+        if (!state.currentTrip) { alert("Najpierw zaplanuj trasę!"); return; }
         summaryModal.style.display = 'flex';
         summaryOptions.style.display = 'block';
         summaryResultView.style.display = 'none';
     });
 
-    btnExportSlideshow.addEventListener('click', () => triggerSummaryGeneration('image_slideshow'));
-    btnExportVideo.addEventListener('click', () => triggerSummaryGeneration('video'));
+    document.getElementById('btn-export-slideshow').addEventListener('click', () => triggerSummaryGeneration('image_slideshow'));
+    document.getElementById('btn-export-video').addEventListener('click', () => triggerSummaryGeneration('video'));
+    summaryClose.addEventListener('click', () => { summaryModal.style.display = 'none'; });
 
-    summaryClose.addEventListener('click', () => {
-        summaryModal.style.display = 'none';
+    // Authentication simple implementation
+    const authModal = document.getElementById('auth-modal');
+    const btnLogin = document.getElementById('btn-login');
+    const btnLogout = document.getElementById('btn-logout');
+
+    async function checkAuth() {
+        try {
+            const response = await fetch(`${API_BASE}/api/me`);
+            const result = await response.json();
+            if (result.status === 'success' && result.user) {
+                authModal.style.display = 'none';
+                document.getElementById('user-profile').style.display = 'block';
+                document.getElementById('user-display-name').textContent = result.user.display_name.charAt(0).toUpperCase();
+            } else { authModal.style.display = 'flex'; }
+        } catch (error) { authModal.style.display = 'flex'; }
+    }
+
+    btnLogin.addEventListener('click', async () => {
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+        if (!email || !password) return;
+        btnLogin.textContent = "Logowanie...";
+        try {
+            const response = await fetch(`${API_BASE}/api/login`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const result = await response.json();
+            if (result.status === 'success') { checkAuth(); } 
+            else { document.getElementById('auth-error').textContent = result.message || "Błąd logowania"; document.getElementById('auth-error').style.display = 'block'; }
+        } catch(e) { console.error(e); }
+        btnLogin.textContent = "Zaloguj się";
     });
+
+    const btnRegister = document.getElementById('btn-register');
+    if (btnRegister) {
+        btnRegister.addEventListener('click', async () => {
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            const name = document.getElementById('register-name').value;
+            if (!email || !password || !name) return;
+            btnRegister.textContent = "Tworzenie...";
+            try {
+                const response = await fetch(`${API_BASE}/api/register`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, display_name: name })
+                });
+                const result = await response.json();
+                if (result.status === 'success') { checkAuth(); } 
+                else { document.getElementById('auth-error').textContent = result.message || "Błąd rejestracji"; document.getElementById('auth-error').style.display = 'block'; }
+            } catch(e) { console.error(e); }
+            btnRegister.textContent = "Utwórz konto";
+        });
+    }
+
+    document.getElementById('link-show-register').addEventListener('click', (e) => {
+        e.preventDefault(); 
+        document.getElementById('login-view').style.display = 'none'; 
+        document.getElementById('register-view').style.display = 'block';
+        document.getElementById('auth-error').style.display = 'none';
+    });
+    
+    document.getElementById('link-show-login').addEventListener('click', (e) => {
+        e.preventDefault(); 
+        document.getElementById('register-view').style.display = 'none'; 
+        document.getElementById('login-view').style.display = 'block';
+        document.getElementById('auth-error').style.display = 'none';
+    });
+
+    checkAuth();
 });
-// Initialize on load
-checkAuth();
