@@ -37,9 +37,9 @@ The system instruction sets the VW brand voice and slot-filling behaviour:
 - **Slot-filling guidance**: collects 5 parameters before calling `plan_route`, asking in
   natural order but accepting answers out of sequence.
 
-### Slot Priority Order
+### Holistic Parameter Gathering
 
-The AI guides the user through slots **in this order**, but accepts answers in any order:
+The AI guides the user to collect the following slots, but it does NOT ask them one by one. It uses **Holistic Extraction** to gather as much context as possible from a single prompt:
 
 | # | Slot | Key | Example values |
 |---|---|---|---|
@@ -49,19 +49,18 @@ The AI guides the user through slots **in this order**, but accepts answers in a
 | 4 | **Infrastructure** | `infrastructure` | wild-camping, full-service, mixed |
 | 5 | **Duration** | `duration` | number of days |
 
-### Out-of-order handling
+> **Critical Routing Parameters**: The AI also implicitly extracts `origin` (Starting Point) and `start_date`.
 
-If the user provides a slot that is not the next expected one:
-1. AI **acknowledges and records** the provided value ("Great, a 7-day trip!").
-2. AI **continues collecting** the next missing slot in priority order.
-3. AI does **not** re-ask for already collected slots.
+### Handling Missing Information
 
-### Slot confirmation
+If the user provides an extensive prompt (e.g., "Alps, wife, 7 days, wild camping, new place every day"), the AI will **acknowledge all of it** and check if any critical routing parameters (Origin, Start Date) or remaining slots are missing. 
+If information is missing, the AI groups the remaining requirements into **one natural, bundled question** (e.g., "Super pomysł! Skąd ruszacie i kiedy?").
+
+### Route Confirmation
 
 Before calling `plan_route`, the AI **briefly confirms** all collected values in one sentence,
 then calls the tool. Example:
-> "Perfect — mountains with the family, 7 days, relaxed basecamp pace, full-service sites.
-> Let me plan your route now..."
+> "Perfect — a 7-day wild camping trip to the Alps starting from Munich tomorrow. Let me plan your route now..."
 
 ---
 
