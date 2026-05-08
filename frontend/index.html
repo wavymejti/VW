@@ -1,225 +1,367 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="VW California AI Trip Planner — Plan your camper van adventure with AI-powered route planning, campground discovery, and travel memories.">
+    <meta name="description" content="VW California AI Trip Planner — Zaplanuj swoją przygodę w kamperze z pomocą AI. Trasy, kempingi, wspomnienia z podróży.">
     <title>VW California — AI Trip Planner</title>
 
     <!-- VW Brand Design System -->
     <link rel="stylesheet" href="/static/styles.css">
-
-    <!-- Google Maps script moved to end of body -->
 </head>
 <body>
 
 <div id="app">
 
     <!-- ═══════════════════════════════════════════════════════
-         Sidebar — Chat & Travel Memory
+         Navigation Rail — always visible, left edge
          ═══════════════════════════════════════════════════════ -->
-    <aside id="sidebar">
+    <nav id="view-nav" aria-label="Główna nawigacja">
 
-        <!-- Logo -->
-        <div class="sidebar-header">
-            <div class="logo">
-                <img src="/static/vw-logo-2x.png" alt="Volkswagen Logo" class="logo-image">
-                <div class="logo-text">
-                    California Trip Planner
-                    <span>AI-Powered Adventure</span>
-                </div>
-            </div>
-            
-            <!-- User Profile Area -->
-            <div id="user-profile" style="margin-top: 15px; font-size: 14px; display: none; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                <div style="display: flex; justify-content: space-between; align-items: center; color: white;">
-                    <strong id="user-display-name"></strong>
-                    <button id="btn-logout" style="background: none; border: none; color: #4DA1FF; cursor: pointer; padding: 0; font-weight: bold;">Logout</button>
-                </div>
-            </div>
+        <!-- VW Logo -->
+        <div class="nav-logo">
+            <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="nav-logo-img">
         </div>
 
-        <!-- Mode Tabs -->
-        <div class="mode-tabs">
-            <button class="mode-tab active" data-mode="planning" id="tab-planning">
-                <span class="tab-icon">🗺️</span> Planning
+        <!-- View Buttons -->
+        <div class="nav-items">
+            <button class="nav-item active" data-view="chat" id="nav-chat" aria-label="Planowanie podróży" title="Planowanie">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span class="nav-label">Plan</span>
             </button>
-            <button class="mode-tab" data-mode="memory" id="tab-memory">
-                <span class="tab-icon">📸</span> Memory
+            <button class="nav-item" data-view="map" id="nav-map" aria-label="Mapa trasy" title="Mapa">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+                    <line x1="9" y1="3" x2="9" y2="18"/>
+                    <line x1="15" y1="6" x2="15" y2="21"/>
+                </svg>
+                <span class="nav-label">Mapa</span>
+            </button>
+            <button class="nav-item" data-view="memory" id="nav-memory" aria-label="Wspomnienia z podróży" title="Wspomnienia">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                </svg>
+                <span class="nav-label">Pamięć</span>
             </button>
         </div>
 
-        <!-- Sidebar Content -->
-        <div class="sidebar-content">
+        <!-- Bottom: User Profile -->
+        <div class="nav-bottom">
+            <div id="user-profile" style="display: none;">
+                <button class="nav-item nav-user" id="nav-user-btn" title="Konto">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                        <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <span class="nav-label" id="user-display-name">Konto</span>
+                </button>
+            </div>
+        </div>
+    </nav>
 
-            <!-- ── Planning Mode (Chat) ───────────────────── -->
-            <div class="chat-panel" id="planning-panel">
+    <!-- ═══════════════════════════════════════════════════════
+         View Container
+         ═══════════════════════════════════════════════════════ -->
+    <div id="view-container">
 
-                <!-- Chat Messages Area -->
-                <div class="chat-messages" id="chat-messages">
+        <!-- ── VIEW 1: Chat — Trip Planner ───────────────────── -->
+        <section id="view-chat" class="view active" aria-label="Planowanie podróży">
 
-                    <!-- Welcome Screen -->
-                    <div class="chat-welcome" id="chat-welcome">
-                        <span class="welcome-icon">🚐</span>
-                        <h3>Ready to explore?</h3>
-                        <p>Tell me about your dream trip and I'll plan the perfect VW California adventure.</p>
-
-                        <div class="quick-actions">
-                            <button class="quick-action" data-prompt="Plan a 5-day trip from Munich to Croatia with stops at scenic locations">
-                                <span class="action-icon">🏔️</span> Munich → Croatia road trip
-                            </button>
-                            <button class="quick-action" data-prompt="Find campgrounds with power and showers near Lake Bled, Slovenia">
-                                <span class="action-icon">🏕️</span> Find camping near Lake Bled
-                            </button>
-                            <button class="quick-action" data-prompt="Show me VW-compatible campsites along the Adriatic coast under 30 euros per night">
-                                <span class="action-icon">🌊</span> Adriatic coast campsites
-                            </button>
-                        </div>
+            <!-- Chat Header -->
+            <header class="chat-header">
+                <div class="chat-header-inner">
+                    <div class="chat-header-title">
+                        <h1 id="chat-greeting">Witaj, podróżniku.</h1>
+                        <p class="chat-header-sub">Dokąd chcesz pojechać swoim VW California?</p>
                     </div>
+                </div>
+            </header>
 
-                    <!-- Typing Indicator -->
-                    <div class="typing-indicator" id="typing-indicator">
-                        <span class="typing-dot"></span>
-                        <span class="typing-dot"></span>
-                        <span class="typing-dot"></span>
+            <!-- Slot Progress Bar -->
+            <div class="slot-progress" id="slot-progress" aria-label="Postęp planowania">
+                <div class="slot-step" data-slot="vibe" id="slot-vibe">
+                    <div class="slot-dot"></div>
+                    <span class="slot-label">Cel</span>
+                </div>
+                <div class="slot-connector"></div>
+                <div class="slot-step" data-slot="experience" id="slot-experience">
+                    <div class="slot-dot"></div>
+                    <span class="slot-label">Doświadczenie</span>
+                </div>
+                <div class="slot-connector"></div>
+                <div class="slot-step" data-slot="pace" id="slot-pace">
+                    <div class="slot-dot"></div>
+                    <span class="slot-label">Tempo</span>
+                </div>
+                <div class="slot-connector"></div>
+                <div class="slot-step" data-slot="infrastructure" id="slot-infrastructure">
+                    <div class="slot-dot"></div>
+                    <span class="slot-label">Baza</span>
+                </div>
+                <div class="slot-connector"></div>
+                <div class="slot-step" data-slot="duration" id="slot-duration">
+                    <div class="slot-dot"></div>
+                    <span class="slot-label">Czas</span>
+                </div>
+            </div>
+
+            <!-- Messages Area -->
+            <div class="chat-messages" id="chat-messages">
+
+                <!-- Welcome Screen -->
+                <div class="chat-welcome" id="chat-welcome">
+                    <div class="welcome-icon-wrap">
+                        <svg viewBox="0 0 48 48" fill="none">
+                            <rect width="48" height="48" rx="12" fill="#001E50"/>
+                            <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-size="28">🚐</text>
+                        </svg>
+                    </div>
+                    <h2 class="welcome-heading">Co planujesz?</h2>
+                    <p class="welcome-sub">Użyj jednego z szybkich startów lub opisz swoją wymarzoną trasę własnymi słowami.</p>
+
+                    <div class="quick-actions" id="quick-actions">
+                        <button class="quick-action" id="qa-1" data-prompt="Chcę pojechać w góry z rodziną, mam tydzień">
+                            <span class="qa-icon">🏔️</span>
+                            <span class="qa-text">
+                                <strong>Tydzień w górach</strong>
+                                <small>z rodziną</small>
+                            </span>
+                        </button>
+                        <button class="quick-action" id="qa-2" data-prompt="Szukam kempingów z prądem i prysznicami nad Adriatykiem, budżet do 30 euro">
+                            <span class="qa-icon">🌊</span>
+                            <span class="qa-text">
+                                <strong>Wybrzeże Adriatyku</strong>
+                                <small>kempingi do 30€/noc</small>
+                            </span>
+                        </button>
+                        <button class="quick-action" id="qa-3" data-prompt="Zaplanuj mi trasę 5-dniową z Monachium do Chorwacji przez Słowenię">
+                            <span class="qa-icon">🗺️</span>
+                            <span class="qa-text">
+                                <strong>Monachium → Chorwacja</strong>
+                                <small>5 dni, przez Słowenię</small>
+                            </span>
+                        </button>
+                        <button class="quick-action" id="qa-4" data-prompt="Jadę sam, jestem doświadczony, preferuję dzikie biwaki. Mam 10 dni">
+                            <span class="qa-icon">⛺</span>
+                            <span class="qa-text">
+                                <strong>Dzikie biwaki</strong>
+                                <small>10 dni solo</small>
+                            </span>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Chat Input -->
-                <div class="chat-input-wrapper">
-                    <div class="chat-input-container">
-                        <textarea id="chat-input"
-                                  placeholder="Plan a trip, find campgrounds..."
-                                  rows="1"
-                                  aria-label="Chat input"></textarea>
-                        <button class="send-btn" id="send-btn" aria-label="Send message">
-                            ➤
+                <!-- Typing Indicator -->
+                <div class="typing-indicator" id="typing-indicator" aria-live="polite" aria-label="AI pisze...">
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                </div>
+            </div>
+
+            <!-- Chat Input -->
+            <div class="chat-input-wrapper">
+                <div class="chat-input-container" id="chat-input-container">
+                    <textarea
+                        id="chat-input"
+                        placeholder="Opisz swoją wymarzoną trasę..."
+                        rows="1"
+                        aria-label="Wpisz wiadomość"
+                        maxlength="1000"
+                    ></textarea>
+                    <div class="input-actions">
+                        <span class="char-counter" id="char-counter">0/1000</span>
+                        <button class="send-btn" id="send-btn" aria-label="Wyślij wiadomość" disabled>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
                         </button>
                     </div>
                 </div>
             </div>
 
-            <!-- ── Travel Memory Mode ─────────────────────── -->
-            <div class="memory-panel" id="memory-panel">
-                <div class="memory-header">
-                    <div class="upload-zone" id="upload-zone">
-                        <span class="upload-icon">📷</span>
-                        <p>Drop photos here or click to upload</p>
-                        <input type="file" id="photo-upload"
-                               accept="image/*" multiple
-                               style="display: none;">
+            <!-- Floating "Show Map" button — appears when trip is ready -->
+            <button class="btn-show-map" id="btn-show-map" aria-label="Pokaż trasę na mapie" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+                    <line x1="9" y1="3" x2="9" y2="18"/>
+                    <line x1="15" y1="6" x2="15" y2="21"/>
+                </svg>
+                Pokaż na mapie
+            </button>
+
+        </section>
+
+        <!-- ── VIEW 2: Map ────────────────────────────────────── -->
+        <section id="view-map" class="view" aria-label="Mapa trasy">
+
+            <!-- Map -->
+            <div id="map"></div>
+
+            <!-- Map Overlay Controls -->
+            <div class="map-overlay" id="map-overlay">
+                <button class="map-control-btn" id="btn-center-map" aria-label="Wyśrodkuj mapę" title="Wyśrodkuj">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                </button>
+                <button class="map-control-btn" id="btn-toggle-campings" aria-label="Kempingi" title="Pokaż kempingi">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Trip Info Panel — floating bottom -->
+            <div class="trip-info-card" id="trip-info-card">
+                <div class="trip-info-header">
+                    <div class="trip-info-meta">
+                        <h3 id="trip-title">—</h3>
+                    </div>
+                    <div class="trip-info-actions">
+                        <button class="btn-back-to-chat" id="btn-back-to-chat" title="Wróć do planowania">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            Czat
+                        </button>
+                        <button class="trip-info-close" id="trip-info-close" aria-label="Zamknij panel">✕</button>
                     </div>
                 </div>
-                <div class="photo-grid" id="photo-grid">
-                    <!-- Photos will be dynamically inserted here -->
+                <div class="trip-stats">
+                    <div class="trip-stat">
+                        <span class="stat-value" id="stat-days">—</span>
+                        <span class="stat-label">Dni</span>
+                    </div>
+                    <div class="trip-stat">
+                        <span class="stat-value" id="stat-km">—</span>
+                        <span class="stat-label">Kilometrów</span>
+                    </div>
+                    <div class="trip-stat">
+                        <span class="stat-value" id="stat-hours">—</span>
+                        <span class="stat-label">Jazdy</span>
+                    </div>
+                    <div class="trip-stat">
+                        <span class="stat-value" id="stat-campings">—</span>
+                        <span class="stat-label">Postojów</span>
+                    </div>
                 </div>
-                <div class="memory-actions" style="margin-top: 1rem; text-align: center;">
-                    <button class="action-btn" id="btn-generate-summary" style="padding: 10px 20px; background-color: #001E50; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        🎬 Generate Trip Summary
+                <div class="day-cards" id="day-cards">
+                    <!-- Day cards inserted dynamically -->
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ── VIEW 3: Travel Memory ──────────────────────────── -->
+        <section id="view-memory" class="view" aria-label="Wspomnienia z podróży">
+
+            <div class="memory-layout">
+
+                <!-- Memory Header -->
+                <div class="memory-header">
+                    <h2 class="memory-title">Wspomnienia z podróży</h2>
+                    <p class="memory-sub">Wgraj zdjęcia z wyprawy — automatycznie połączymy je z miejscami na mapie.</p>
+
+                    <!-- Upload Zone -->
+                    <div class="upload-zone" id="upload-zone" role="button" tabindex="0" aria-label="Wgraj zdjęcia">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                        </svg>
+                        <p>Przeciągnij zdjęcia tutaj lub <span class="upload-cta">kliknij, żeby wybrać</span></p>
+                        <small>JPEG, PNG, HEIC — dane GPS zostaną automatycznie odczytane</small>
+                        <input type="file" id="photo-upload" accept="image/*" multiple style="display: none;">
+                    </div>
+                </div>
+
+                <!-- Photo Grid -->
+                <div class="photo-grid" id="photo-grid">
+                    <!-- Photos inserted dynamically -->
+                    <div class="photo-empty" id="photo-empty">
+                        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+                            <rect x="3" y="3" width="42" height="42" rx="8"/>
+                            <circle cx="17" cy="17" r="5"/>
+                            <polyline points="45 33 34 22 3 45"/>
+                        </svg>
+                        <p>Brak zdjęć — wgraj swoje wspomnienia z trasy</p>
+                    </div>
+                </div>
+
+                <!-- Memory Actions -->
+                <div class="memory-actions">
+                    <button class="btn-primary" id="btn-generate-summary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <polygon points="23 7 16 12 23 17 23 7"/>
+                            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                        </svg>
+                        Stwórz podsumowanie podróży
                     </button>
                 </div>
+
             </div>
 
-        </div>
-    </aside>
+        </section>
 
-    <!-- ═══════════════════════════════════════════════════════
-         Map Area
-         ═══════════════════════════════════════════════════════ -->
-    <main id="map-container">
-        <div id="map"></div>
+    </div><!-- end #view-container -->
 
-        <!-- Map Overlay Controls -->
-        <div class="map-overlay">
-            <button class="map-control-btn" id="btn-center-map"
-                    aria-label="Center map" title="Center map">
-                ◎
-            </button>
-            <button class="map-control-btn" id="btn-toggle-campings"
-                    aria-label="Toggle campgrounds" title="Show campgrounds">
-                🏕️
-            </button>
-        </div>
+</div><!-- end #app -->
 
-        <!-- Trip Info Card (shown when a trip is planned) -->
-        <div class="trip-info-card" id="trip-info-card">
-            <div class="trip-info-header">
-                <h3 id="trip-title">—</h3>
-                <button class="trip-info-close" id="trip-info-close">✕</button>
-            </div>
-            <div class="trip-stats">
-                <div class="trip-stat">
-                    <span class="stat-value" id="stat-days">—</span>
-                    <span class="stat-label">Days</span>
-                </div>
-                <div class="trip-stat">
-                    <span class="stat-value" id="stat-km">—</span>
-                    <span class="stat-label">Kilometers</span>
-                </div>
-                <div class="trip-stat">
-                    <span class="stat-value" id="stat-hours">—</span>
-                    <span class="stat-label">Driving</span>
-                </div>
-                <div class="trip-stat">
-                    <span class="stat-value" id="stat-campings">—</span>
-                    <span class="stat-label">Stops</span>
-                </div>
-            </div>
-            <div class="day-cards" id="day-cards">
-                <!-- Day cards will be dynamically inserted -->
-            </div>
-        </div>
-    </main>
-
-</div>
-
-<!-- Summary Modal -->
-<div class="summary-modal" id="summary-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,14,38,0.9); z-index: 1000; align-items: center; justify-content: center; flex-direction: column;">
-    <div class="summary-header" style="width: 100%; max-width: 1200px; display: flex; justify-content: flex-end; padding: 20px;">
-        <button id="summary-close-btn" style="background: none; border: none; color: white; font-size: 2rem; cursor: pointer;">&times;</button>
+<!-- ─── Summary Modal ────────────────────────────────────────── -->
+<div class="modal-overlay" id="summary-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Eksport podsumowania">
+    <div class="modal-header">
+        <button class="modal-close-btn" id="summary-close-btn" aria-label="Zamknij">&times;</button>
     </div>
-    <div id="summary-options" style="background: white; padding: 30px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%;">
-        <h3 style="color: #001E50; margin-top: 0;">Choose Export Format</h3>
-        <p style="color: #666; margin-bottom: 25px;">How would you like to share your adventure?</p>
-        <div style="display: flex; gap: 15px; justify-content: center;">
-            <button id="btn-export-slideshow" class="btn-primary" style="flex: 1;">Slideshow</button>
-            <button id="btn-export-video" class="btn-primary" style="flex: 1; background-color: #00875A;">Video (.mp4)</button>
+    <div id="summary-options" class="modal-card">
+        <h3>Wybierz format eksportu</h3>
+        <p>Jak chcesz podzielić się swoją przygodą?</p>
+        <div class="modal-actions">
+            <button id="btn-export-slideshow" class="btn-primary">Pokaz slajdów</button>
+            <button id="btn-export-video" class="btn-primary btn-success">Wideo (.mp4)</button>
         </div>
     </div>
     <div id="summary-result-view" style="display: none; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center;">
-        <div class="summary-carousel" id="summary-carousel" style="display: flex; overflow-x: auto; scroll-snap-type: x mandatory; max-width: 1200px; width: 90%; gap: 20px; padding-bottom: 20px;">
-            <!-- Slides will go here -->
-        </div>
-        <div class="summary-controls" id="summary-controls" style="color: white; margin-top: 10px;">
-            <span id="summary-loading" style="display: none;">Generating your adventure summary... 🚐</span>
+        <div class="summary-carousel" id="summary-carousel"></div>
+        <div id="summary-controls">
+            <span id="summary-loading" style="display: none; color: white;">Generuję podsumowanie podróży... 🚐</span>
         </div>
     </div>
 </div>
 
-<!-- Auth Modal -->
-<div id="auth-modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,14,38,0.9); z-index: 2000; align-items: center; justify-content: center;">
-    <div style="background: white; border-radius: 8px; padding: 30px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-        <h2 style="margin-top: 0; color: #001E50; text-align: center; margin-bottom: 20px;">VW Trip Planner</h2>
-        
+<!-- ─── Auth Modal ───────────────────────────────────────────── -->
+<div class="modal-overlay" id="auth-modal" style="display: flex;" role="dialog" aria-modal="true" aria-label="Logowanie">
+    <div class="modal-card auth-card">
+        <div class="auth-logo">
+            <img src="/static/vw-logo-2x.png" alt="VW" height="36">
+            <h2>VW Trip Planner</h2>
+        </div>
+
         <div id="login-view">
-            <input type="email" id="login-email" placeholder="Email" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
-            <input type="password" id="login-password" placeholder="Password" class="chat-input" style="width: 100%; margin-bottom: 20px; box-sizing: border-box;" />
-            <button id="btn-login" class="btn-primary" style="width: 100%; margin-bottom: 12px;">Log In</button>
-            <div style="text-align: center; font-size: 14px; color: #666;">
-                Don't have an account? <a href="#" id="link-show-register" style="color: #0000EE; text-decoration: none;">Sign Up</a>
-            </div>
+            <input type="email" id="login-email" placeholder="Email" class="form-input" autocomplete="email"/>
+            <input type="password" id="login-password" placeholder="Hasło" class="form-input" autocomplete="current-password"/>
+            <button id="btn-login" class="btn-primary btn-full">Zaloguj się</button>
+            <p class="auth-switch">Nie masz konta? <a href="#" id="link-show-register">Zarejestruj się</a></p>
         </div>
 
         <div id="register-view" style="display: none;">
-            <input type="text" id="register-name" placeholder="Display Name" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
-            <input type="email" id="register-email" placeholder="Email" class="chat-input" style="width: 100%; margin-bottom: 12px; box-sizing: border-box;" />
-            <input type="password" id="register-password" placeholder="Password" class="chat-input" style="width: 100%; margin-bottom: 20px; box-sizing: border-box;" />
-            <button id="btn-register" class="btn-primary" style="width: 100%; margin-bottom: 12px;">Create Account</button>
-            <div style="text-align: center; font-size: 14px; color: #666;">
-                Already have an account? <a href="#" id="link-show-login" style="color: #0000EE; text-decoration: none;">Log In</a>
-            </div>
+            <input type="text" id="register-name" placeholder="Imię i nazwisko" class="form-input" autocomplete="name"/>
+            <input type="email" id="register-email" placeholder="Email" class="form-input" autocomplete="email"/>
+            <input type="password" id="register-password" placeholder="Hasło" class="form-input" autocomplete="new-password"/>
+            <button id="btn-register" class="btn-primary btn-full">Utwórz konto</button>
+            <p class="auth-switch">Masz już konto? <a href="#" id="link-show-login">Zaloguj się</a></p>
         </div>
-        <div id="auth-error" style="color: #E2001A; text-align: center; margin-top: 15px; font-size: 14px; display: none;"></div>
+
+        <div id="auth-error" class="form-error" style="display: none;"></div>
+
+        <button id="btn-logout" style="display: none;"></button>
     </div>
 </div>
 
