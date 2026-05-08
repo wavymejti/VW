@@ -322,13 +322,34 @@ async function sendMessage(text) {
             updateSlotProgress(result.slot_state);
         }
 
-        // Process tool calls (like plan_route)
+        // Process tool calls (like plan_route, modify_route, add_attraction)
         let routePlanned = false;
         if (result.tool_calls) {
             result.tool_calls.forEach(tc => {
-                if (tc.function_name === 'plan_route' && tc.result && tc.result.status === 'success') {
+                // Full route plan or route modification → redraw entire map
+                if (
+                    (tc.function_name === 'plan_route' || tc.function_name === 'modify_route') &&
+                    tc.result && tc.result.status === 'success'
+                ) {
                     displayTripOnMap(tc.result);
                     routePlanned = true;
+                }
+
+                // Adding a single attraction → add one marker to map
+                if (
+                    tc.function_name === 'add_attraction' &&
+                    tc.result && tc.result.status === 'success'
+                ) {
+                    const attr = tc.result.attraction;
+                    if (attr && state.mapInitialized) {
+                        addMarker(
+                            attr.lat,
+                            attr.lng,
+                            attr.name,
+                            null,
+                            '⭐'
+                        );
+                    }
                 }
             });
         }

@@ -51,6 +51,8 @@ def create_chat_session(trip_id=None):
         "tools": tools,
         "trip_id": trip_id,
         "history": history,
+        # Tracks the most recently planned trip — enables POST-PLANNING MODE
+        "active_trip_id": None,
     }
 
 
@@ -81,10 +83,27 @@ def send_message(session, user_message, trip_id=None):
     try:
         client = session["client"]
 
+        # Inject active trip context into a temporary system injection
+        # so the AI knows a route already exists and enters POST-PLANNING MODE.
+        messages_to_send = list(session["history"])
+        active_trip_id = session.get("active_trip_id")
+        if active_trip_id:
+            # Insert a system reminder right after the main system prompt
+            trip_context = (
+                f"[SYSTEM NOTE] Active trip ID: {active_trip_id}. "
+                "A route is already planned. The user may now request modifications. "
+                "Use modify_route or add_attraction tools — do NOT re-ask for trip parameters."
+            )
+            messages_to_send = [
+                messages_to_send[0],
+                {"role": "system", "content": trip_context},
+                *messages_to_send[1:],
+            ]
+
         # Send to OpenAI with tools
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=session["history"],
+            messages=messages_to_send,
             tools=session["tools"],
         )
 
@@ -224,6 +243,17 @@ def _process_response(session, response, trip_id):
 
         print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
 
+        # Inject active_trip_id into mutation tool calls if not provided
+        if fn_name in ("modify_route", "add_attraction"):
+            if "trip_id" not in fn_args and session.get("active_trip_id"):
+                fn_args["trip_id"] = session["active_trip_id"]
+
+        # Inject user_id into plan_route / modify_route so the trip
+        # gets persisted in the DB (AI doesn't know the logged-in user).
+        if fn_name in ("plan_route", "modify_route"):
+            if "user_id" not in fn_args and session.get("user_id"):
+                fn_args["user_id"] = session["user_id"]
+
         # Dispatch to the appropriate tool
         tool_result = dispatch(fn_name, fn_args)
         tool_calls.append({
@@ -231,6 +261,15 @@ def _process_response(session, response, trip_id):
             "arguments": fn_args,
             "result": tool_result,
         })
+
+        # Persist the new trip_id when a route is planned or modified
+        if fn_name in ("plan_route", "modify_route"):
+            new_trip_id = (
+                tool_result.get("trip", {}).get("id")
+                or tool_result.get("trip_id")
+            )
+            if new_trip_id:
+                session["active_trip_id"] = new_trip_id
 
         # Build function response for OpenAI
         session["history"].append({

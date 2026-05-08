@@ -168,9 +168,10 @@ def api_get_trip(trip_id):
 
 
 
-def get_chat_session():
+def get_chat_session(user_id=None):
     """
-    Get or create the global chat session.
+    Get or create the global chat session, ensuring it carries
+    the logged-in user_id so tools can persist data correctly.
 
     Returns:
         dict: Active chat session.
@@ -178,6 +179,9 @@ def get_chat_session():
     global chat_session
     if chat_session is None:
         chat_session = create_chat_session()
+    # Always sync the current user_id (session may have changed)
+    if user_id:
+        chat_session["user_id"] = user_id
     return chat_session
 
 
@@ -209,7 +213,7 @@ def api_chat():
     """
     Handle a chat message from the user.
 
-    Sends the message through the Gemini AI with tool calling,
+    Sends the message through the OpenAI model with tool calling,
     and returns the assistant's response.
     """
     data = request.get_json()
@@ -221,8 +225,10 @@ def api_chat():
             "message": "Empty message.",
         }), 400
 
-    session = get_chat_session()
-    result = send_message(session, user_message)
+    # Pass the logged-in user_id into the chat session
+    user_id = session.get("user_id")
+    chat = get_chat_session(user_id=user_id)
+    result = send_message(chat, user_message)
 
     return jsonify(result)
 
