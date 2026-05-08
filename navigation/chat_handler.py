@@ -25,6 +25,7 @@ from navigation.dispatcher import (
     dispatch,
     OPENAI_TOOL_DEFINITIONS,
 )
+from tools.interaction_logger import log_interaction
 
 
 def create_chat_session(trip_id=None):
@@ -112,6 +113,8 @@ def send_message(session, user_message, trip_id=None):
             session, response, effective_trip_id
         )
 
+        log_interaction(user_message, result.get("text", ""))
+
         return result
 
     except Exception as e:
@@ -119,6 +122,9 @@ def send_message(session, user_message, trip_id=None):
             "I'm having trouble connecting right now. "
             f"Please try again in a moment. (Error: {e})"
         )
+        
+        log_interaction(user_message, error_msg)
+        
         return {
             "status": "error",
             "text": error_msg,
@@ -371,7 +377,6 @@ def _store_message(trip_id, role, content, tool_calls=None):
     except Exception as e:
         # Non-critical — log but don't fail
         print(f"  ⚠️  Failed to store message: {e}")
-
 
 if __name__ == "__main__":
     # Interactive chat demo

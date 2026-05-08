@@ -341,13 +341,14 @@ async function sendMessage(text) {
                     tc.result && tc.result.status === 'success'
                 ) {
                     const attr = tc.result.attraction;
+                    const isOvernight = tc.result.is_overnight;
                     if (attr && state.mapInitialized) {
                         addMarker(
                             attr.lat,
                             attr.lng,
                             attr.name,
                             null,
-                            '⭐'
+                            isOvernight ? '🏕️' : '⭐'
                         );
                     }
                 }

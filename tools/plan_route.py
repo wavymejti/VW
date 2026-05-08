@@ -28,6 +28,7 @@ def plan_route(
     budget_per_night_eur=None,
     user_id=None,
     title=None,
+    notes=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -378,7 +379,7 @@ def _persist_trip(trip, daily_schedules):
                         VALUES
                             (:id, :trip_id, :day_number,
                              :schedule_date, :driving_hours,
-                             :driving_km, :waypoints::jsonb,
+                             :driving_km, CAST(:waypoints AS jsonb),
                              :camping_id, :route_polyline)
                     """),
                     {

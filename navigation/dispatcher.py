@@ -177,7 +177,8 @@ def _handle_add_attraction(arguments):
 
     Args:
         arguments (dict): trip_id, day_number, query (search string),
-            lat (optional centre), lng (optional centre).
+            lat (optional centre), lng (optional centre),
+            is_overnight (optional boolean).
 
     Returns:
         dict: Added attraction details and updated day waypoints.
@@ -200,6 +201,7 @@ def _handle_add_attraction(arguments):
         query = arguments.get("query", "")
         lat = arguments.get("lat")
         lng = arguments.get("lng")
+        is_overnight = arguments.get("is_overnight", False)
 
         if not trip_id or not day_number or not query:
             return {
@@ -242,7 +244,7 @@ def _handle_add_attraction(arguments):
         with engine.begin() as conn:
             schedule_row = conn.execute(
                 text(
-                    "SELECT id, waypoints FROM daily_schedules "
+                    "SELECT id, waypoints, overnight_camping_id FROM daily_schedules "
                     "WHERE trip_id = :tid AND day_number = :day "
                     "LIMIT 1"
                 ),
@@ -260,10 +262,9 @@ def _handle_add_attraction(arguments):
             schedule_id = schedule_row[0]
             existing_waypoints = schedule_row[1] or []
 
-            # Insert new attraction before the last waypoint (camping/end)
             new_waypoint = {
                 "order": len(existing_waypoints),
-                "type": "attraction",
+                "type": "camping" if is_overnight else "attraction",
                 "label": attraction["name"],
                 "lat": attraction["lat"],
                 "lng": attraction["lng"],
@@ -271,14 +272,19 @@ def _handle_add_attraction(arguments):
                 "notes": f"Added by AI: {query}",
             }
 
-            # Re-number existing waypoints to make room
-            updated_waypoints = existing_waypoints[:-1] + [new_waypoint] + existing_waypoints[-1:]
+            if is_overnight:
+                # Replace the last waypoint (which is usually the overnight stop or end point)
+                updated_waypoints = existing_waypoints[:-1] + [new_waypoint]
+            else:
+                # Insert new attraction before the last waypoint
+                updated_waypoints = existing_waypoints[:-1] + [new_waypoint] + existing_waypoints[-1:]
+            
             for i, wp in enumerate(updated_waypoints):
                 wp["order"] = i
 
             conn.execute(
                 text(
-                    "UPDATE daily_schedules SET waypoints = :wps::jsonb "
+                    "UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) "
                     "WHERE id = :sid"
                 ),
                 {"wps": json.dumps(updated_waypoints), "sid": str(schedule_id)}
@@ -290,8 +296,10 @@ def _handle_add_attraction(arguments):
             "trip_id": trip_id,
             "day_number": day_number,
             "attraction": attraction,
+            "is_overnight": is_overnight,
             "message": (
-                f"Added '{attraction['name']}' to day {day_number}."
+                f"{'Replaced overnight stop with' if is_overnight else 'Added'} "
+                f"'{attraction['name']}' on day {day_number}."
             ),
         }
 
@@ -490,7 +498,7 @@ OPENAI_TOOL_DEFINITIONS = [
             "description": (
                 "Add a point of interest (POI) such as an aquapark, museum, "
                 "lake, or viewpoint to a specific day of the current trip. "
-                "Does NOT change overnight stops — only adds a daytime stop."
+                "Can be added as a daytime stop or replace the overnight stop."
             ),
             "parameters": {
                 "type": "object",
@@ -517,6 +525,10 @@ OPENAI_TOOL_DEFINITIONS = [
                     "lng": {
                         "type": "number",
                         "description": "Optional longitude hint for location bias.",
+                    },
+                    "is_overnight": {
+                        "type": "boolean",
+                        "description": "If true, this POI replaces the overnight stop for the day. If false, it's added as a daytime stop.",
                     },
                 },
                 "required": ["trip_id", "day_number", "query"],
