@@ -17,7 +17,7 @@ class TestPlanRoute:
     def test_interpolate_stops_count(self):
         """Should generate num_days - 1 intermediate points."""
         legs = [{"steps": [{"duration": {"value": 3600}, "end_location": {"lat": 1.0, "lng": 1.0}} for _ in range(5)]}]
-        points = _interpolate_stops_along_route(legs, 5 * 3600, 5)
+        points = _interpolate_stops_along_route(legs, 5 * 3600, 5, {"lat":0, "lng":0}, {"lat":5, "lng":5})
         assert len(points) == 4
 
     def test_interpolate_stops_midpoint(self):
@@ -26,14 +26,14 @@ class TestPlanRoute:
             {"duration": {"value": 3600}, "end_location": {"lat": 5.0, "lng": 5.0}},
             {"duration": {"value": 3600}, "end_location": {"lat": 10.0, "lng": 10.0}}
         ]}]
-        points = _interpolate_stops_along_route(legs, 7200, 2)
+        points = _interpolate_stops_along_route(legs, 7200, 2, {"lat":0, "lng":0}, {"lat":10, "lng":10})
         assert len(points) == 1
         assert abs(points[0]["lat"] - 5.0) < 0.001
 
     def test_interpolate_single_day(self):
         """One-day trip should have zero intermediate stops."""
         legs = [{"steps": [{"duration": {"value": 3600}, "end_location": {"lat": 1.0, "lng": 1.0}}]}]
-        points = _interpolate_stops_along_route(legs, 3600, 1)
+        points = _interpolate_stops_along_route(legs, 3600, 1, {"lat":0, "lng":0}, {"lat":1, "lng":1})
         assert len(points) == 0
 
     def test_plan_route_valid(self):
@@ -74,3 +74,33 @@ class TestPlanRoute:
         if result["status"] == "success":
             assert "Munich" in result["trip"]["title"]
             assert "Vienna" in result["trip"]["title"]
+
+    def test_plan_route_continuous(self):
+        """Multi-day route should be continuous without gaps between days."""
+        result = plan_route(
+            origin={
+                "label": "Munich",
+                "lat": 48.1351, "lng": 11.5820,
+            },
+            destination={
+                "label": "Split",
+                "lat": 43.5081, "lng": 16.4402,
+            },
+            num_days=3,
+            start_date="2026-08-01",
+        )
+        assert result["status"] == "success"
+        schedules = result["daily_schedules"]
+        assert len(schedules) == 3
+
+        # Day 2 start should equal Day 1 end
+        day1_end = schedules[0]["waypoints"][-1]
+        day2_start = schedules[1]["waypoints"][0]
+        assert day2_start["lat"] == day1_end["lat"]
+        assert day2_start["lng"] == day1_end["lng"]
+
+        # Day 3 start should equal Day 2 end
+        day2_end = schedules[1]["waypoints"][-1]
+        day3_start = schedules[2]["waypoints"][0]
+        assert day3_start["lat"] == day2_end["lat"]
+        assert day3_start["lng"] == day2_end["lng"]

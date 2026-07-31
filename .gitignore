@@ -3,5 +3,19 @@
 *.pyc
 .env
 venv/
+.venv/
 .tmp/
 db/wolumenPG
+.DS_Store
+server.log
+.coverage
+cookies.txt
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+

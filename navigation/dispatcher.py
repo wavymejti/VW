@@ -14,6 +14,7 @@ from datetime import datetime
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo
+from tools.suggest_attractions import suggest_attractions
 
 
 # Registry of tool functions callable by the AI
@@ -21,7 +22,8 @@ TOOL_REGISTRY = {
     "search_campings": search_campings,
     "plan_route": plan_route,
     "upload_photos": store_photo,
-    # modify_route and add_attraction are handled inline below
+    "suggest_attractions": suggest_attractions,
+    # modify_route, add_attraction, edit_waypoint are handled inline below
 }
 
 
@@ -41,13 +43,15 @@ def dispatch(function_name, arguments):
         return _handle_modify_route(arguments)
     if function_name == "add_attraction":
         return _handle_add_attraction(arguments)
+    if function_name == "edit_waypoint":
+        return _handle_edit_waypoint(arguments)
 
     if function_name not in TOOL_REGISTRY:
         return {
             "status": "error",
             "message": (
                 f"Unknown function: '{function_name}'. "
-                f"Available: {list(TOOL_REGISTRY.keys()) + ['modify_route', 'add_attraction']}"
+                f"Available: {list(TOOL_REGISTRY.keys()) + ['modify_route', 'add_attraction', 'edit_waypoint']}"
             ),
         }
 
@@ -132,11 +136,30 @@ def _handle_modify_route(arguments):
                     user_id = user_id or str(row[8])
 
         if not all([origin, destination, num_days, start_date]):
+            try:
+                engine = get_engine()
+                with engine.connect() as conn:
+                    row = conn.execute(
+                        text("SELECT origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng, start_date, end_date, user_id, id FROM trips ORDER BY created_at DESC LIMIT 1")
+                    ).fetchone()
+                    if row:
+                        origin = origin or {"label": row[0], "lat": float(row[1]), "lng": float(row[2])}
+                        destination = destination or {"label": row[3], "lat": float(row[4]), "lng": float(row[5])}
+                        if not num_days and row[6] and row[7]:
+                            num_days = (row[7] - row[6]).days + 1
+                        num_days = num_days or 3
+                        start_date = start_date or (str(row[6]) if row[6] else datetime.now().strftime("%Y-%m-%d"))
+                        user_id = user_id or str(row[8])
+                        trip_id = trip_id or str(row[9])
+            except Exception as ex:
+                print(f"Fallback trip fetch failed: {ex}")
+
+        if not all([origin, destination, num_days, start_date]):
             return {
                 "status": "error",
                 "message": (
-                    "Cannot modify route: missing origin, destination, "
-                    "num_days, or start_date."
+                    "Insufficient parameters for route modification. "
+                    "Origin, destination, num_days, and start_date are required."
                 ),
             }
 
@@ -279,16 +302,19 @@ def _handle_add_attraction(arguments):
                 # Insert new attraction before the last waypoint
                 updated_waypoints = existing_waypoints[:-1] + [new_waypoint] + existing_waypoints[-1:]
             
-            for i, wp in enumerate(updated_waypoints):
-                wp["order"] = i
+            # Recalculate route and save to DB
+            update_done = _recalculate_day_route(conn, schedule_id, updated_waypoints)
+            if not update_done:
+                for i, wp in enumerate(updated_waypoints):
+                    wp["order"] = i
 
-            conn.execute(
-                text(
-                    "UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) "
-                    "WHERE id = :sid"
-                ),
-                {"wps": json.dumps(updated_waypoints), "sid": str(schedule_id)}
-            )
+                conn.execute(
+                    text(
+                        "UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) "
+                        "WHERE id = :sid"
+                    ),
+                    {"wps": json.dumps(updated_waypoints), "sid": str(schedule_id)}
+                )
 
         return {
             "status": "success",
@@ -305,6 +331,221 @@ def _handle_add_attraction(arguments):
 
     except Exception as e:
         return {"status": "error", "message": f"add_attraction failed: {e}"}
+
+
+def _recalculate_day_route(conn, schedule_id, waypoints):
+    """
+    Recalculates the day route using Google Directions API and saves it to the database.
+    Optimizes intermediate waypoints if there are any.
+    Returns True if successfully updated.
+    """
+    import json
+    from sqlalchemy import text
+    try:
+        from tools.maps_client import get_client
+        client = get_client()
+        
+        origin_wp = waypoints[0]
+        dest_wp = waypoints[-1]
+        
+        directions_kwargs = {
+            "origin": f"{origin_wp['lat']},{origin_wp['lng']}",
+            "destination": f"{dest_wp['lat']},{dest_wp['lng']}",
+            "mode": "driving"
+        }
+        
+        if len(waypoints) > 2:
+            intermediates = waypoints[1:-1]
+            directions_kwargs["waypoints"] = [f"{w['lat']},{w['lng']}" for w in intermediates]
+            directions_kwargs["optimize_waypoints"] = True
+
+        directions = client.directions(**directions_kwargs)
+        
+        if directions:
+            route = directions[0]
+            legs = route.get("legs", [])
+            new_distance = sum(l["distance"]["value"] for l in legs) / 1000
+            new_duration = sum(l["duration"]["value"] for l in legs) / 3600
+            new_polyline = route["overview_polyline"]["points"]
+            
+            if len(waypoints) > 2:
+                waypoint_order = route.get("waypoint_order", [])
+                optimized_intermediates = [intermediates[i] for i in waypoint_order]
+                waypoints = [origin_wp] + optimized_intermediates + [dest_wp]
+                
+            for i, wp in enumerate(waypoints):
+                wp["order"] = i
+                
+            conn.execute(
+                text(
+                    "UPDATE daily_schedules SET "
+                    "waypoints = CAST(:wps AS jsonb), "
+                    "driving_km = :km, "
+                    "driving_hours = :hours, "
+                    "route_polyline = :poly "
+                    "WHERE id = :sid"
+                ),
+                {
+                    "wps": json.dumps(waypoints),
+                    "km": round(new_distance, 1),
+                    "hours": round(new_duration, 1),
+                    "poly": new_polyline,
+                    "sid": str(schedule_id)
+                }
+            )
+            return True
+    except Exception as e:
+        print(f"Failed to recalculate route: {e}")
+    return False
+
+
+def _handle_edit_waypoint(arguments):
+    """
+    Edit, remove, or move a waypoint from the route.
+    """
+    try:
+        import json
+        from tools.db import get_engine
+        from sqlalchemy import text
+
+        trip_id = arguments.get("trip_id")
+        day_number = arguments.get("day_number")
+        action = arguments.get("action")
+        wp_index = arguments.get("waypoint_index")
+        
+        if not all([trip_id, day_number, action, wp_index is not None]):
+            return {"status": "error", "message": "trip_id, day_number, action, and waypoint_index are required."}
+            
+        engine = get_engine()
+        with engine.begin() as conn:
+            schedule_row = conn.execute(
+                text(
+                    "SELECT id, waypoints FROM daily_schedules "
+                    "WHERE trip_id = :tid AND day_number = :day LIMIT 1"
+                ),
+                {"tid": trip_id, "day": day_number}
+            ).fetchone()
+            
+            if not schedule_row:
+                return {"status": "error", "message": f"Day {day_number} not found."}
+                
+            schedule_id = schedule_row[0]
+            waypoints = schedule_row[1] or []
+            
+            if wp_index < 0 or wp_index >= len(waypoints):
+                return {"status": "error", "message": f"Invalid waypoint_index {wp_index}."}
+                
+            if wp_index == 0 or wp_index == len(waypoints) - 1:
+                return {"status": "error", "message": "Cannot edit start or end waypoints directly here yet."}
+                
+            wp_to_edit = waypoints[wp_index]
+
+            if action == "remove":
+                waypoints.pop(wp_index)
+                update_done = _recalculate_day_route(conn, schedule_id, waypoints)
+                if not update_done:
+                    for i, wp in enumerate(waypoints):
+                        wp["order"] = i
+                    conn.execute(
+                        text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
+                        {"wps": json.dumps(waypoints), "sid": str(schedule_id)},
+                    )
+                return {
+                    "status": "success",
+                    "message": f"Removed waypoint '{wp_to_edit.get('label')}' from day {day_number}.",
+                }
+
+            if action == "replace":
+                # Replace the waypoint with a new POI supplied by the caller.
+                new_label = arguments.get("label") or wp_to_edit.get("label", "Waypoint")
+                new_wp = {
+                    "order": wp_index,
+                    "type": arguments.get("type", wp_to_edit.get("type", "attraction")),
+                    "label": new_label,
+                    "lat": arguments.get("lat", wp_to_edit.get("lat")),
+                    "lng": arguments.get("lng", wp_to_edit.get("lng")),
+                    "place_id": arguments.get("place_id", wp_to_edit.get("place_id")),
+                    "notes": arguments.get("notes", "Replaced by AI"),
+                }
+                waypoints[wp_index] = new_wp
+                update_done = _recalculate_day_route(conn, schedule_id, waypoints)
+                if not update_done:
+                    for i, wp in enumerate(waypoints):
+                        wp["order"] = i
+                    conn.execute(
+                        text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
+                        {"wps": json.dumps(waypoints), "sid": str(schedule_id)},
+                    )
+                return {
+                    "status": "success",
+                    "message": f"Replaced waypoint with '{new_label}' on day {day_number}.",
+                }
+
+            if action == "move":
+                target_day = arguments.get("target_day_number")
+                if not target_day or target_day == day_number:
+                    return {
+                        "status": "error",
+                        "message": "target_day_number is required and must differ from the source day.",
+                    }
+
+                # Remove from the source day.
+                moved_wp = waypoints.pop(wp_index)
+                source_updated = _recalculate_day_route(conn, schedule_id, waypoints)
+                if not source_updated:
+                    for i, wp in enumerate(waypoints):
+                        wp["order"] = i
+                    conn.execute(
+                        text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
+                        {"wps": json.dumps(waypoints), "sid": str(schedule_id)},
+                    )
+
+                # Append to the target day.
+                target_row = conn.execute(
+                    text(
+                        "SELECT id, waypoints FROM daily_schedules "
+                        "WHERE trip_id = :tid AND day_number = :day LIMIT 1"
+                    ),
+                    {"tid": trip_id, "day": target_day},
+                ).fetchone()
+                if not target_row:
+                    # Roll back the removal by re-inserting the waypoint.
+                    waypoints.insert(wp_index, moved_wp)
+                    for i, wp in enumerate(waypoints):
+                        wp["order"] = i
+                    conn.execute(
+                        text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
+                        {"wps": json.dumps(waypoints), "sid": str(schedule_id)},
+                    )
+                    return {
+                        "status": "error",
+                        "message": f"Target day {target_day} not found.",
+                    }
+
+                target_id = target_row[0]
+                target_wps = target_row[1] or []
+                moved_wp["order"] = len(target_wps)
+                target_wps.append(moved_wp)
+                target_updated = _recalculate_day_route(conn, target_id, target_wps)
+                if not target_updated:
+                    for i, wp in enumerate(target_wps):
+                        wp["order"] = i
+                    conn.execute(
+                        text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
+                        {"wps": json.dumps(target_wps), "sid": str(target_id)},
+                    )
+                return {
+                    "status": "success",
+                    "message": f"Moved '{moved_wp.get('label')}' from day {day_number} to day {target_day}.",
+                }
+
+            return {
+                "status": "error",
+                "message": f"Action '{action}' not supported.",
+            }
+            
+    except Exception as e:
+        return {"status": "error", "message": f"edit_waypoint failed: {e}"}
 
 
 # ── OpenAI Tool Definitions ────────────────────────────────────
@@ -391,7 +632,20 @@ OPENAI_TOOL_DEFINITIONS = [
                             "lng": {"type": "number"},
                         },
                         "required": ["label", "lat", "lng"],
-                        "description": "Ending location.",
+                        "description": "Ending location. IMPORTANT: If round_trip is true, this MUST be the furthest turnaround point of the journey (e.g. Istanbul), NOT the starting location.",
+                    },
+                    "waypoints": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "lat": {"type": "number"},
+                                "lng": {"type": "number"},
+                            },
+                            "required": ["label", "lat", "lng"],
+                        },
+                        "description": "Optional list of intermediate places to visit along the route (e.g., Medjugorje, Romania).",
                     },
                     "num_days": {
                         "type": "integer",
@@ -399,7 +653,11 @@ OPENAI_TOOL_DEFINITIONS = [
                     },
                     "start_date": {
                         "type": "string",
-                        "description": "Trip start date in YYYY-MM-DD format.",
+                        "description": "Start date in YYYY-MM-DD.",
+                    },
+                    "round_trip": {
+                        "type": "boolean",
+                        "description": "Whether the trip is a round-trip returning to the origin.",
                     },
                     "max_daily_drive_hours": {
                         "type": "number",
@@ -532,6 +790,66 @@ OPENAI_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["trip_id", "day_number", "query"],
+            },
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suggest_attractions",
+            "description": (
+                "Search for attractions (castles, lakes, restaurants) near the route. "
+                "Ask the user for preferences if they haven't provided them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {
+                        "type": "string",
+                        "description": "UUID of the active trip.",
+                    },
+                    "preferences": {
+                        "type": "string",
+                        "description": "User preferences for attractions (e.g. 'castles', 'nature', 'museums').",
+                    },
+                },
+                "required": ["trip_id", "preferences"],
+            },
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_waypoint",
+            "description": (
+                "Edit, remove, or move a waypoint (attraction, camping, etc.) from the route."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {
+                        "type": "string",
+                        "description": "UUID of the active trip.",
+                    },
+                    "day_number": {
+                        "type": "integer",
+                        "description": "Day number where the waypoint currently is.",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["remove", "replace", "move"],
+                        "description": "The action to perform on the waypoint.",
+                    },
+                    "waypoint_index": {
+                        "type": "integer",
+                        "description": "The order index of the waypoint to edit (0 is start).",
+                    },
+                    "target_day_number": {
+                        "type": "integer",
+                        "description": "For 'move' action: the destination day number.",
+                    },
+                },
+                "required": ["trip_id", "day_number", "action", "waypoint_index"],
             },
         }
     },

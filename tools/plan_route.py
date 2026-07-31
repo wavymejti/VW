@@ -29,6 +29,8 @@ def plan_route(
     user_id=None,
     title=None,
     notes=None,
+    round_trip=False,
+    waypoints=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -51,7 +53,7 @@ def plan_route(
         preferred_amenities = []
 
     # Step 1: Get the total route via Google Maps
-    total_route = _compute_total_route(origin, destination)
+    total_route = _compute_total_route(origin, destination, round_trip, waypoints)
 
     if total_route["status"] == "error":
         return total_route
@@ -74,8 +76,9 @@ def plan_route(
 
     # Step 2: Divide route into daily segments using actual steps
     total_duration_s = total_duration_hours * 3600
+    route_end = origin if round_trip else destination
     intermediate_points = _interpolate_stops_along_route(
-        legs, total_duration_s, num_days
+        legs, total_duration_s, num_days, origin, route_end
     )
 
     # Step 3: Find campgrounds and precise daily routes
@@ -83,22 +86,26 @@ def plan_route(
     start = datetime.strptime(start_date, "%Y-%m-%d")
 
     client = get_maps_client()
+    previous_day_end = None
 
     for day_num in range(1, num_days + 1):
         day_date = start + timedelta(days=day_num - 1)
 
         # Determine start and end points for this day
-        day_start = (
-            origin if day_num == 1
-            else intermediate_points[day_num - 2]
-        )
+        if day_num == 1:
+            day_start = origin
+        else:
+            day_start = previous_day_end if previous_day_end else intermediate_points[day_num - 2]
+
         day_end = (
-            destination if day_num == num_days
+            origin if (day_num == num_days and round_trip)
+            else destination if (day_num == num_days and not round_trip)
             else intermediate_points[day_num - 1]
         )
 
         # Find overnight camping (except last day at destination)
         overnight_camping = None
+        overnight_options = []
         if day_num < num_days:
             camping_results = search_campings(
                 lat=day_end["lat"],
@@ -107,10 +114,11 @@ def plan_route(
                 amenities=preferred_amenities,
                 max_cost_eur=budget_per_night_eur,
                 vw_compatible=True,
-                limit=1,
+                limit=3,
             )
             if camping_results.get("results"):
-                overnight_camping = camping_results["results"][0]
+                overnight_options = camping_results["results"]
+                overnight_camping = overnight_options[0]
 
         # Get exact directions for this day
         target_end = overnight_camping if overnight_camping else day_end
@@ -120,7 +128,8 @@ def plan_route(
                 destination=f"{target_end['lat']},{target_end['lng']}",
                 mode="driving",
                 departure_time=max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
-                traffic_model="best_guess"
+                traffic_model="best_guess",
+                optimize_waypoints=True
             )
             if day_directions:
                 day_route = day_directions[0]
@@ -176,6 +185,13 @@ def plan_route(
             day_end["lat"], day_end["lng"], day_date.strftime("%Y-%m-%d")
         )
 
+        # Determine if this day is on the return leg
+        is_return_leg = False
+        if round_trip:
+            is_return_leg = day_num > (num_days / 2)
+        elif origin.get("lat") == destination.get("lat") and origin.get("lng") == destination.get("lng"):
+            is_return_leg = day_num > (num_days / 2)
+
         schedule = {
             "id": str(uuid.uuid4()),
             "day_number": day_num,
@@ -184,9 +200,21 @@ def plan_route(
             "driving_km": round(day_distance_km, 1),
             "waypoints": waypoints,
             "overnight_camping": overnight_camping,
+            "overnight_options": overnight_options,
             "route_polyline": route_polyline,
-            "weather": weather if weather["status"] == "success" else None
+            "weather": weather if weather["status"] == "success" else None,
+            "is_return": is_return_leg
         }
+
+        # Remember this day's actual end point to be the start point of the next day
+        if overnight_camping:
+            previous_day_end = {
+                "label": overnight_camping["name"],
+                "lat": overnight_camping["lat"],
+                "lng": overnight_camping["lng"]
+            }
+        else:
+            previous_day_end = day_end
 
         daily_schedules.append(schedule)
 
@@ -221,7 +249,7 @@ def plan_route(
     }
 
 
-def _compute_total_route(origin, destination):
+def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
     """
     Compute the total route between origin and destination
     using Google Maps Directions API.
@@ -229,17 +257,37 @@ def _compute_total_route(origin, destination):
     Returns:
         dict: Route info with distance_km, duration_hours, and legs.
     """
+    if waypoints is None:
+        waypoints = []
+
     try:
         client = get_maps_client()
-        directions = client.directions(
-            origin=f"{origin['lat']},{origin['lng']}",
-            destination=(
-                f"{destination['lat']},{destination['lng']}"
-            ),
-            mode="driving",
-            departure_time="now",
-            traffic_model="best_guess"
-        )
+        wp_list = [f"{wp['lat']},{wp['lng']}" for wp in waypoints]
+        
+        if round_trip:
+            # Add destination to waypoints as the turnaround point if it's different from origin
+            if destination['label'] != origin['label']:
+                wp_list.append(f"{destination['lat']},{destination['lng']}")
+                
+            directions = client.directions(
+                origin=f"{origin['lat']},{origin['lng']}",
+                destination=f"{origin['lat']},{origin['lng']}",
+                waypoints=wp_list,
+                mode="driving",
+                departure_time="now",
+                traffic_model="best_guess",
+                optimize_waypoints=True if len(wp_list) > 1 else False
+            )
+        else:
+            directions = client.directions(
+                origin=f"{origin['lat']},{origin['lng']}",
+                destination=f"{destination['lat']},{destination['lng']}",
+                waypoints=wp_list,
+                mode="driving",
+                departure_time="now",
+                traffic_model="best_guess",
+                optimize_waypoints=True if len(wp_list) > 1 else False
+            )
 
         if not directions:
             return {
@@ -273,7 +321,7 @@ def _compute_total_route(origin, destination):
         }
 
 
-def _interpolate_stops_along_route(legs, total_duration_s, num_days):
+def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, destination):
     """
     Find intermediate stopping points by accumulating driving time 
     along actual route steps.
@@ -282,6 +330,8 @@ def _interpolate_stops_along_route(legs, total_duration_s, num_days):
         legs (list): Route legs from Google Maps Directions API.
         total_duration_s (int): Total route duration in seconds.
         num_days (int): Number of travel days.
+        origin (dict): Origin coordinates.
+        destination (dict): Destination coordinates.
 
     Returns:
         list: List of intermediate point dicts (num_days - 1 points).
@@ -312,8 +362,19 @@ def _interpolate_stops_along_route(legs, total_duration_s, num_days):
                     return points
                     
     # Fallback if we didn't get enough points
+    lat1, lng1 = origin["lat"], origin["lng"]
+    lat2, lng2 = destination["lat"], destination["lng"]
+    
     while len(points) < num_days - 1:
-        points.append(points[-1] if points else {"label": "Fallback", "lat": 0, "lng": 0})
+        idx = len(points) + 1
+        fraction = idx / num_days
+        interp_lat = lat1 + (lat2 - lat1) * fraction
+        interp_lng = lng1 + (lng2 - lng1) * fraction
+        points.append({
+            "label": f"Fallback Waypoint {idx}",
+            "lat": interp_lat,
+            "lng": interp_lng
+        })
         
     return points
 

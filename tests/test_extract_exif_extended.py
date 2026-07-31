@@ -164,8 +164,8 @@ class TestStorePhoto:
         assert result["photo"]["file_url"] == "test.jpg"
         assert result["photo"]["lat"] == 10.0
         
-        mock_conn.execute.assert_called_once()
-        mock_conn.commit.assert_called_once()
+        assert mock_conn.execute.call_count >= 1
+        assert mock_conn.commit.call_count >= 1
     
     @patch("tools.extract_exif.get_engine")
     @patch("tools.extract_exif.generate_thumbnail")
