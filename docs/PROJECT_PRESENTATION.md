@@ -26,7 +26,7 @@ graph TD
 
 Here is the premium user interface concept mockup for the in-car VW California Dashboard integration:
 
-![VW California AI Trip Planner Dashboard UI Mockup](assets/dashboard_mockup.png)
+![VW California AI Trip Planner Dashboard UI Mockup](dashboard_mockup.png)
 
 ### 1.3 Brand Voice & Product Tone
 The product styling and textual interactions adhere strictly to the VW brand:

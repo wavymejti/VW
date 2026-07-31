@@ -291,7 +291,7 @@ Dzięki modułowi [i18n.js](file:///Users/mateuszszymkowiak/Documents/GitHub/VW/
 
 Interfejs użytkownika został zaprojektowany z myślą o konsolach nawigacyjnych w pojazdach oraz tabletach:
 
-![VW California AI Trip Planner Dashboard UI Mockup](assets/dashboard_mockup.png)
+![VW California AI Trip Planner Dashboard UI Mockup](dashboard_mockup.png)
 
 ### Struktura Plików Frontendowych:
 - [index.html](file:///Users/mateuszszymkowiak/Documents/GitHub/VW/frontend/index.html): Główny szablon aplikacji z podziałem na panele (Czat AI, Mapa Google, Harmonogram Dniowy, Galeria Memories, Ustawienia Profilu).
