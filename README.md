@@ -13,11 +13,12 @@ An intelligent, conversational web application designed specifically for Volkswa
 
 ## 📸 Interface Preview
 
-![VW California AI Trip Planner Dashboard](dashboard-mockup.png)
+![VW California AI Trip Planner Dashboard](docs/assets/dashboard_mockup.png)
 
 ---
 
 ## ✨ Key Features
+
 
 ### 🗣️ Conversational AI Planning Mode
 - **Holistic Slot-Filling**: Natural language interaction that gathers trip parameters (vibe, experience level, driving pace, infrastructure preferences, duration) without rigid forms.
@@ -155,11 +156,11 @@ npx playwright test
 
 Detailed architectural and technical documentation is available in the repository:
 
-- 📖 **[Project Presentation & Architecture Guide](PROJECT_PRESENTATION.md)** — Comprehensive presentation guide & diagram breakdown.
-- 📐 **[System Architecture Documentation](DOKUMENTACJA_ARCHITEKTONICZNA.md)** — Detailed database schema, PostGIS spatial queries, and API specs.
-- 🔒 **[Security & Audit Documentation](DOKUMENTACJA_BEZPIECZENSTWA.md)** — Security policies, OWASP compliance, and authentication mechanics.
-- 📋 **[Project Blueprint Documentation](DOKUMENTACJA_PROJEKTOWA.md)** — Core requirements, functional specifications, and user flows.
-- 🧪 **[Test Plan & QA Audit](TEST_PLAN.md)** — Automated and manual testing matrix.
+- 📖 **[Project Presentation & Architecture Guide](docs/PROJECT_PRESENTATION.md)** — Comprehensive presentation guide & diagram breakdown.
+- 📐 **[System Architecture Documentation](docs/DOKUMENTACJA_ARCHITEKTONICZNA.md)** — Detailed database schema, PostGIS spatial queries, and API specs.
+- 🔒 **[Security & Audit Documentation](docs/DOKUMENTACJA_BEZPIECZENSTWA.md)** — Security policies, OWASP compliance, and authentication mechanics.
+- 📋 **[Project Blueprint Documentation](docs/DOKUMENTACJA_PROJEKTOWA.md)** — Core requirements, functional specifications, and user flows.
+- 🧪 **[Test Plan & QA Audit](docs/TEST_PLAN.md)** — Automated and manual testing matrix.
 
 ---
 

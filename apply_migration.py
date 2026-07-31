@@ -1,7 +1,13 @@
-from tools.db import get_engine
-from sqlalchemy import text
-engine = get_engine()
-with engine.begin() as conn:
-    with open("db/migrations/002_add_user_password.sql") as f:
-        conn.execute(text(f.read()))
-print("Migration applied successfully.")
+"""
+Migration runner entrypoint.
+Executes all SQL migrations and seeds initial database records.
+"""
+from db.run_migrations import run_all_migrations, run_seed
+
+if __name__ == "__main__":
+    print("🚀 Applying database migrations...")
+    total, success = run_all_migrations()
+    if total > 0 and success == total:
+        print("🌱 Seeding database...")
+        run_seed()
+    print("✨ Database setup complete.")
