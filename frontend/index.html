@@ -2,10 +2,14 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#001E50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="VW California AI Trip Planner — Zaplanuj swoją przygodę w kamperze z pomocą AI. Trasy, kempingi, wspomnienia z podróży.">
     <title>VW California — AI Trip Planner</title>
 
+    <link rel="manifest" href="/static/manifest.json">
     <!-- VW Brand Design System -->
     <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -29,7 +33,7 @@
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
-                <span class="nav-label">Plan</span>
+                <span class="nav-label" data-i18n="nav_plan">Plan</span>
             </button>
             <button class="nav-item" data-view="map" id="nav-map" aria-label="Mapa trasy" title="Mapa">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -37,7 +41,7 @@
                     <line x1="9" y1="3" x2="9" y2="18"/>
                     <line x1="15" y1="6" x2="15" y2="21"/>
                 </svg>
-                <span class="nav-label">Mapa</span>
+                <span class="nav-label" data-i18n="nav_map">Mapa</span>
             </button>
             <button class="nav-item" data-view="memory" id="nav-memory" aria-label="Wspomnienia z podróży" title="Wspomnienia">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -45,11 +49,20 @@
                     <circle cx="8.5" cy="8.5" r="1.5"/>
                     <polyline points="21 15 16 10 5 21"/>
                 </svg>
-                <span class="nav-label">Pamięć</span>
+                <span class="nav-label" data-i18n="nav_memory">Pamięć</span>
+            </button>
+            <button class="nav-item" id="nav-trips-btn" aria-label="Zapisane Wyjazdy" title="Moje Wyjazdy">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span class="nav-label" data-i18n="nav_trips">Wyjazdy</span>
             </button>
         </div>
 
-        <!-- Bottom: User Profile -->
+        <!-- Bottom: User Profile & Language Switcher -->
         <div class="nav-bottom">
             <div id="user-profile" style="display: none;">
                 <button class="nav-item nav-user" id="nav-user-btn" title="Konto">
@@ -57,8 +70,13 @@
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                         <circle cx="12" cy="7" r="4"/>
                     </svg>
-                    <span class="nav-label" id="user-display-name">Konto</span>
+                    <span class="nav-label" id="user-display-name" data-i18n="nav_account">Konto</span>
                 </button>
+            </div>
+            <!-- Language Switcher Widget -->
+            <div class="lang-switcher" id="lang-switcher">
+                <button class="lang-btn active" data-lang="pl" title="Polski">🇵🇱 PL</button>
+                <button class="lang-btn" data-lang="de" title="Deutsch">🇩🇪 DE</button>
             </div>
         </div>
     </nav>
@@ -75,8 +93,8 @@
             <header class="chat-header">
                 <div class="chat-header-inner">
                     <div class="chat-header-title">
-                        <h1 id="chat-greeting">Witaj, podróżniku.</h1>
-                        <p class="chat-header-sub">Dokąd chcesz pojechać swoim VW California?</p>
+                        <h1 id="chat-greeting" data-i18n="chat_greeting">Witaj, podróżniku.</h1>
+                        <p class="chat-header-sub" data-i18n="chat_sub">Dokąd chcesz pojechać swoim VW California?</p>
                     </div>
                 </div>
             </header>
@@ -85,43 +103,41 @@
             <div class="slot-progress" id="slot-progress" aria-label="Postęp planowania">
                 <div class="slot-step" data-slot="vibe" id="slot-vibe">
                     <div class="slot-dot"></div>
-                    <span class="slot-label">Cel</span>
+                    <span class="slot-label" data-i18n="slot_vibe">Cel</span>
                 </div>
                 <div class="slot-connector"></div>
                 <div class="slot-step" data-slot="experience" id="slot-experience">
                     <div class="slot-dot"></div>
-                    <span class="slot-label">Doświadczenie</span>
+                    <span class="slot-label" data-i18n="slot_experience">Doświadczenie</span>
                 </div>
                 <div class="slot-connector"></div>
                 <div class="slot-step" data-slot="pace" id="slot-pace">
                     <div class="slot-dot"></div>
-                    <span class="slot-label">Tempo</span>
+                    <span class="slot-label" data-i18n="slot_pace">Tempo</span>
                 </div>
                 <div class="slot-connector"></div>
                 <div class="slot-step" data-slot="infrastructure" id="slot-infrastructure">
                     <div class="slot-dot"></div>
-                    <span class="slot-label">Baza</span>
+                    <span class="slot-label" data-i18n="slot_infrastructure">Kempingi</span>
                 </div>
                 <div class="slot-connector"></div>
                 <div class="slot-step" data-slot="duration" id="slot-duration">
                     <div class="slot-dot"></div>
-                    <span class="slot-label">Czas</span>
+                    <span class="slot-label" data-i18n="slot_summary">Podsumowanie</span>
                 </div>
             </div>
 
             <!-- Messages Area -->
             <div class="chat-messages" id="chat-messages">
 
-                <!-- Welcome Screen -->
+                <!-- Welcome Screen with Onboarding -->
                 <div class="chat-welcome" id="chat-welcome">
                     <div class="welcome-icon-wrap">
-                        <svg viewBox="0 0 48 48" fill="none">
-                            <rect width="48" height="48" rx="12" fill="#001E50"/>
-                            <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-size="28">🚐</text>
-                        </svg>
+                        <div class="welcome-logo-box">
+                            <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="welcome-logo-img">
+                        </div>
                     </div>
                     <h2 class="welcome-heading">Co planujesz?</h2>
-                    <p class="welcome-sub">Użyj jednego z szybkich startów lub opisz swoją wymarzoną trasę własnymi słowami.</p>
 
                     <div class="quick-actions" id="quick-actions">
                         <button class="quick-action" id="qa-1" data-prompt="Chcę pojechać w góry z rodziną, mam tydzień">
@@ -161,6 +177,17 @@
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
                 </div>
+
+                <!-- Planning Route Indicator -->
+                <div class="planning-indicator" id="planning-indicator" aria-live="polite" aria-label="Tworzenie trasy...">
+                    <span class="planning-icon">🚐</span>
+                    <span class="planning-text">Trwa generowanie trasy...</span>
+                </div>
+            </div>
+
+            <!-- Contextual Suggestion Tiles -->
+            <div class="context-suggestions" id="context-suggestions" style="display:none;">
+                <!-- Populated dynamically by app.js -->
             </div>
 
             <!-- Chat Input -->
@@ -175,6 +202,14 @@
                     ></textarea>
                     <div class="input-actions">
                         <span class="char-counter" id="char-counter">0/1000</span>
+                        <button class="mic-btn" id="mic-btn" aria-label="Mów" title="Dyktuj wiadomość" style="display:none;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                        </button>
                         <button class="send-btn" id="send-btn" aria-label="Wyślij wiadomość" disabled>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                 <line x1="22" y1="2" x2="11" y2="13"/>
@@ -205,22 +240,95 @@
 
             <!-- Map Overlay Controls -->
             <div class="map-overlay" id="map-overlay">
+                <button class="map-control-btn" id="btn-toggle-trip-info" aria-label="Plan trasu" title="Pokaż plan wyjazdu" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="16" rx="2"/>
+                        <line x1="16" y1="2" x2="16" y2="6"/>
+                        <line x1="8" y1="2" x2="8" y2="6"/>
+                        <line x1="3" y1="10" x2="21" y2="10"/>
+                    </svg>
+                    <span class="btn-label">Plan</span>
+                </button>
                 <button class="map-control-btn" id="btn-center-map" aria-label="Wyśrodkuj mapę" title="Wyśrodkuj">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
                     </svg>
+                    <span class="btn-label">Wyśrodkuj</span>
                 </button>
                 <button class="map-control-btn" id="btn-toggle-campings" aria-label="Kempingi" title="Pokaż kempingi">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                         <polyline points="9 22 9 12 15 12 15 22"/>
                     </svg>
+                    <span class="btn-label">Kempingi</span>
                 </button>
+                <button class="map-control-btn" id="btn-toggle-attractions" aria-label="Atrakcje" title="Pokaż atrakcje wzdłuż trasy">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                    <span class="btn-label">Atrakcje</span>
+                    <span class="attractions-badge" id="attractions-count-badge" style="display:none;">0</span>
+                </button>
+                <button class="map-control-btn btn-top-attractions-btn" id="btn-top-attractions" aria-label="Top 5 Atrakcji" title="Zobacz Top 5 Must-See Atrakcji na trasie">
+                    <span style="font-size: 1.1rem; line-height: 1;">🌟</span>
+                    <span class="btn-label" style="font-weight: 700; color: #E65100;">Top 5</span>
+                </button>
+            </div>
+
+            <!-- Map Legend -->
+            <div class="map-legend" id="map-legend">
+                <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span data-i18n="legend_start_end">Start / Koniec</span></div>
+                <div class="legend-item"><span class="legend-line" style="background:#001E50"></span> <span data-i18n="legend_outbound_route">Trasa dojazdowa</span></div>
+                <div class="legend-item"><span class="legend-line" style="background:#E65100"></span> <span data-i18n="legend_return_route">Trasa powrotna</span></div>
+                <div class="legend-item"><span class="legend-dot" style="background:#00875A"></span> <span data-i18n="legend_camping">Kemping</span></div>
+                <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
+                <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
+            </div>
+
+            <!-- Floating Chat Bubble on Map -->
+            <div class="map-chat-container" id="map-chat-container">
+                <button class="map-chat-bubble" id="map-chat-bubble" aria-label="Otwórz czat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span class="btn-label">Czat</span>
+                </button>
+                <div class="map-chat-panel" id="map-chat-panel" style="display:none;">
+                    <div class="map-chat-header">
+                        <span>Asystent AI</span>
+                        <button class="map-chat-close" id="map-chat-close" aria-label="Zamknij czat">✕</button>
+                    </div>
+                    <div class="map-chat-messages" id="map-chat-messages">
+                        <div class="typing-indicator" id="map-typing-indicator">
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                        </div>
+                    </div>
+                    <div class="map-chat-input-wrap">
+                        <textarea id="map-chat-input" placeholder="Zapytaj o trasę..." rows="1" maxlength="1000"></textarea>
+                        <button class="mic-btn map-mic-btn" id="map-mic-btn" aria-label="Mów" title="Dyktuj wiadomość" style="display:none;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                        </button>
+                        <button class="send-btn" id="map-chat-send" aria-label="Wyślij">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Trip Info Panel — floating bottom -->
             <div class="trip-info-card" id="trip-info-card">
+                <div class="sheet-drag-handle" id="sheet-drag-handle" aria-label="Zwiń / Rozwiń panel" title="Dotknij, aby zwinąć/rozwinąć"></div>
                 <div class="trip-info-header">
                     <div class="trip-info-meta">
                         <h3 id="trip-title">—</h3>
@@ -278,9 +386,19 @@
                             <polyline points="21 15 16 10 5 21"/>
                         </svg>
                         <p>Przeciągnij zdjęcia tutaj lub <span class="upload-cta">kliknij, żeby wybrać</span></p>
-                        <small>JPEG, PNG, HEIC — dane GPS zostaną automatycznie odczytane</small>
+                        <small>JPEG, PNG, HEIC — dane GPS zostaną automatycznie odczytane.<br>Brak GPS? Przypniesz zdjęcie ręcznie na mapie.</small>
                         <input type="file" id="photo-upload" accept="image/*" multiple style="display: none;">
+                        <!-- Upload Progress -->
+                        <div class="upload-progress" id="upload-progress" style="display:none;">
+                            <div class="upload-progress-bar" id="upload-progress-bar"></div>
+                            <span class="upload-progress-text" id="upload-progress-text">0%</span>
+                        </div>
                     </div>
+                </div>
+
+                <!-- Memory Timeline (iPhone Memories style) -->
+                <div class="memory-timeline" id="memory-timeline" style="display:none;">
+                    <!-- Day groups inserted dynamically -->
                 </div>
 
                 <!-- Photo Grid -->
@@ -305,11 +423,41 @@
                         </svg>
                         Stwórz podsumowanie podróży
                     </button>
+                    <button class="btn-secondary" id="btn-open-memories-gallery">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <rect x="2" y="2" width="8" height="8" rx="1"/>
+                            <rect x="14" y="2" width="8" height="8" rx="1"/>
+                            <rect x="2" y="14" width="8" height="8" rx="1"/>
+                            <rect x="14" y="14" width="8" height="8" rx="1"/>
+                        </svg>
+                        Galeria Memories
+                        <span class="memories-badge" id="memories-count-badge" style="display:none;">0</span>
+                    </button>
                 </div>
 
             </div>
 
         </section>
+
+        <!-- Photo Lightbox Modal -->
+        <div class="lightbox-overlay" id="photo-lightbox" style="display:none;" role="dialog" aria-modal="true" aria-label="Podgląd zdjęcia">
+            <button class="lightbox-close" id="lightbox-close" aria-label="Zamknij">✕</button>
+            <button class="lightbox-prev" id="lightbox-prev" aria-label="Poprzednie">‹</button>
+            <div class="lightbox-content">
+                <img id="lightbox-img" src="" alt="Zdjęcie z podróży">
+                <div class="lightbox-caption" id="lightbox-caption"></div>
+            </div>
+            <button class="lightbox-next" id="lightbox-next" aria-label="Następne">›</button>
+        </div>
+
+        <!-- Pin Photo on Map Overlay -->
+        <div class="pin-photo-overlay" id="pin-photo-overlay" style="display:none;">
+            <div class="pin-photo-banner">
+                <img id="pin-photo-preview" src="" alt="" class="pin-photo-thumb">
+                <span>📍 Kliknij na mapie, aby przypiąć to zdjęcie</span>
+                <button class="pin-photo-cancel" id="pin-photo-cancel">Anuluj</button>
+            </div>
+        </div>
 
     </div><!-- end #view-container -->
 
@@ -320,10 +468,40 @@
     <div class="modal-header">
         <button class="modal-close-btn" id="summary-close-btn" aria-label="Zamknij">&times;</button>
     </div>
-    <div id="summary-options" class="modal-card">
+    <div id="summary-options" class="modal-card" style="max-width: 480px;">
         <h3>Wybierz format eksportu</h3>
-        <p>Jak chcesz podzielić się swoją przygodą?</p>
-        <div class="modal-actions">
+        <p style="color: var(--vw-text-secondary); margin-bottom: 20px;">Jak chcesz podzielić się swoją przygodą?</p>
+        
+        <!-- Music Track Selection -->
+        <div style="margin-bottom: 24px; text-align: left; background: var(--vw-bg); padding: 16px; border-radius: 16px; border: 1px solid var(--vw-border);">
+            <label for="select-music-track" style="font-weight: bold; font-size: 0.9rem; color: var(--vw-primary); display: block; margin-bottom: 8px;">🎵 Ścieżka dźwiękowa do filmu:</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <select id="select-music-track" class="form-input" style="margin-bottom: 0; flex: 1; padding: 10px; border-radius: 12px;">
+                    <optgroup label="🌿 Relaks">
+                        <option value="acoustic_sunset">🌅 Acoustic Sunset</option>
+                        <option value="vanlife_chill">🚐 Vanlife Chill</option>
+                        <option value="coastal_breeze">🌊 Coastal Breeze</option>
+                        <option value="alpine_acoustic">🌲 Alpine Acoustic</option>
+                    </optgroup>
+                    <optgroup label="🎷 Jazz">
+                        <option value="jazz_trio">🎷 Jazz Trio</option>
+                    </optgroup>
+                    <optgroup label="🎸 Folk / Gitara">
+                        <option value="folk_guitar">🎸 Folk Guitar</option>
+                        <option value="reggae_sunshine">☀️ Reggae Sunshine</option>
+                    </optgroup>
+                    <optgroup label="🎬 Klimat">
+                        <option value="cinematic_orchestral">🎬 Cinematic Orchestral</option>
+                        <option value="electronic_lofi">🎧 Electronic Lo-Fi</option>
+                    </optgroup>
+                    <option value="none">🔇 Bez muzyki</option>
+                </select>
+                <button id="btn-preview-audio" class="btn-primary" style="padding: 10px 14px; border-radius: 12px; font-size: 0.85rem;" title="Odsłuchaj ścieżkę">▶ Odsłuchaj</button>
+            </div>
+            <audio id="audio-preview-player" style="display: none;"></audio>
+        </div>
+
+        <div class="modal-actions" style="justify-content: center; gap: 12px;">
             <button id="btn-export-slideshow" class="btn-primary">Pokaz slajdów</button>
             <button id="btn-export-video" class="btn-primary btn-success">Wideo (.mp4)</button>
         </div>
@@ -337,7 +515,7 @@
 </div>
 
 <!-- ─── Auth Modal ───────────────────────────────────────────── -->
-<div class="modal-overlay" id="auth-modal" style="display: flex;" role="dialog" aria-modal="true" aria-label="Logowanie">
+<div class="modal-overlay" id="auth-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Logowanie">
     <div class="modal-card auth-card">
         <div class="auth-logo">
             <img src="/static/vw-logo-2x.png" alt="VW" height="36">
@@ -348,7 +526,7 @@
             <input type="email" id="login-email" placeholder="Email" class="form-input" autocomplete="email"/>
             <input type="password" id="login-password" placeholder="Hasło" class="form-input" autocomplete="current-password"/>
             <button id="btn-login" class="btn-primary btn-full">Zaloguj się</button>
-            <p class="auth-switch">Nie masz konta? <a href="#" id="link-show-register">Zarejestruj się</a></p>
+            <p class="auth-switch">Nie masz konta? <a href="#" id="link-show-register" onclick="window.showRegisterView &amp;&amp; window.showRegisterView(); return false;">Zarejestruj się</a></p>
         </div>
 
         <div id="register-view" style="display: none;">
@@ -356,7 +534,7 @@
             <input type="email" id="register-email" placeholder="Email" class="form-input" autocomplete="email"/>
             <input type="password" id="register-password" placeholder="Hasło" class="form-input" autocomplete="new-password"/>
             <button id="btn-register" class="btn-primary btn-full">Utwórz konto</button>
-            <p class="auth-switch">Masz już konto? <a href="#" id="link-show-login">Zaloguj się</a></p>
+            <p class="auth-switch">Masz już konto? <a href="#" id="link-show-login" onclick="window.showLoginView &amp;&amp; window.showLoginView(); return false;">Zaloguj się</a></p>
         </div>
 
         <div id="auth-error" class="form-error" style="display: none;"></div>
@@ -365,7 +543,215 @@
     </div>
 </div>
 
-<!-- Application Logic -->
+<!-- ─── Memories Gallery Modal ────────────────────────────── -->
+<div class="modal-overlay memories-gallery-overlay" id="memories-gallery-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Galeria Memories">
+    <div class="memories-gallery-panel">
+        <div class="memories-gallery-header">
+            <div class="memories-gallery-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                    <polygon points="23 7 16 12 23 17 23 7"/>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                </svg>
+                <h3>Galeria Memories</h3>
+            </div>
+            <button class="modal-close-btn" id="memories-gallery-close" aria-label="Zamknij">&times;</button>
+        </div>
+
+        <p class="memories-gallery-sub">Wszystkie wygenerowane filmy i pokazy slajdów z Twoich podróży.</p>
+
+        <!-- Loading state -->
+        <div class="memories-gallery-loading" id="memories-gallery-loading">
+            <div class="memories-spinner"></div>
+            <span>Ładowanie galerii...</span>
+        </div>
+
+        <!-- Empty state -->
+        <div class="memories-gallery-empty" id="memories-gallery-empty" style="display:none;">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" width="56" height="56">
+                <polygon points="46 14 32 24 46 34 46 14"/>
+                <rect x="2" y="10" width="30" height="28" rx="4"/>
+            </svg>
+            <p>Nie ma jeszcze żadnych Memories.</p>
+            <small>Wygeneruj swoje pierwsze podsumowanie podróży!</small>
+        </div>
+
+        <!-- Gallery grid -->
+        <div class="memories-gallery-grid" id="memories-gallery-grid" style="display:none;">
+            <!-- Cards inserted dynamically -->
+        </div>
+    </div>
+</div>
+
+<!-- ─── Memories Viewer Modal ────────────────────────────────── -->
+<div class="modal-overlay" id="memories-viewer-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Odtwarzacz Memory">
+    <div class="modal-header" style="position:absolute;top:0;right:0;padding:12px;z-index:10;">
+        <button class="modal-close-btn" id="memories-viewer-close" aria-label="Zamknij">&times;</button>
+    </div>
+    <div id="memories-viewer-content" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;gap:16px;padding:16px;">
+        <!-- Video or image viewer inserted dynamically -->
+    </div>
+</div>
+
+<!-- ─── Profile & Vehicle Preferences Modal ──────────────────── -->
+<div class="modal-overlay" id="profile-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Profil i Preferencje VW">
+    <div class="modal-card profile-card">
+        <div class="modal-header">
+            <h3>⚙️ Profil & Preferencje VW California</h3>
+            <button class="modal-close-btn" id="profile-close-btn" aria-label="Zamknij">&times;</button>
+        </div>
+        <div class="form-group">
+            <label for="pref-vehicle">Model Pojazdu:</label>
+            <select id="pref-vehicle" class="form-input">
+                <option value="VW California Ocean 6.1">VW California Ocean 6.1</option>
+                <option value="VW California Coast">VW California Coast</option>
+                <option value="VW California Beach">VW California Beach</option>
+                <option value="VW Grand California">VW Grand California</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="pref-drive-hours">Maksymalny dzienny czas jazdy (h):</label>
+            <input type="number" id="pref-drive-hours" class="form-input" min="2" max="12" step="0.5" value="6.0">
+        </div>
+        <div class="form-group">
+            <label for="pref-hookup">Typ Przyłącza Prądu:</label>
+            <select id="pref-hookup" class="form-input">
+                <option value="shore_power">Shore Power (Prąd kempingowy CEE)</option>
+                <option value="full_hookup">Full Hookup (Prąd + Woda + Ścieki)</option>
+                <option value="none">Brak (Samowystarczalny / Solary)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="pref-budget">Maksymalny budżet za noc (€):</label>
+            <input type="number" id="pref-budget" class="form-input" min="0" max="200" value="35">
+        </div>
+        <div class="form-group">
+            <label>Wymagane Udogodnienia:</label>
+            <div class="checkbox-group">
+                <label><input type="checkbox" id="pref-amenity-power" value="power" checked> Prąd</label>
+                <label><input type="checkbox" id="pref-amenity-water" value="water" checked> Woda</label>
+                <label><input type="checkbox" id="pref-amenity-showers" value="showers" checked> Prysznice</label>
+                <label><input type="checkbox" id="pref-amenity-wifi" value="wifi"> Wi-Fi</label>
+                <label><input type="checkbox" id="pref-amenity-waste" value="waste_disposal"> Zrzut ścieków</label>
+            </div>
+        </div>
+        <div class="modal-actions" style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <button id="btn-save-preferences" class="btn-primary">Zapisz preferencje</button>
+            <button id="btn-restart-tutorial" class="btn-secondary">▶️ Samouczek</button>
+            <button id="btn-user-logout" class="btn-secondary">Wyloguj się</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Saved Trips Drawer / Modal ────────────────────────────── -->
+<div class="modal-overlay" id="trips-drawer" style="display: none;" role="dialog" aria-modal="true" aria-label="Moje Zapisane Wyjazdy">
+    <div class="modal-card trips-card">
+        <div class="modal-header">
+            <h3>🗺️ Moje Zapisane Podróże</h3>
+            <button class="modal-close-btn" id="trips-close-btn" aria-label="Zamknij">&times;</button>
+        </div>
+        <div class="trips-list" id="trips-list">
+            <!-- Trips inserted dynamically -->
+        </div>
+    </div>
+</div>
+
+<!-- ─── Camping Selection Modal (3 Proposals per Day) ─────────── -->
+<div class="modal-overlay camping-selection-overlay" id="camping-selection-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Wybór noclegu">
+    <div class="camping-selection-card">
+        <div class="camping-selection-header">
+            <div class="camping-modal-header-title">
+                <h3 id="camping-modal-title" data-i18n="camping_modal_title">🏕️ Wybierz Nocleg</h3>
+                <span class="day-badge" id="camping-modal-day-badge">Dzień 1</span>
+            </div>
+            <button class="camping-modal-close-btn" id="camping-modal-close" aria-label="Zamknij">&times;</button>
+        </div>
+        <p class="camping-modal-sub" id="camping-modal-sub" data-i18n="camping_modal_sub">Oto 3 propozycje kempingów dostosowane do Twojego VW California. Wybierz idealne miejsce na nocleg:</p>
+        
+        <!-- Day Tabs for Multi-day trips -->
+        <div class="camping-day-tabs" id="camping-day-tabs"></div>
+
+        <!-- 3 Camping Proposal Cards -->
+        <div class="camping-cards-grid" id="camping-cards-grid">
+            <!-- Cards rendered dynamically -->
+        </div>
+
+        <!-- Day Attractions Section -->
+        <div class="day-attractions-modal-section" id="day-attractions-modal-section" style="margin-top: 20px; border-top: 1px dashed #CBD5E0; padding-top: 16px;">
+            <h4 id="day-attractions-modal-title" style="margin: 0 0 12px 0; color: #001E50; font-size: 1.05rem; font-weight: 700;">⭐ Rekomendowane atrakcje na ten dzień trasy:</h4>
+            <div class="day-attractions-modal-grid" id="day-attractions-modal-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+                <!-- Attraction cards rendered dynamically -->
+            </div>
+        </div>
+
+        <div class="camping-modal-footer" style="display: flex; justify-content: flex-end; margin-top: 16px;">
+            <button id="btn-camping-modal-done" class="btn-primary" style="padding: 12px 28px; border-radius: 24px; font-weight: 700;" data-i18n="camping_confirm_all">Gotowe</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Top 5 Must-See Attractions Modal ───────────────────── -->
+<div class="modal-overlay top-attractions-overlay" id="top-attractions-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Top 5 Atrakcji">
+    <div class="top-attractions-card">
+        <div class="top-attractions-header">
+            <div class="top-attractions-title-box">
+                <h3 id="top-attractions-title">🌟 Top 5 Must-See Atrakcji na Trasie</h3>
+                <p id="top-attractions-subtitle">Najwyżej oceniane i najbardziej spektakularne miejsca wyselekcjonowane dla Twojej wyprawy VW California:</p>
+            </div>
+            <div class="top-attractions-header-controls" style="display: flex; align-items: center; gap: 14px;">
+                <div class="top-sort-wrapper" style="display: flex; align-items: center; gap: 6px;">
+                    <label for="top-attractions-sort" style="font-size: 0.88rem; font-weight: 700; color: #001E50; white-space: nowrap;">Sortuj:</label>
+                    <select id="top-attractions-sort" class="top-sort-select">
+                        <option value="rating">🌟 Najwyżej oceniane</option>
+                        <option value="day">📅 Według dni trasy (Dzień 1 ➔ N)</option>
+                    </select>
+                </div>
+                <button class="top-attractions-close-btn" id="top-attractions-close" aria-label="Zamknij">&times;</button>
+            </div>
+        </div>
+
+        <!-- 5 Cards Responsive Grid -->
+        <div class="top-attractions-grid" id="top-attractions-grid">
+            <!-- Cards rendered dynamically -->
+        </div>
+
+        <!-- Pagination Footer Bar -->
+        <div class="top-attractions-footer">
+            <button class="btn-top-nav" id="btn-top-prev" disabled>
+                ⬅️ Poprzednie 5
+            </button>
+            <span class="top-page-indicator" id="top-page-indicator">Atrakcje #1–#5</span>
+            <button class="btn-top-nav btn-top-next" id="btn-top-next">
+                Następne 5 ➡️
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Welcome Overlay (Dark Blue Brand Greeting) ──────────────── -->
+<div id="welcome-overlay" class="welcome-overlay" style="display: none;">
+    <div class="welcome-content">
+        <div class="welcome-badge">🚐 VW California AI Trip Planner</div>
+        <h1 class="welcome-title" id="welcome-user-name">Witaj!</h1>
+        <p class="welcome-subtitle">Dokąd dzisiaj zmierzamy?</p>
+    </div>
+</div>
+
+<!-- ─── Interactive Tutorial Overlay ───────────────────────────── -->
+<div id="tutorial-overlay" class="tutorial-overlay" style="display: none;">
+    <div id="tutorial-highlight-box" class="tutorial-highlight-box"></div>
+    <div id="tutorial-card" class="tutorial-card">
+        <div class="tutorial-step-badge" id="tutorial-step-badge">Krok 1 z 5</div>
+        <h3 class="tutorial-card-title" id="tutorial-card-title">Tytuł kroku</h3>
+        <p class="tutorial-card-desc" id="tutorial-card-desc">Opis kroku</p>
+        <div class="tutorial-card-actions">
+            <button id="tutorial-btn-skip" class="btn-tutorial-secondary">Pomiń tutorial</button>
+            <button id="tutorial-btn-next" class="btn-tutorial-primary">Dalej &rarr;</button>
+        </div>
+    </div>
+</div>
+
+<!-- Internationalization & Application Logic -->
+<script src="/static/i18n.js"></script>
 <script src="/static/app.js"></script>
 
 <!-- Google Maps JavaScript SDK -->

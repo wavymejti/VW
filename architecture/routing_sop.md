@@ -13,7 +13,7 @@ daily schedules respectful of user driving limits.
 ## Trigger
 
 - User says: "Plan a 5-day trip from Munich to Croatia"
-- Gemini extracts intent → `plan_route` function call
+- OpenAI model extracts intent → `plan_route` function call
 
 ## Input Schema
 

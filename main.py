@@ -9,6 +9,8 @@ from tools.verify_connections import run_all_handshakes
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from navigation.chat_handler import create_chat_session, send_message
+from tools.verify_travel_memory import run_pipeline_test
+from tools.memory_logger import get_memory_logger
 
 
 def example_verify_connections():
@@ -49,6 +51,43 @@ def example_search_campings():
                   f"(€{camp.get('cost_per_night_eur', '?')}/night)")
     else:
         print(f"  ❌ {results.get('message', 'Unknown error')}")
+
+
+def example_verify_travel_memory():
+    """
+    Phase 4: Build — Verify the Travel Memory photo pipeline.
+
+    Generates mock images (matching GPS/dates, wrong date, too far, and no EXIF)
+    and verifies database storage and PostGIS-based route segment linking.
+    """
+    print("\n📸 Verifying Travel Memory Pipeline...")
+    run_pipeline_test(cleanup=True, interactive=False)
+
+
+def example_memory_logger():
+    """
+    Demonstrates in-memory log collection, filtering, and reporting.
+    """
+    print("\n📝 Demonstrating In-Memory Log Collection...")
+    logger = get_memory_logger()
+
+    # Record sample log entries
+    logger.info("Initializing trip planner application", category="SYSTEM")
+    logger.debug("Database connection pool established", category="DATABASE")
+    logger.warning("Low budget preference detected for high-season trip", category="PLANNING")
+    logger.error("Failed to fetch traffic data for segment 3", category="API")
+
+    # Fetch statistics and display
+    stats = logger.get_stats()
+    print(f"  Total logs collected in memory: {stats['total_logs']}")
+    print(f"  Logs by level: {stats['by_level']}")
+    print(f"  Logs by category: {stats['by_category']}")
+
+    # Search demonstration
+    search_results = logger.search_logs("traffic")
+    print(f"  Found {len(search_results)} log entries matching 'traffic':")
+    for log_entry in search_results:
+        print(f"    - [{log_entry['timestamp']}] [{log_entry['level']}] {log_entry['category']}: {log_entry['message']}")
 
 
 def example_chat():
@@ -103,9 +142,17 @@ def main():
     print("=" * 55)
     example_search_campings()
 
+    # Phase 4: Demonstrate Travel Memory
+    example_verify_travel_memory()
+
+    # Log Collection in memory demonstration
+    example_memory_logger()
+
     # Phase 3: Interactive chat
     example_chat()
 
 
 if __name__ == "__main__":
     main()
+
+

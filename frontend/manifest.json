@@ -1,0 +1,24 @@
+{
+  "name": "VW California AI Trip Planner",
+  "short_name": "VW Planner",
+  "description": "Inteligentny planista podróży dla właścicieli VW California z pamięcią podróży i interaktywną mapą.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000E26",
+  "theme_color": "#001E50",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/vw-logo-2x.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/vw-logo-2x.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

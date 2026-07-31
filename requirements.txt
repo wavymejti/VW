@@ -18,7 +18,11 @@ GeoAlchemy2>=0.14.0
 
 # EXIF extraction for Travel Memory
 Pillow>=10.0.0
+pillow-heif>=0.15.0
 exifread>=3.0.0
+
+# PDF generation
+reportlab>=4.0.0
 
 # Data validation
 pydantic>=2.5.0

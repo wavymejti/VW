@@ -10,7 +10,11 @@ Usage:
     python3 tools/verify_connections.py
 """
 
+import os
 import sys
+
+# Ensure project root is in sys.path when running script directly
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.openai_client import (
     verify_connection as verify_openai,

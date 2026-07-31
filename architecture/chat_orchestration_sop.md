@@ -1,15 +1,15 @@
 # Chat Orchestration SOP
 
 > Standard Operating Procedure for the conversational AI layer.
-> **Golden Rule**: Update this SOP before updating code in `navigation/chat_handler.py`.
+> **Golden Rule**: Update this SOP before updating code in `navigation/chat_handler.py` or `tools/openai_client.py`.
 
 ---
 
 ## Purpose
 
-Manage the conversational flow between the user and the OpenAI model (GPT), dispatching
+Manage the conversational flow between the user and the OpenAI model, dispatching
 structured intents to the appropriate tools. Ensure a natural, guided planning experience
-for VW California camper van users through **slot-filling architecture**.
+for VW California camper van users through an advanced **Hard/Soft slot-filling architecture**.
 
 ---
 
@@ -18,126 +18,104 @@ for VW California camper van users through **slot-filling architecture**.
 ```text
 User Input
   → OpenAI API (with tools + system_prompt)
-    → Slot-filling check (all 5 filled?)
+    → Hard Slot-filling check (all 5 filled?)
       → No  → Natural clarifying question (text response)
-      → Yes → Tool Call → Dispatcher → Tool Script → Tool Response
-                → OpenAI formats result → Final text to user
-                  → API returns slot_state (frontend updates progress bar)
+      → Yes → Soft Slot check (all filled or 2 rounds passed?)
+                → Yes → Tool Call (`plan_route`) → Dispatcher
+                  → OpenAI formats result (with transparency on daily splits)
+                    → API returns slot_state (frontend updates progress bar)
 ```
 
 ---
 
-## System Prompt
+## System Prompt & Tonality
 
-The system instruction sets the VW brand voice and slot-filling behaviour:
-
-- Professional, friendly, knowledgeable about camper van travel in Europe.
-- Understands **VW California-specific needs** (shore power hookups, vehicle length, solar panels).
-- Extracts structured data via OpenAI Function Calling.
-- **Slot-filling guidance**: collects 5 parameters before calling `plan_route`, asking in
-  natural order but accepting answers out of sequence.
-
-### Holistic Parameter Gathering
-
-The AI guides the user to collect the following slots, but it does NOT ask them one by one. It uses **Holistic Extraction** to gather as much context as possible from a single prompt:
-
-| # | Slot | Key | Example values |
-|---|---|---|---|
-| 1 | **Vibe & Party** | `vibe` | mountains, coast, city; kids, pets, couple |
-| 2 | **Experience** | `experience` | first-timer, intermediate, veteran |
-| 3 | **Pace** | `pace` | new-place-every-day, basecamp |
-| 4 | **Infrastructure** | `infrastructure` | wild-camping, full-service, mixed |
-| 5 | **Duration** | `duration` | number of days |
-
-> **Critical Routing Parameters**: The AI also implicitly extracts `origin` (Starting Point) and `start_date`.
-
-### Handling Missing Information
-
-If the user provides an extensive prompt (e.g., "Alps, wife, 7 days, wild camping, new place every day"), the AI will **acknowledge all of it** and check if any critical routing parameters (Origin, Start Date) or remaining slots are missing. 
-If information is missing, the AI groups the remaining requirements into **one natural, bundled question** (e.g., "Super pomysł! Skąd ruszacie i kiedy?").
-
-### Route Confirmation
-
-Before calling `plan_route`, the AI **briefly confirms** all collected values in one sentence,
-then calls the tool. Example:
-> "Perfect — a 7-day wild camping trip to the Alps starting from Munich tomorrow. Let me plan your route now..."
+The system instruction (`tools/openai_client.py`) sets the VW brand voice:
+- Warm, competent travel companion. Not a form.
+- Short sentences, uses "we" ("let's plan", "we are off to").
+- No artificial enthusiasm for every user answer.
 
 ---
 
-## Slot State (slot_state)
+## Slot Model (9 Slots)
 
-Every API response from `/api/chat` includes a `slot_state` object indicating which slots
-have been collected. The frontend uses this to update the progress bar.
+The chat collects 9 parameters before planning a route. They are divided into **Hard** and **Soft** slots.
+
+### Hard Slots (Blocking)
+
+`plan_route` CANNOT be called until these are filled.
+1. `trip_type` — `"punkt-do-punktu"` (A to B) or `"baza-wypadowa"` (exploring a region). Must be clarified early if ambiguous.
+2. `origin` — Starting location.
+3. `start_date` — Starting date.
+4. `duration` — Number of days.
+5. `destination` — Depends on `trip_type`. Exact location for A to B, or general region/city for basecamp.
+
+### Soft Slots (Non-Blocking)
+
+These have default values. The AI asks a maximum of **2 rounds** for these. If still missing, it assumes defaults and communicates them before routing.
+1. `party_composition` (Default: couple/small group of adults).
+2. `experience` (Default: moderate experience).
+3. `pace` (Default: basecamp every 2-3 days).
+4. `infrastructure` (Default: mixed wild/full-service).
+
+---
+
+## Holistic Gathering & Contradictions
+
+- **Holistic Gathering**: The AI groups missing questions into natural sentences, prioritizing hard slots. It does not ask sequentially.
+- **Contradictions (Hard Rule)**:
+  - If a user changes a **Hard Slot** (e.g., "7 days" to "14 days"), the AI MUST NOT overwrite silently. It must explicitly ask which one to use.
+  - If a user changes a **Soft Slot**, the AI overwrites silently.
+
+---
+
+## Slot State (`<slot_state>`)
+
+Every text response from the AI ends with a machine-readable JSON block tracking the 9 slots.
+The backend `chat_handler.py` strips this from the visible text and returns it to the frontend.
 
 ```json
+<slot_state>
 {
-  "slot_state": {
-    "vibe": "mountains_with_kids | null",
-    "experience": "veteran | null",
-    "pace": "basecamp | null",
-    "infrastructure": "full-service | null",
-    "duration": 7
-  },
-  "slots_complete": false
+  "trip_type": "baza-wypadowa",
+  "origin": "Munich",
+  "start_date": "2026-08-01",
+  "duration": 7,
+  "destination": "Alps",
+  "party_composition": "couple",
+  "experience": "veteran",
+  "pace": "new-place-every-day",
+  "infrastructure": "wild-camping"
 }
+</slot_state>
 ```
-
-`slot_state` is extracted from the conversation history by the chat handler:
-- After each turn, `chat_handler.py` calls a lightweight OpenAI completion (or regex scan)
-  to extract current slot values from the conversation history.
-- The result is appended to the API response JSON.
+*Note: Unknown values are `null`.*
 
 ---
 
-## Available Tools (OpenAI Tool Definitions)
+## Calling `plan_route`
 
-| Tool | When to Call | Key Arguments |
-|---|---|---|
-| `search_campings` | User asks to find campgrounds in a specific area | `location`, `amenities_required` |
-| `plan_route` | All 5 slots filled OR explicit action requested | `destination`, `duration_days`, `pace`, `granularity` |
-| `expand_route_section` | User asks to detail part of a macro-plan | `section_id`, `start_date`, `end_date` |
-| `add_waypoint` | User wants to add a stop to an existing day | `day_id`, `poi_name` |
-| `adjust_schedule` | User wants to modify timing, swap days | `action`, `target_day` |
-| `get_trip_summary` | User asks to see the current itinerary | `format` (brief/detailed) |
+Generating a route is expensive, so it is a **separate, explicitly confirmed step** — the AI never calls `plan_route` automatically immediately after completing slots.
 
-> **Duration rule**: If `duration_days` > 14 → Dispatcher forces `granularity: "macro"` to
-> return a high-level chapter/basecamp plan instead of a daily breakdown.
+1. AI ensures all Hard slots are filled.
+2. AI assumes defaults for missing Soft slots (if max rounds exceeded).
+3. AI writes a summary of collected data and ends it with an **explicit closing question**, e.g.: "Rozumiem: planujemy 14-dniową trasę... Zaczynam planować trasę?". It MUST NOT write "Daj mi chwilę..." at this stage.
+4. AI **waits** for explicit user confirmation (e.g., "yes", "start").
+5. As soon as the user confirms the plan (e.g., says "yes"), the AI MUST **IMMEDIATELY call the `plan_route` tool**. It must NOT ask additional clarifying questions (like confirming date formats) and must NOT repeat the summary.
+6. If the user provides a correction instead of confirmation, the AI updates the slot, repeats the updated summary, and asks for confirmation again.
+7. **Transparency Requirement**: The AI's final text presenting the route MUST explain the split between driving days and stationary days, justifying it based on `pace`, `experience`, and `trip_type`.
 
 ---
 
-## Conversation Flow
+## Post-Planning Mode
 
-1. **Receive user message** — append to message history with `role: "user"`.
+Once a route is planned, the backend injects:
+`[SYSTEM NOTE] Active trip ID: <uuid>. A route is already planned...`
 
-2. **Send to OpenAI API** — payload includes `model`, `messages` (history starting with
-   `role: "system"`), and `tools` array.
-
-3. **Check response `finish_reason`**:
-   - **`stop` (slot-filling active)** → User has not provided all 5 slots. AI asks the next
-     natural clarifying question. Return text to user directly.
-   - **`tool_calls` (action requested)** → All slots filled or explicit action requested.
-     Extract function name + args → send to Dispatcher.
-
-4. **Execute tool** — Dispatcher routes to the correct tool script.
-
-5. **Return tool result** — append to history with `role: "tool"` and `tool_call_id`.
-
-6. **Generate final reply** — Call OpenAI API again with updated history. Model formats tool
-   result as natural language (e.g., presents Macro plan and asks if user wants to detail Week 1).
-
-7. **Extract slot_state** — Parse conversation history to determine which of the 5 slots have
-   been mentioned. Append `slot_state` + `slots_complete` to the API response JSON.
-
-8. **Store messages** — Save final assistant response to `chat_messages` table in DB.
-
----
-
-## Error Handling
-
-| Error | Action |
-|---|---|
-| OpenAI API timeout / 5xx | Retry once with exponential backoff, then apologise and suggest retry |
-| Invalid function args (JSON validation failed) | Send system error message back to OpenAI as `role: "tool"` so model can auto-correct |
-| Tool execution failure | Log error, append graceful error message as `role: "tool"`, let OpenAI inform the user |
-| Ambiguous intent | Model should ask a clarifying question before calling a tool |
-| Scope too large (>30 days detail) | Apologise, provide Macro plan, prompt user to plan week-by-week |
+The AI stops asking for trip parameters and handles intents:
+- **Modify Route**: `modify_route` (changing cities, pace, avoiding regions).
+- **Add Attraction**: `add_attraction` (specific POIs).
+- **Information**: `search_campings` or general knowledge.
+- **New Trip**: Requires explicit user confirmation before overwriting the current plan.
+- **Ambiguous Command**: If the user says "change the camping", the AI must ask "which day?" before calling a tool.
+- **Destructive Changes**: AI must briefly warn/confirm before deleting a day or shortening the trip.

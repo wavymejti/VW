@@ -15,10 +15,10 @@ class TestChatHandlerExtended:
         
         result = send_message(session, "Hello")
         assert result["status"] == "error"
-        assert "trouble connecting" in result["text"]
+        assert "problem z połączeniem" in result["text"]
         
         # User message was stored before failure
-        mock_store.assert_called_once_with("test-trip", "user", "Hello")
+        mock_store.assert_called_once_with(None, "test-trip", "user", "Hello")
 
     @patch("navigation.chat_handler._store_message")
     @patch("navigation.chat_handler.dispatch")
@@ -48,10 +48,10 @@ class TestChatHandlerExtended:
         
         result = _process_response(session, mock_response, trip_id="trip-1")
         assert result["status"] == "partial"
-        assert "Here's what I found" in result["text"]
+        assert "Oto podsumowanie" in result["text"]
         
         # Check tool was logged in summary
-        assert "search_campings: completed successfully" in result["text"]
+        assert "search_campings: Trasa wyznaczona pomyślnie" in result["text"]
 
     @patch("navigation.chat_handler.get_engine")
     def test_store_message_db_exception(self, mock_engine):
