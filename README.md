@@ -13,7 +13,7 @@ An intelligent, conversational web application designed specifically for Volkswa
 
 ## 📸 Interface Preview
 
-![VW California AI Trip Planner Dashboard](dashboard_mockup.png)
+![VW California AI Trip Planner Dashboard](dashboard-mockup.png)
 
 ---
 
