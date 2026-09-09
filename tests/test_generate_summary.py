@@ -103,3 +103,94 @@ class TestGenerateSummary:
         assert result["file_url"].endswith(".mp4")
         # File should exist on disk
         assert os.path.exists(result["file_url"])
+
+    def test_video_generation_with_audio(self):
+        """Video generation with audio track should succeed and include audio."""
+        result = generate_summary(
+            SEED_TRIP_ID, format="video", music_track="vanlife_chill"
+        )
+        assert result["status"] == "success"
+        assert os.path.exists(result["file_url"])
+
+
+class TestCinematicRecapComponents:
+    """Tests for individual cinematic recap components."""
+
+    def test_mercator_math(self):
+        """Web Mercator projection should correctly center coordinates."""
+        from tools.generate_summary import _lat_lng_to_pixel, _get_bounds_zoom
+
+        # Center coordinate at zoom 8 should be in canvas center
+        cx, cy = _lat_lng_to_pixel(48.0, 11.5, 48.0, 11.5, zoom=8, width=640, height=360, scale=2)
+        assert abs(cx - 640.0) < 1e-3
+        assert abs(cy - 360.0) < 1e-3
+
+        zoom = _get_bounds_zoom(45.0, 48.0, 10.0, 13.0)
+        assert 4 <= zoom <= 10
+
+    def test_campervan_sprite(self):
+        """Campervan sprite should render with transparency and correct dimensions."""
+        from tools.generate_summary import _get_campervan_sprite
+        from PIL import Image
+
+        sprite = _get_campervan_sprite(width=42, height=84)
+        assert sprite.size == (42, 84)
+        assert sprite.mode == "RGBA"
+
+    def test_vector_map_fallback(self):
+        """Cartographic background should render cleanly."""
+        from tools.generate_summary import _generate_vector_cartographic_background
+        bg = _generate_vector_cartographic_background(1280, 720, 48.0, 11.5, 8)
+        assert bg.size == (1280, 720)
+
+
+class TestPhotoPinsAndPartitioning:
+    """Tests for miniature photo pin generation, clustering, and partitioning."""
+
+    def test_photo_pin_thumbnail(self, tmp_path):
+        """Photo pin should render with needle and RGBA transparency."""
+        from PIL import Image
+        from tools.generate_summary import _get_cached_photo_pin
+
+        # Create temporary dummy photo
+        test_img_path = str(tmp_path / "test_photo.jpg")
+        img = Image.new("RGB", (200, 200), color=(100, 150, 200))
+        img.save(test_img_path)
+
+        pin = _get_cached_photo_pin(test_img_path, count=1, thumb_size=42)
+        assert pin is not None
+        assert pin.mode == "RGBA"
+        assert pin.width > 42
+        assert pin.height > 42
+
+    def test_photo_pin_cluster_badge(self, tmp_path):
+        """Photo pin with count > 1 should render cluster badge."""
+        from PIL import Image
+        from tools.generate_summary import _get_cached_photo_pin
+
+        test_img_path = str(tmp_path / "test_photo_badge.jpg")
+        img = Image.new("RGB", (200, 200), color=(200, 100, 50))
+        img.save(test_img_path)
+
+        pin = _get_cached_photo_pin(test_img_path, count=15, thumb_size=42)
+        assert pin is not None
+        assert pin.mode == "RGBA"
+
+    def test_partition_photos_by_schedule(self):
+        """Photos should be accurately allocated to day schedules."""
+        from tools.generate_summary import _partition_photos_by_schedule
+
+        schedules = [
+            {"id": "d1", "day_number": 1, "waypoints": [{"lat": 50.0, "lng": 20.0}]},
+            {"id": "d2", "day_number": 2, "waypoints": [{"lat": 52.0, "lng": 21.0}]},
+        ]
+        photos = [
+            {"id": "p1", "lat": 50.01, "lng": 20.02, "tagged_day_schedule_id": None},
+            {"id": "p2", "lat": 52.05, "lng": 21.01, "tagged_day_schedule_id": "d2"},
+            {"id": "p3", "lat": None, "lng": None, "tagged_day_schedule_id": None},
+        ]
+
+        assigned = _partition_photos_by_schedule(photos, schedules)
+        assert len(assigned["d1"]) == 2  # p1 (nearest) and p3 (unassigned fallback)
+        assert len(assigned["d2"]) == 1  # p2 (explicitly tagged)
+

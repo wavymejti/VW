@@ -98,7 +98,7 @@ test.describe('VW California AI Trip Planner — Map View & Route Cards UI Test 
   /* ─────────────────────────────────────────────────────────────────────
      2. Przyciski kontroli mapy (#btn-center-map)
      ───────────────────────────────────────────────────────────────────── */
-  test('2. Map Controls — #btn-center-map and #btn-toggle-campings are visible and clickable', async ({ page }) => {
+  test('2. Map Controls — #btn-center-map and #btn-toggle-attractions are visible and clickable', async ({ page }) => {
     await page.evaluate(() => (window as any).switchView('map'));
     await expect(page.locator('#view-map')).toHaveClass(/active/);
 
@@ -120,9 +120,9 @@ test.describe('VW California AI Trip Planner — Map View & Route Cards UI Test 
     const centerClicked = await page.evaluate(() => (window as any)._centerMapExecuted === true);
     expect(centerClicked).toBe(true);
 
-    const btnToggleCampings = page.locator('#btn-toggle-campings');
-    await expect(btnToggleCampings).toBeVisible();
-    await btnToggleCampings.click();
+    const btnToggleAttractions = page.locator('#btn-toggle-attractions');
+    await expect(btnToggleAttractions).toBeVisible();
+    await btnToggleAttractions.click();
   });
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -376,6 +376,36 @@ test.describe('VW California AI Trip Planner — Map View & Route Cards UI Test 
     expect(polylinesInfo[1].isReturn).toBe(false);
     expect(polylinesInfo[2].isReturn).toBe(true);
     expect(polylinesInfo[3].isReturn).toBe(true);
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────
+     7. Day Card Click vs Camping Button Click — Card click highlights route, button opens modal
+     ───────────────────────────────────────────────────────────────────── */
+  test('7. Day Card Click vs Camping Button Click — Clicking day card outside button only highlights route and does not open modal', async ({ page }) => {
+    await page.evaluate(() => {
+      const mockTripData = {
+        status: 'success',
+        trip: { id: 'test-card-click', title: 'Test Trip', origin: { label: 'A', lat: 50, lng: 18 }, destination: { label: 'B', lat: 51, lng: 19 }, start_date: '2026-08-01', end_date: '2026-08-02', status: 'planned' },
+        total_driving_km: 100, total_driving_hours: 2.0,
+        daily_schedules: [
+          { day_number: 1, date: '2026-08-01', driving_hours: 1.0, driving_km: 50, waypoints: [{ type: 'start', lat: 50, lng: 18 }] },
+          { day_number: 2, date: '2026-08-02', driving_hours: 1.0, driving_km: 50, waypoints: [{ type: 'end', lat: 51, lng: 19 }] }
+        ]
+      };
+      (window as any).displayTripOnMap(mockTripData);
+    });
+
+    const card1 = page.locator('.day-card').nth(0);
+    const modal = page.locator('#camping-selection-modal');
+
+    // Click outside button on day card (e.g. on .day-number)
+    await card1.locator('.day-number').click();
+    await expect(card1).toHaveClass(/active/);
+    await expect(modal).not.toBeVisible();
+
+    // Click blue button inside day card
+    await card1.locator('.btn-change-camping-day').click();
+    await expect(modal).toBeVisible();
   });
 
 });

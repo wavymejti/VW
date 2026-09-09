@@ -535,7 +535,7 @@ test.describe('VW California AI Trip Planner — UI Test Suite', () => {
     await expect(legend).toContainText('Zdjęcie');
   });
 
-  test('Toggle Campings button (#btn-toggle-campings) toggles camping markers and active state', async ({ page }) => {
+  test('toggleCampingsOnMap toggles camping markers and state', async ({ page }) => {
     page.on('console', msg => console.log('BROWSER LOG:', msg.text()));
     page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
     // Mock search_campings endpoint
@@ -605,25 +605,18 @@ test.describe('VW California AI Trip Planner — UI Test Suite', () => {
       };
     });
 
-    const toggleBtn = page.locator('#btn-toggle-campings');
-    await expect(toggleBtn).toBeVisible();
-
-    // Click to turn ON campings
+    // Execute toggleCampingsOnMap to turn ON campings
     await page.evaluate(async () => {
       await (window as any).toggleCampingsOnMap();
     });
-
-    await expect(toggleBtn).toHaveClass(/active/);
 
     const markerCount = await page.evaluate(() => ((window as any).state && (window as any).state.campingMarkers) ? (window as any).state.campingMarkers.length : 0);
     expect(markerCount).toBe(2);
 
-    // Click again to turn OFF campings
+    // Execute again to turn OFF campings
     await page.evaluate(async () => {
       await (window as any).toggleCampingsOnMap();
     });
-
-    await expect(toggleBtn).not.toHaveClass(/active/);
 
     const markerCountOff = await page.evaluate(() => ((window as any).state && (window as any).state.campingMarkers) ? (window as any).state.campingMarkers.length : 0);
     expect(markerCountOff).toBe(0);
@@ -739,7 +732,7 @@ test.describe('VW California AI Trip Planner — UI Test Suite', () => {
     await expect(page.locator('#view-map')).toHaveClass(/active/);
   });
 
-  test('Map Controls — #btn-center-map and #btn-toggle-campings are present and clickable', async ({ page }) => {
+  test('Map Controls — #btn-center-map and #btn-toggle-attractions are present and clickable', async ({ page }) => {
     await page.click('#nav-map');
     await expect(page.locator('#view-map')).toHaveClass(/active/);
 
@@ -747,9 +740,9 @@ test.describe('VW California AI Trip Planner — UI Test Suite', () => {
     await expect(btnCenter).toBeVisible();
     await btnCenter.click();
 
-    const btnCampings = page.locator('#btn-toggle-campings');
-    await expect(btnCampings).toBeVisible();
-    await btnCampings.click();
+    const btnAttractions = page.locator('#btn-toggle-attractions');
+    await expect(btnAttractions).toBeVisible();
+    await btnAttractions.click();
   });
 
   test('Trip Info Card & Statistics — renders #trip-title, #stat-km, #stat-hours, #stat-days, #stat-campings', async ({ page }) => {

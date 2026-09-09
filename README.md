@@ -156,6 +156,7 @@ npx playwright test
 Detailed architectural and technical documentation is available in the repository:
 
 - 📖 **[Project Presentation & Architecture Guide](PROJECT_PRESENTATION.md)** — Comprehensive presentation guide & diagram breakdown.
+- 💻 **[Poradnik instalacji na Windows (PL)](INSTRUKCJA_WINDOWS.md)** — Dokładna instrukcja uruchomienia krok po kroku dla Windows.
 - 📐 **[System Architecture Documentation](DOKUMENTACJA_ARCHITEKTONICZNA.md)** — Detailed database schema, PostGIS spatial queries, and API specs.
 - 🔒 **[Security & Audit Documentation](DOKUMENTACJA_BEZPIECZENSTWA.md)** — Security policies, OWASP compliance, and authentication mechanics.
 - 📋 **[Project Blueprint Documentation](DOKUMENTACJA_PROJEKTOWA.md)** — Core requirements, functional specifications, and user flows.

@@ -31,6 +31,16 @@ from navigation.dispatcher import (
     OPENAI_TOOL_DEFINITIONS,
 )
 from tools.interaction_logger import log_interaction
+from tools.user_memory import (
+    get_relevant_user_memories,
+    format_memories_for_prompt,
+    extract_memories_from_message,
+)
+from tools.location_service import (
+    format_location_for_prompt,
+    sanitize_coordinates,
+)
+
 
 
 def create_chat_session(user_id=None, trip_id=None, lang="pl"):
@@ -71,7 +81,7 @@ def create_chat_session(user_id=None, trip_id=None, lang="pl"):
     }
 
 
-def send_message(session, user_message, trip_id=None):
+def send_message(session, user_message, trip_id=None, user_location=None):
     """
     Send a user message, process any function calls,
     and return the final assistant response.
@@ -80,6 +90,8 @@ def send_message(session, user_message, trip_id=None):
         session (dict): Chat session from create_chat_session.
         user_message (str): The user's natural language input.
         trip_id (str): Trip UUID for storing chat messages.
+        user_location (dict): Optional dict with user's current GPS location
+            ({'lat': float, 'lng': float, 'name': str, ...}).
 
     Returns:
         dict: Response with assistant text and any tool results.
@@ -109,9 +121,33 @@ def send_message(session, user_message, trip_id=None):
         if lang == "de":
             lang_context = (
                 "[SYSTEM NOTE] User interface language is set to German (de). "
-                "Respond in German. Maintain the VW California vanlife companion tone."
+                "Respond in German. Maintain the VW California vanlife companion tone: "
+                "address the user with informal 'Du', use proper German vanlife terminology "
+                "(Landstrom / CEE-Anschluss, Aufstelldach, Wohnmobilstellplatz / Campingplatz, Freistehen). "
+                "When completing slots, summarize the trip parameters in German and end with the explicit confirmation question: "
+                "'Soll ich die Route jetzt für dich planen?'. Never comment on <slot_state>."
             )
             system_injections.append({"role": "system", "content": lang_context})
+        elif lang == "en":
+            lang_context = (
+                "[SYSTEM NOTE] User interface language is set to English (en). "
+                "Respond in English. Maintain the VW California vanlife companion tone: "
+                "knowledgeable road-trip buddy, conversational, warm, enthusiastic about camper life. "
+                "Use appropriate campervan terminology (shore power / hookup, pop-up roof, campsite / RV pitch, wild camping / boondocking). "
+                "When completing slots, summarize the trip parameters in English and end with the explicit confirmation question: "
+                "'Shall I plan the route for you now?'. Never comment on <slot_state>."
+            )
+            system_injections.append({"role": "system", "content": lang_context})
+
+        today = datetime.now()
+        today_str = today.strftime("%Y-%m-%d (%A)")
+        date_context = (
+            f"[SYSTEM NOTE] Dzisiejsza data systemowa: {today_str} (rok {today.year}). "
+            f"Wszystkie daty względne ('jutro', 'w weekend', 'za tydzień') oraz wyjazdy bez podanej daty "
+            f"muszą rozpoczynać się od {today.strftime('%Y-%m-%d')} lub później w roku {today.year}. "
+            "Kategorycznie NIGDY nie używaj dat z przeszłości ani roku 2023!"
+        )
+        system_injections.append({"role": "system", "content": date_context})
 
         active_trip_id = session.get("active_trip_id")
         if active_trip_id:
@@ -137,6 +173,27 @@ def send_message(session, user_message, trip_id=None):
                         system_injections.append({"role": "system", "content": pref_context})
             except Exception as e:
                 print(f"Failed to load user preferences: {e}")
+
+            # Personalized RAG: retrieve and inject semantically relevant long-term memories
+            try:
+                relevant_memories = get_relevant_user_memories(
+                    user_id=user_id,
+                    query_text=user_message,
+                )
+                if relevant_memories:
+                    memory_note = format_memories_for_prompt(relevant_memories)
+                    system_injections.append({"role": "system", "content": memory_note})
+            except Exception as e:
+                print(f"[chat_handler] Failed to retrieve user memories: {e}")
+
+        # Inject real-time user location context if provided
+        if user_location and isinstance(user_location, dict):
+            coords = sanitize_coordinates(user_location.get("lat"), user_location.get("lng"))
+            if coords:
+                normalized_loc = dict(user_location)
+                normalized_loc["lat"], normalized_loc["lng"] = coords
+                loc_note = format_location_for_prompt(normalized_loc, lang=lang)
+                system_injections.append({"role": "system", "content": loc_note})
 
         if system_injections:
             messages_to_send = [
@@ -165,7 +222,15 @@ def send_message(session, user_message, trip_id=None):
 
         log_interaction(user_message, result.get("text", ""))
 
+        # Non-blocking extraction of newly stated durable preferences
+        if user_id:
+            try:
+                extract_memories_from_message(user_id, user_message)
+            except Exception as e:
+                print(f"[chat_handler] Memory extraction skipped: {e}")
+
         return result
+
 
     except Exception as e:
         import traceback
@@ -175,6 +240,8 @@ def send_message(session, user_message, trip_id=None):
         lang = (session or {}).get("lang", "pl")
         if lang == "de":
             error_msg = "Entschuldigung, es gab ein vorübergehendes Problem. Bitte versuche es noch einmal."
+        elif lang == "en":
+            error_msg = "Sorry, a temporary connection or route processing issue occurred. Please try again."
         else:
             error_msg = "Przepraszam, wystąpił chwilowy problem z połączeniem lub przetworzeniem trasy. Spróbuj powtórzyć zapytanie."
 
@@ -377,13 +444,13 @@ def _process_response(session, response, trip_id):
         print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
 
         # Inject active_trip_id into mutation tool calls if not provided
-        if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint"):
+        if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint"):
             if "trip_id" not in fn_args and session.get("active_trip_id"):
                 fn_args["trip_id"] = session["active_trip_id"]
 
         # Inject user_id into plan_route / modify_route so the trip
         # gets persisted in the DB (AI doesn't know the logged-in user).
-        if fn_name in ("plan_route", "modify_route"):
+        if fn_name in ("plan_route", "modify_route", "add_waypoint"):
             if "user_id" not in fn_args and session.get("user_id"):
                 fn_args["user_id"] = session["user_id"]
 
@@ -396,7 +463,7 @@ def _process_response(session, response, trip_id):
         })
 
         # Persist the new trip_id when a route is planned or modified
-        if fn_name in ("plan_route", "modify_route"):
+        if fn_name in ("plan_route", "modify_route", "add_waypoint"):
             new_trip_id = (
                 tool_result.get("trip", {}).get("id")
                 or tool_result.get("trip_id")

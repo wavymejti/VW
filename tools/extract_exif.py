@@ -444,13 +444,16 @@ def _auto_link_photo(photo_id, user_id, trip_id_hint=None):
         with engine.connect() as conn:
             # Check if photo has location
             photo_res = conn.execute(
-                text("SELECT lat, lng, captured_at FROM photos WHERE id = :photo_id"),
+                text("SELECT lat, lng, captured_at, trip_id FROM photos WHERE id = :photo_id"),
                 {"photo_id": photo_id}
             ).fetchone()
             
             if not photo_res or photo_res.lat is None or photo_res.lng is None:
                 return None
                 
+            active_trip_id = trip_id_hint or photo_res.trip_id
+
+            # Pass 1: Try temporal + spatial (5km threshold)
             query = """
                 UPDATE photos p
                 SET trip_id = ds.trip_id,
@@ -460,23 +463,20 @@ def _auto_link_photo(photo_id, user_id, trip_id_hint=None):
                 WHERE p.id = :photo_id
                   AND t.user_id = :user_id
                   AND ds.route_polyline IS NOT NULL
-                  -- Temporal filter if captured_at exists
                   AND (
                       p.captured_at IS NULL OR
                       (p.captured_at >= t.start_date AND p.captured_at < t.end_date + interval '1 day')
                   )
-                  -- Spatial filter (5km threshold)
                   AND ST_DWithin(
                       p.location,
                       ST_LineFromEncodedPolyline(ds.route_polyline, 5)::geography,
                       5000
                   )
             """
-            
             params = {"photo_id": photo_id, "user_id": user_id}
-            if trip_id_hint:
-                query += " AND t.id = :trip_id_hint"
-                params["trip_id_hint"] = trip_id_hint
+            if active_trip_id:
+                query += " AND t.id = :active_trip_id"
+                params["active_trip_id"] = active_trip_id
                 
             query += " RETURNING ds.trip_id, ds.id, ds.day_number;"
             
@@ -490,6 +490,51 @@ def _auto_link_photo(photo_id, user_id, trip_id_hint=None):
                     "tagged_day_schedule_id": str(result[1]),
                     "day_number": result[2]
                 }
+
+            # Pass 2: Spatial-only fallback (25km threshold) to closest route day
+            query2 = """
+                WITH closest_day AS (
+                    SELECT ds.trip_id, ds.id as sched_id, ds.day_number
+                    FROM daily_schedules ds
+                    JOIN trips t ON t.id = ds.trip_id
+                    WHERE t.user_id = :user_id
+                      AND ds.route_polyline IS NOT NULL
+            """
+            params2 = {"photo_id": photo_id, "user_id": user_id}
+            if active_trip_id:
+                query2 += " AND t.id = :active_trip_id"
+                params2["active_trip_id"] = active_trip_id
+
+            query2 += """
+                      AND ST_DWithin(
+                          (SELECT location FROM photos WHERE id = :photo_id),
+                          ST_LineFromEncodedPolyline(ds.route_polyline, 5)::geography,
+                          25000
+                      )
+                    ORDER BY ST_Distance(
+                        (SELECT location FROM photos WHERE id = :photo_id),
+                        ST_LineFromEncodedPolyline(ds.route_polyline, 5)::geography
+                    ) ASC
+                    LIMIT 1
+                )
+                UPDATE photos p
+                SET trip_id = cd.trip_id,
+                    tagged_day_schedule_id = cd.sched_id
+                FROM closest_day cd
+                WHERE p.id = :photo_id
+                RETURNING cd.trip_id, cd.sched_id, cd.day_number;
+            """
+            result2 = conn.execute(text(query2), params2).fetchone()
+            conn.commit()
+
+            if result2:
+                print(f"  🔗 Proximity auto-linked to Trip {result2[0]}, Day {result2[2]}")
+                return {
+                    "trip_id": str(result2[0]),
+                    "tagged_day_schedule_id": str(result2[1]),
+                    "day_number": result2[2]
+                }
+
             return None
             
     except Exception as e:
@@ -497,30 +542,37 @@ def _auto_link_photo(photo_id, user_id, trip_id_hint=None):
         return None
 
 
-def pin_photo_location(photo_id, lat, lng, user_id=None):
+def pin_photo_location(
+    photo_id,
+    lat=None,
+    lng=None,
+    user_id=None,
+    captured_at=None,
+    tagged_day_schedule_id=None,
+    trip_id=None,
+    day_number=None,
+):
     """
-    Manually pin a photo to a specific location when GPS data is missing.
+    Manually pin a photo or update its location, capture date, trip day, and trip.
     
     Args:
         photo_id (str): UUID of the photo
-        lat (float): Latitude (-90 to 90)
-        lng (float): Longitude (-180 to 180)
-        user_id (str): Optional user ID for authorization check
+        lat (float, optional): Latitude (-90 to 90)
+        lng (float, optional): Longitude (-180 to 180)
+        user_id (str, optional): Optional user ID for authorization check
+        captured_at (str, optional): ISO datetime or 'YYYY-MM-DD'
+        tagged_day_schedule_id (str, optional): UUID of daily_schedule
+        trip_id (str, optional): UUID of trip
+        day_number (int, optional): Day number in trip (1-indexed)
         
     Returns:
         dict: Status and updated photo info
     """
     try:
-        lat = float(lat)
-        lng = float(lng)
-        
-        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
-            return {"status": "error", "message": "Invalid coordinates"}
-            
         engine = get_engine()
         with engine.begin() as conn:
             # Check photo exists and user owns it
-            query = "SELECT id, user_id FROM photos WHERE id = :photo_id"
+            query = "SELECT id, user_id, trip_id, lat, lng, captured_at FROM photos WHERE id = :photo_id"
             params = {"photo_id": photo_id}
             if user_id:
                 query += " AND user_id = :user_id"
@@ -529,33 +581,91 @@ def pin_photo_location(photo_id, lat, lng, user_id=None):
             photo = conn.execute(text(query), params).fetchone()
             if not photo:
                 return {"status": "error", "message": "Photo not found or unauthorized"}
-                
-            # Update photo
-            conn.execute(
-                text("""
-                    UPDATE photos 
-                    SET lat = :lat, 
-                        lng = :lng,
-                        location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
-                    WHERE id = :photo_id
-                """),
-                {"photo_id": photo_id, "lat": lat, "lng": lng}
-            )
-            
-        # Try to auto link now that it has a location
-        link_info = _auto_link_photo(photo_id, photo.user_id)
+
+            # Resolve schedule if day_number or tagged_day_schedule_id given
+            final_schedule_id = tagged_day_schedule_id
+            final_trip_id = trip_id or photo.trip_id
+            final_day_num = day_number
+
+            if final_schedule_id:
+                sched_row = conn.execute(
+                    text("SELECT id, trip_id, day_number, schedule_date FROM daily_schedules WHERE id = :sid"),
+                    {"sid": final_schedule_id}
+                ).fetchone()
+                if sched_row:
+                    final_trip_id = str(sched_row.trip_id)
+                    final_day_num = sched_row.day_number
+            elif final_trip_id and final_day_num is not None:
+                sched_row = conn.execute(
+                    text("SELECT id, day_number, schedule_date FROM daily_schedules WHERE trip_id = :tid AND day_number = :dnum"),
+                    {"tid": final_trip_id, "dnum": int(final_day_num)}
+                ).fetchone()
+                if sched_row:
+                    final_schedule_id = str(sched_row.id)
+
+            # Parse captured_at if provided
+            parsed_dt = None
+            if captured_at:
+                try:
+                    c_clean = str(captured_at).strip().replace("Z", "+00:00")
+                    if len(c_clean) == 10:  # YYYY-MM-DD
+                        parsed_dt = datetime.strptime(c_clean, "%Y-%m-%d")
+                    else:
+                        parsed_dt = datetime.fromisoformat(c_clean)
+                except Exception as e:
+                    print(f"  ⚠️ Could not parse captured_at '{captured_at}': {e}")
+
+            # Prepare update statements
+            update_clauses = []
+            update_params = {"photo_id": photo_id}
+
+            if lat is not None and lng is not None:
+                fl_lat = float(lat)
+                fl_lng = float(lng)
+                if not (-90 <= fl_lat <= 90) or not (-180 <= fl_lng <= 180):
+                    return {"status": "error", "message": "Invalid coordinates"}
+                update_clauses.append("lat = :lat")
+                update_clauses.append("lng = :lng")
+                update_clauses.append("location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography")
+                update_params["lat"] = fl_lat
+                update_params["lng"] = fl_lng
+
+            if parsed_dt is not None:
+                update_clauses.append("captured_at = :captured_at")
+                update_params["captured_at"] = parsed_dt
+
+            if final_trip_id is not None:
+                update_clauses.append("trip_id = :trip_id")
+                update_params["trip_id"] = final_trip_id
+
+            if final_schedule_id is not None:
+                update_clauses.append("tagged_day_schedule_id = :tagged_sched_id")
+                update_params["tagged_sched_id"] = final_schedule_id
+
+            if update_clauses:
+                sql = f"UPDATE photos SET {', '.join(update_clauses)} WHERE id = :photo_id"
+                conn.execute(text(sql), update_params)
+
+        # If location was provided but no schedule was explicitly linked, attempt auto-link
+        link_info = None
+        if not final_schedule_id:
+            link_info = _auto_link_photo(photo_id, photo.user_id, final_trip_id)
         
         return {
             "status": "success",
-            "message": "Photo pinned successfully",
+            "message": "Photo updated successfully",
             "photo_id": photo_id,
-            "lat": lat,
-            "lng": lng,
-            "linked": bool(link_info)
+            "lat": update_params.get("lat", float(photo.lat) if photo.lat is not None else None),
+            "lng": update_params.get("lng", float(photo.lng) if photo.lng is not None else None),
+            "captured_at": parsed_dt.isoformat() if parsed_dt else (photo.captured_at.isoformat() if photo.captured_at else None),
+            "tagged_day_schedule_id": final_schedule_id or (link_info.get("tagged_day_schedule_id") if link_info else None),
+            "day_number": final_day_num or (link_info.get("day_number") if link_info else None),
+            "trip_id": final_trip_id or (link_info.get("trip_id") if link_info else None),
+            "linked": bool(final_schedule_id or link_info),
         }
             
     except Exception as e:
-        print(f"  ⚠️  Failed to pin photo: {e}")
+        print(f"  ⚠️  Failed to pin/update photo: {e}")
         return {"status": "error", "message": str(e)}
 
 

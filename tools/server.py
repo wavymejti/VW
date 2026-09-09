@@ -16,21 +16,37 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, send_from_directory, session
+from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response
 from flask_cors import CORS
 from sqlalchemy import text
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
 
+from tools import audius_service
+
 from navigation.chat_handler import create_chat_session, send_message
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
-from tools.extract_exif import store_photo, pin_photo_location
+from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
 from tools.generate_summary import generate_summary
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client
 from tools.openai_client import get_client
 from tools.suggest_attractions import suggest_attractions
+from tools.attractions_cache import (
+    get_trip_attractions_cache,
+    save_trip_attractions_cache,
+)
+from tools.user_memory import list_user_memories, save_user_memory, delete_user_memory
+from tools.travel_suggestions import (
+    generate_dynamic_suggestions,
+    record_suggestion_choice,
+    get_curated_fallback_suggestions,
+)
+from tools.location_service import (
+    reverse_geocode_coordinates,
+    sanitize_coordinates,
+)
 from navigation.dispatcher import _recalculate_day_route
 
 # Load environment variables
@@ -64,6 +80,7 @@ _CHAT_SESSIONS = {}
 _ATTRACTIONS_CACHE = {}
 
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_vw_planner")
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # --- Authentication ---
 
@@ -256,6 +273,154 @@ def api_update_preferences():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/user_memories", methods=["GET"])
+def api_get_user_memories():
+    """Get all stored long-term memories/preferences for the authenticated user."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+
+    category = request.args.get("category")
+    try:
+        memories = list_user_memories(user_id=user_id, category=category)
+        return jsonify({"status": "success", "memories": memories})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/user_memories", methods=["POST"])
+def api_add_user_memory():
+    """Manually add or update a long-term preference memory for the user."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+
+    data = request.get_json() or {}
+    content = data.get("content", "").strip()
+    category = data.get("category", "general")
+    polarity = data.get("polarity", "like")
+
+    if not content:
+        return jsonify({"status": "error", "message": "Content is required"}), 400
+
+    try:
+        record = save_user_memory(
+            user_id=user_id,
+            content=content,
+            category=category,
+            polarity=polarity,
+            confidence=1.0,
+        )
+        return jsonify({"status": "success", "memory": record})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/user_memories/<memory_id>", methods=["DELETE"])
+def api_delete_user_memory(memory_id):
+    """Delete a specific user memory (GDPR / user control)."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+
+    try:
+        success = delete_user_memory(user_id=user_id, memory_id=memory_id)
+        if success:
+            return jsonify({"status": "success", "message": "Memory deleted."})
+        return jsonify({"status": "error", "message": "Memory not found or unauthorized."}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/travel_suggestions", methods=["GET"])
+def api_get_travel_suggestions():
+    """
+    Get dynamic travel suggestions tailored for middle-aged travelers (40-60).
+
+    Integrates with RAG user memories if user is authenticated and supports
+    duration filtering (all, weekend, week, expedition).
+    """
+    user_id = session.get("user_id")
+    lang = request.args.get("lang", "pl")
+    duration = request.args.get("duration", "all")
+    if duration not in ("all", "weekend", "week", "expedition"):
+        duration = "all"
+
+    user_location = request.args.get("location")
+    if not user_location:
+        city = request.args.get("city")
+        country = request.args.get("country")
+        if city and country:
+            user_location = f"{city}, {country}"
+        elif city:
+            user_location = city
+
+    try:
+        count = int(request.args.get("count", 3))
+    except (ValueError, TypeError):
+        count = 3
+    count = max(1, min(count, 6))
+
+    try:
+        suggestions = generate_dynamic_suggestions(
+            user_id=user_id,
+            lang=lang,
+            count=count,
+            duration=duration,
+            user_location=user_location,
+        )
+        return jsonify({
+            "status": "success",
+            "suggestions": suggestions,
+            "personalized": bool(user_id),
+            "duration": duration,
+            "user_location": user_location,
+        })
+    except Exception as e:
+        print(f"Error in api_get_travel_suggestions: {e}")
+        fallback = get_curated_fallback_suggestions(
+            lang=lang, duration=duration, shuffle=True, user_location=user_location
+        )[:count]
+        return jsonify({
+            "status": "success",
+            "suggestions": fallback,
+            "personalized": False,
+            "fallback": True,
+            "duration": duration,
+            "user_location": user_location,
+        })
+
+
+@app.route("/api/travel_suggestions/select", methods=["POST"])
+def api_select_travel_suggestion():
+    """
+    Record user selection of a travel suggestion card and feed into RAG memory.
+    """
+    user_id = session.get("user_id")
+    data = request.get_json() or {}
+    suggestion = data.get("suggestion")
+
+    if not suggestion:
+        return jsonify({"status": "error", "message": "Suggestion data is required"}), 400
+
+    saved_memory = None
+    if user_id:
+        try:
+            saved_memory = record_suggestion_choice(user_id=user_id, suggestion_data=suggestion)
+        except Exception as e:
+            print(f"Failed to record suggestion in RAG memory: {e}")
+
+    prompt = suggestion.get("prompt", "")
+    return jsonify({
+        "status": "success",
+        "prompt": prompt,
+        "rag_memory_recorded": bool(saved_memory),
+        "memory": saved_memory,
+    })
+
+
+
+
 def _sanitize_for_json(obj):
     import decimal
     if isinstance(obj, decimal.Decimal):
@@ -335,9 +500,43 @@ def _get_trip_data(trip_id):
                 "is_return": is_return
             })
 
+        # Fetch photos associated with this trip
+        photo_rows = conn.execute(
+            text("""
+                SELECT id, file_url, thumbnail_url, lat, lng,
+                       caption, original_filename, tagged_day_schedule_id, created_at
+                FROM photos
+                WHERE trip_id = :trip_id
+                ORDER BY created_at ASC
+            """),
+            {"trip_id": trip_id}
+        ).fetchall()
+
+        photos = []
+        seen_keys = set()
+        for pr in photo_rows:
+            p_url = pr[1]
+            p_fname = pr[6]
+            dedup_key = p_url or p_fname or str(pr[0])
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+            photos.append({
+                "id": str(pr[0]),
+                "file_url": pr[1],
+                "thumbnail_url": pr[2],
+                "lat": float(pr[3]) if pr[3] is not None else None,
+                "lng": float(pr[4]) if pr[4] is not None else None,
+                "caption": pr[5],
+                "original_filename": pr[6],
+                "tagged_day_schedule_id": str(pr[7]) if pr[7] else None,
+                "created_at": str(pr[8]) if pr[8] else None,
+            })
+
         result_payload = {
             "trip": trip,
             "daily_schedules": schedules,
+            "photos": photos,
             "total_driving_hours": sum(float(s["driving_hours"] or 0) for s in schedules),
             "total_driving_km": sum(float(s["driving_km"] or 0) for s in schedules)
         }
@@ -414,9 +613,16 @@ def serve_summary(filename):
     return send_from_directory(summary_dir, filename)
 
 
-@app.route("/photos/file/<path:filename>")
+@app.route("/photos/file/<path:filename>", methods=["GET", "OPTIONS"])
 def serve_photo_file(filename):
     """Serve uploaded photos or thumbnails, converting HEIC/HEIF to JPEG for browser support."""
+    if request.method == "OPTIONS":
+        resp = make_response("", 204)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        return resp
+
     tmp_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         ".tmp"
@@ -429,6 +635,23 @@ def serve_photo_file(filename):
         target_path = os.path.join(upload_dir, filename)
     elif os.path.exists(os.path.join(tmp_dir, filename)):
         target_path = os.path.join(tmp_dir, filename)
+
+    # On-demand thumbnail fallback if requested thumbnail does not yet exist
+    if not target_path and "_thumb." in filename:
+        name_part, thumb_ext = os.path.splitext(filename)
+        base_stem = name_part.replace("_thumb", "")
+        # Search for original file with various extensions
+        candidate_exts = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".JPG", ".JPEG", ".PNG", ".HEIC"]
+        for ext in candidate_exts:
+            for check_dir in [upload_dir, tmp_dir]:
+                candidate = os.path.join(check_dir, f"{base_stem}{ext}")
+                if os.path.exists(candidate):
+                    generated_thumb = generate_thumbnail(candidate, output_dir=tmp_dir)
+                    if generated_thumb and os.path.exists(generated_thumb):
+                        target_path = generated_thumb
+                        break
+            if target_path:
+                break
 
     if target_path:
         ext = os.path.splitext(target_path)[1].lower()
@@ -449,14 +672,38 @@ def serve_photo_file(filename):
                 except Exception as e:
                     print(f"⚠️ Failed to convert HEIC to JPG: {e}")
             if os.path.exists(jpg_path):
-                return send_from_directory(upload_dir, jpg_name, mimetype="image/jpeg")
+                response = send_from_directory(upload_dir, jpg_name, mimetype="image/jpeg")
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                response.headers["Cache-Control"] = "public, max-age=86400"
+                return response
 
-        return send_from_directory(os.path.dirname(target_path), os.path.basename(target_path))
+        response = send_from_directory(os.path.dirname(target_path), os.path.basename(target_path))
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
 
-    return jsonify({"status": "error", "message": "File not found"}), 404
+    response = jsonify({"status": "error", "message": "File not found"})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, 404
 
 
 # ── API Routes ────────────────────────────────────────────────
+
+@app.route("/api/location/reverse", methods=["POST"])
+def api_reverse_location():
+    """
+    Reverse geocode client coordinates to human-readable address and city.
+    """
+    data = request.get_json() or {}
+    lat = data.get("lat")
+    lng = data.get("lng")
+    lang = data.get("lang", "pl")
+
+    result = reverse_geocode_coordinates(lat, lng, lang=lang)
+    return jsonify(result)
+
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
@@ -469,6 +716,7 @@ def api_chat():
     data = request.get_json() or {}
     user_message = data.get("message", "").strip()
     lang = data.get("lang", "pl")
+    user_location = data.get("user_location") or data.get("location")
 
     if not user_message:
         return jsonify({
@@ -480,10 +728,15 @@ def api_chat():
     # per-user chat session so messages persist and trips are linked.
     user_id = session.get("user_id")
     active_trip_id = session.get("active_trip_id")
-    print(f"[api_chat] user_id={user_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r}")
+    print(f"[api_chat] user_id={user_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r} loc={user_location!r}")
     chat = get_chat_session(user_id=user_id, trip_id=active_trip_id, lang=lang)
     chat["lang"] = lang
-    result = send_message(chat, user_message, trip_id=active_trip_id)
+    result = send_message(
+        chat,
+        user_message,
+        trip_id=active_trip_id,
+        user_location=user_location,
+    )
 
     # Persist the running slot_state + active_trip_id in server memory
     # (never the cookie) so the next request can merge with it and the
@@ -747,6 +1000,9 @@ def api_add_attraction():
                     "address": attraction.get("address"),
                     "rating": attraction.get("rating"),
                     "photo_url": attraction.get("photo_url"),
+                    "category_label": attraction.get("category_label", "Atrakcja"),
+                    "emoji": attraction.get("emoji", "⭐"),
+                    "color": attraction.get("color", "#F9A825"),
                     "notes": "Added from map attractions"
                 }
 
@@ -767,6 +1023,11 @@ def api_add_attraction():
                         text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb) WHERE id = :sid"),
                         {"wps": json.dumps(waypoints), "sid": str(schedule_id)}
                     )
+
+        # Invalidate attractions cache for this trip so fresh data is computed
+        cache_keys = [k for k in list(_ATTRACTIONS_CACHE.keys()) if k.startswith(f"{trip_id}:")]
+        for k in cache_keys:
+            _ATTRACTIONS_CACHE.pop(k, None)
 
         trip_data = _get_trip_data(trip_id)
         return jsonify({
@@ -792,19 +1053,26 @@ def api_get_attractions(trip_id):
 
     Query params:
         preferences (str): Comma-separated keywords, e.g. 'zamki,natura'.
-        limit_per_day (int): Max results per day (default 5).
+        limit_per_day (int): Max results per day (default 8).
         sample_every_km (int): Sampling interval in km (default 80).
     """
     preferences = request.args.get("preferences", None)
-    limit_per_day = int(request.args.get("limit_per_day", 5))
+    limit_per_day = int(request.args.get("limit_per_day", 8))
     # Default sample interval raised to 80 km to reduce API call count
     sample_every_km = float(request.args.get("sample_every_km", 80))
 
     # Build a cache key
     cache_key = f"{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}"
     if cache_key in _ATTRACTIONS_CACHE:
-        print(f"[api_get_attractions] Cache HIT for {cache_key}", flush=True)
+        print(f"[api_get_attractions] RAM Cache HIT for {cache_key}", flush=True)
         return jsonify(_ATTRACTIONS_CACHE[cache_key])
+
+    # Check PostgreSQL persistent cache
+    db_cached = get_trip_attractions_cache(trip_id, cache_key)
+    if db_cached:
+        print(f"[api_get_attractions] PostgreSQL Cache HIT for {cache_key}", flush=True)
+        _ATTRACTIONS_CACHE[cache_key] = db_cached
+        return jsonify(db_cached)
 
     print(f"[api_get_attractions] Fetching attractions for trip {trip_id} "
           f"(pref={preferences}, limit={limit_per_day}, km={sample_every_km})", flush=True)
@@ -818,6 +1086,7 @@ def api_get_attractions(trip_id):
 
     if result.get("status") == "success":
         _ATTRACTIONS_CACHE[cache_key] = result
+        save_trip_attractions_cache(trip_id, cache_key, result)
 
     print(f"[api_get_attractions] Done — status={result.get('status')} "
           f"days={len(result.get('attractions_by_day', {}))}", flush=True)
@@ -889,8 +1158,8 @@ def api_upload_photo():
     filepath = os.path.join(tmp_dir, photo_file.filename)
     photo_file.save(filepath)
 
-    # Optional trip_id from frontend
-    trip_id = request.form.get("trip_id")
+    # Optional trip_id from frontend (fallback to active trip in session)
+    trip_id = request.form.get("trip_id") or session.get("active_trip_id")
 
     # Process the photo
     result = store_photo(
@@ -905,27 +1174,118 @@ def api_upload_photo():
 @app.route("/api/pin_photo", methods=["POST"])
 def api_pin_photo():
     """
-    Manually pin a photo that lacked GPS data to a specific location.
+    Manually pin a photo or update its location, capture date, trip day, and trip.
 
-    Expects JSON with photo_id, lat, lng.
+    Expects JSON with photo_id, and optional lat, lng, captured_at, tagged_day_schedule_id, day_number, trip_id.
     """
     user_id = session.get("user_id")
     if not user_id:
         return jsonify({"status": "error", "message": "Not authenticated"}), 401
 
-    data = request.get_json()
+    data = request.get_json() or {}
     photo_id = data.get("photo_id")
     lat = data.get("lat")
     lng = data.get("lng")
+    captured_at = data.get("captured_at")
+    tagged_day_schedule_id = data.get("tagged_day_schedule_id")
+    day_number = data.get("day_number")
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
 
-    if not photo_id or lat is None or lng is None:
+    if not photo_id:
         return jsonify({
             "status": "error",
-            "message": "photo_id, lat, and lng are required.",
+            "message": "photo_id is required.",
         }), 400
 
-    result = pin_photo_location(photo_id, lat, lng, user_id)
+    result = pin_photo_location(
+        photo_id=photo_id,
+        lat=lat,
+        lng=lng,
+        user_id=user_id,
+        captured_at=captured_at,
+        tagged_day_schedule_id=tagged_day_schedule_id,
+        trip_id=trip_id,
+        day_number=day_number,
+    )
     return jsonify(result)
+
+
+@app.route("/api/trips/<trip_id>/update_dates", methods=["POST"])
+def api_update_trip_dates(trip_id):
+    """
+    Update start_date and optionally end_date for a trip, shifting all daily schedules accordingly.
+    """
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "Not authenticated"}), 401
+
+    data = request.get_json() or {}
+    new_start_str = data.get("start_date")
+    if not new_start_str:
+        return jsonify({"status": "error", "message": "start_date is required (YYYY-MM-DD)"}), 400
+
+    try:
+        new_start = datetime.strptime(new_start_str, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid start_date format. Use YYYY-MM-DD"}), 400
+
+    new_end_str = data.get("end_date")
+    new_end = None
+    if new_end_str:
+        try:
+            new_end = datetime.strptime(new_end_str, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"status": "error", "message": "Invalid end_date format. Use YYYY-MM-DD"}), 400
+
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            trip_row = conn.execute(
+                text("SELECT id, start_date, end_date FROM trips WHERE id = :tid AND user_id = :uid"),
+                {"tid": trip_id, "uid": user_id}
+            ).fetchone()
+
+            if not trip_row:
+                return jsonify({"status": "error", "message": "Trip not found or unauthorized"}), 404
+
+            old_start = trip_row.start_date
+            old_end = trip_row.end_date
+
+            if not new_end and old_start and old_end:
+                duration = (old_end - old_start).days
+                new_end = new_start + timedelta(days=duration)
+            elif not new_end:
+                new_end = new_start
+
+            # Update trips table
+            conn.execute(
+                text("UPDATE trips SET start_date = :s, end_date = :e, updated_at = NOW() WHERE id = :tid"),
+                {"s": new_start, "e": new_end, "tid": trip_id}
+            )
+
+            # Update daily schedules
+            scheds = conn.execute(
+                text("SELECT id, day_number FROM daily_schedules WHERE trip_id = :tid ORDER BY day_number"),
+                {"tid": trip_id}
+            ).fetchall()
+
+            for sched in scheds:
+                day_offset = (sched.day_number - 1) if sched.day_number else 0
+                s_date = new_start + timedelta(days=day_offset)
+                conn.execute(
+                    text("UPDATE daily_schedules SET schedule_date = :s_date WHERE id = :sid"),
+                    {"s_date": s_date, "sid": sched.id}
+                )
+
+        return jsonify({
+            "status": "success",
+            "message": "Trip dates updated successfully",
+            "trip_id": trip_id,
+            "start_date": new_start.isoformat(),
+            "end_date": new_end.isoformat(),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/photos", methods=["GET"])
@@ -1004,11 +1364,13 @@ def api_generate_summary():
 
     format = data.get("format", "image_slideshow")
     music_track = data.get("music_track")
+    lang = data.get("lang", "pl")
 
     result = generate_summary(
         trip_id=trip_id,
         format=format,
         music_track=music_track,
+        lang=lang,
     )
 
     # Convert absolute paths to frontend-accessible relative URLs
@@ -1022,6 +1384,90 @@ def api_generate_summary():
             ]
 
     return jsonify(result)
+ 
+ 
+@app.route("/api/music/moods", methods=["GET"])
+def api_get_music_moods():
+    """
+    Pobierz listę dostępnych nastrojów muzycznych Audius oraz utwory dla wybranego nastroju.
+
+    Query params:
+        mood (str): Klucz nastroju (np. 'roadtrip', 'lofi', 'acoustic', 'nature', 'summer', 'jazz', 'offline')
+        limit (int): Maksymalna liczba utworów (domyślnie 8)
+    """
+    mood = request.args.get("mood", "roadtrip")
+    try:
+        limit = int(request.args.get("limit", 8))
+    except (ValueError, TypeError):
+        limit = 8
+
+    presets = []
+    for k, v in audius_service.MOOD_PRESETS.items():
+        presets.append({
+            "key": k,
+            "label": v["label"],
+            "icon": v["icon"],
+            "genre": v["genre"],
+        })
+    presets.append({
+        "key": "offline",
+        "label": "Dźwięki Offline (Proceduralne)",
+        "icon": "📁",
+        "genre": "Offline Local",
+    })
+
+    mood_data = audius_service.get_mood_tracks(mood=mood, limit=limit)
+    return jsonify({
+        "status": "success",
+        "presets": presets,
+        "current_mood": mood_data,
+    })
+
+
+@app.route("/api/music/search", methods=["GET"])
+def api_search_music():
+    """
+    Wyszukaj utwory w serwisie Audius na podstawie zapytania tekstowego.
+
+    Query params:
+        q (str): Wyszukiwana fraza
+        limit (int): Maksymalna liczba utworów (domyślnie 12)
+    """
+    query = request.args.get("q", "").strip()
+    try:
+        limit = int(request.args.get("limit", 12))
+    except (ValueError, TypeError):
+        limit = 12
+
+    if not query:
+        return jsonify({"status": "success", "tracks": []})
+
+    tracks = audius_service.search_tracks(query=query, limit=limit)
+    return jsonify({
+        "status": "success",
+        "query": query,
+        "tracks": tracks,
+    })
+
+
+@app.route("/api/music/stream/<path:track_id>", methods=["GET"])
+def api_stream_music(track_id):
+    """
+    Pobierz lub strumieniuj utwór muzyczny (z cache lub z Audius).
+
+    Obsługuje również identyfikatory lokalne offline.
+    """
+    clean_id = track_id.replace("audius:", "").strip()
+
+    # Sprawdź czy utwór jest w cache lub czy można go pobrać
+    cached = audius_service.download_and_cache_track(clean_id)
+    if cached and os.path.exists(cached):
+        return send_file(cached, mimetype="audio/mpeg")
+
+    return jsonify({
+        "status": "error",
+        "message": "Track stream unavailable",
+    }), 404
 
 
 @app.route("/api/memories", methods=["GET"])
@@ -1102,14 +1548,27 @@ def api_transcribe():
     Transcribe uploaded audio file (from MediaRecorder or voice input)
     using OpenAI Whisper API with graceful fallback.
     """
-    if "file" not in request.files and "audio" not in request.files:
-        return jsonify({"status": "error", "message": "Brak pliku audio w żądaniu."}), 200
-
-    audio_file = request.files.get("file") or request.files.get("audio")
     lang = request.form.get("lang", "pl")
 
+    if "file" not in request.files and "audio" not in request.files:
+        if lang == "de":
+            msg = "Keine Audiodatei in der Anfrage."
+        elif lang == "en":
+            msg = "No audio file in request."
+        else:
+            msg = "Brak pliku audio w żądaniu."
+        return jsonify({"status": "error", "message": msg}), 200
+
+    audio_file = request.files.get("file") or request.files.get("audio")
+
     if not audio_file or audio_file.filename == "":
-        return jsonify({"status": "error", "message": "Pusty plik audio."}), 200
+        if lang == "de":
+            msg = "Leere Audiodatei."
+        elif lang == "en":
+            msg = "Empty audio file."
+        else:
+            msg = "Pusty plik audio."
+        return jsonify({"status": "error", "message": msg}), 200
 
     temp_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -1126,7 +1585,13 @@ def api_transcribe():
         print(f"[Transcribe] Saved temp audio file: {temp_path} ({file_size} bytes)", flush=True)
 
         if file_size < 300:
-            return jsonify({"status": "error", "message": "Nagranie jest za krótkie lub nie zawiera dźwięku."}), 200
+            if lang == "de":
+                msg = "Die Aufnahme ist zu kurz oder enthält keinen Ton."
+            elif lang == "en":
+                msg = "Recording is too short or contains no audio."
+            else:
+                msg = "Nagranie jest za krótkie lub nie zawiera dźwięku."
+            return jsonify({"status": "error", "message": msg}), 200
 
         client = get_client()
 
@@ -1149,14 +1614,26 @@ def api_transcribe():
                 "text": text
             })
         else:
+            if lang == "de":
+                msg = "Keine Sprache in der Aufnahme erkannt. Bitte versuche es lauter."
+            elif lang == "en":
+                msg = "No speech detected in recording. Please try speaking louder."
+            else:
+                msg = "Nie wykryto mowy w nagraniu. Spróbuj powtórzyć głośniej."
             return jsonify({
                 "status": "error",
-                "message": "Nie wykryto mowy w nagraniu. Spróbuj powtórzyć głośniej."
+                "message": msg
             }), 200
 
     except Exception as e:
         print(f"[Transcribe Server Error] {type(e).__name__}: {e}", flush=True)
-        return jsonify({"status": "error", "message": f"Błąd przetwarzania dźwięku: {str(e)}"}), 200
+        if lang == "de":
+            msg = f"Fehler bei der Audioverarbeitung: {str(e)}"
+        elif lang == "en":
+            msg = f"Audio processing error: {str(e)}"
+        else:
+            msg = f"Błąd przetwarzania dźwięku: {str(e)}"
+        return jsonify({"status": "error", "message": msg}), 200
     finally:
         if os.path.exists(temp_path):
             try:

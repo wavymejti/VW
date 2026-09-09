@@ -17,6 +17,10 @@ import math
 import googlemaps
 from tools.db import get_engine
 from sqlalchemy import text
+from tools.attractions_cache import (
+    get_cached_attractions_near,
+    save_cached_attractions,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ SEARCH_TYPES = [
 def suggest_attractions(
     trip_id,
     preferences=None,
-    limit_per_day=5,
+    limit_per_day=8,
     sample_every_km=30,
     search_radius_m=20000,
 ):
@@ -132,21 +136,50 @@ def suggest_attractions(
         waypoints = row[1] or []
         route_polyline = row[2]
 
+        # Extract existing attractions saved in this day's waypoints
+        existing_attractions = []
+        wps_list = waypoints if isinstance(waypoints, list) else []
+        if isinstance(waypoints, str):
+            import json as _json
+            try:
+                wps_list = _json.loads(waypoints)
+            except Exception:
+                wps_list = []
+
+        for wp in wps_list:
+            if isinstance(wp, dict) and wp.get("type") == "attraction":
+                pid = wp.get("place_id")
+                if pid:
+                    seen_place_ids.add(pid)
+                existing_attractions.append({
+                    "name": wp.get("label") or wp.get("name", "Atrakcja"),
+                    "place_id": pid,
+                    "lat": wp.get("lat"),
+                    "lng": wp.get("lng"),
+                    "address": wp.get("address", ""),
+                    "rating": wp.get("rating"),
+                    "photo_url": wp.get("photo_url"),
+                    "category_label": wp.get("category_label", "Atrakcja"),
+                    "emoji": wp.get("emoji", "⭐"),
+                    "color": wp.get("color", "#F9A825"),
+                    "is_in_route": True,
+                    "day_number": day_number,
+                })
+
         # Collect sample points along this day's route
         sample_points = _sample_route(
             route_polyline, waypoints, sample_every_km
         )
 
-        if not sample_points:
-            continue
+        candidates = []
+        if sample_points:
+            # Query Places Nearby at each sample and collect candidates
+            candidates = _fetch_candidates(
+                gmaps, sample_points, types_to_search, search_radius_m, gmaps_key
+            )
 
-        # Query Places Nearby at each sample and collect candidates
-        candidates = _fetch_candidates(
-            gmaps, sample_points, types_to_search, search_radius_m, gmaps_key
-        )
-
-        # Deduplicate globally
-        day_attractions = []
+        # Start with already saved attractions for this day
+        day_attractions = list(existing_attractions)
         for place in candidates:
             pid = place.get("place_id")
             if pid and pid in seen_place_ids:
@@ -154,8 +187,18 @@ def suggest_attractions(
             if pid:
                 seen_place_ids.add(pid)
             day_attractions.append(place)
-            if len(day_attractions) >= limit_per_day:
+            if len(day_attractions) >= max(limit_per_day, len(existing_attractions)):
                 break
+
+        # Sort day attractions by number of reviews (user_ratings_total) descending,
+        # with rating as secondary tiebreaker.
+        day_attractions.sort(
+            key=lambda p: (
+                p.get("user_ratings_total") or 0,
+                p.get("rating") or 0
+            ),
+            reverse=True,
+        )
 
         if day_attractions:
             attractions_by_day[str(day_number)] = day_attractions
@@ -355,6 +398,32 @@ def _fetch_candidates(gmaps, sample_points, types_to_search,
         query_types = types_to_search[:3]
 
     for lat, lng in sample_points:
+        # Check PostGIS spatial cache first
+        db_pois = get_cached_attractions_near(
+            lat=lat,
+            lng=lng,
+            radius_m=search_radius_m,
+            limit=20,
+        )
+
+        found_in_cache = False
+        if db_pois and len(db_pois) >= 5:
+            # We already have sufficient high-quality cached attractions near this point
+            for p in db_pois:
+                pid = p.get("place_id")
+                if not pid or pid in local_seen:
+                    continue
+                local_seen.add(pid)
+                candidates.append(p)
+            found_in_cache = True
+
+        if found_in_cache:
+            if len(candidates) >= 100:
+                break
+            continue
+
+        # If cache miss or insufficient POIs, query Google Maps Places Nearby
+        newly_fetched = []
         for place_type in query_types:
             try:
                 result = gmaps.places_nearby(
@@ -368,7 +437,9 @@ def _fetch_candidates(gmaps, sample_points, types_to_search,
                     if not pid or pid in local_seen:
                         continue
                     local_seen.add(pid)
-                    candidates.append(_map_place(place, gmaps_key))
+                    mapped = _map_place(place, gmaps_key)
+                    candidates.append(mapped)
+                    newly_fetched.append(mapped)
 
             except Exception as e:
                 print(
@@ -378,12 +449,24 @@ def _fetch_candidates(gmaps, sample_points, types_to_search,
             # Hard limit: stop early if we already have plenty of candidates
             if len(candidates) >= 100:
                 break
+
+        # Persist newly fetched POIs to PostgreSQL for future queries
+        if newly_fetched:
+            try:
+                save_cached_attractions(newly_fetched)
+            except Exception as e:
+                print(f"[suggest_attractions] Failed to cache POIs: {e}")
+
         if len(candidates) >= 100:
             break
 
-    # Sort by rating descending (None ratings go last)
+    # Sort by number of reviews (user_ratings_total) descending,
+    # with rating as secondary tiebreaker.
     candidates.sort(
-        key=lambda p: p.get("rating") or 0,
+        key=lambda p: (
+            p.get("user_ratings_total") or 0,
+            p.get("rating") or 0
+        ),
         reverse=True,
     )
 

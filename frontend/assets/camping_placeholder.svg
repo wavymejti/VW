@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 340" width="100%" height="100%">
+  <defs>
+    <!-- Twilight Sky Gradient -->
+    <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#000E26"/>
+      <stop offset="45%" stop-color="#001E50"/>
+      <stop offset="85%" stop-color="#0E3870"/>
+      <stop offset="100%" stop-color="#1A4D8C"/>
+    </linearGradient>
+
+    <!-- Warm Horizon Glow -->
+    <radialGradient id="horizonGlow" cx="65%" cy="80%" r="50%">
+      <stop offset="0%" stop-color="#F6AD55" stop-opacity="0.35"/>
+      <stop offset="40%" stop-color="#E28743" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#001E50" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Campfire Warm Glow -->
+    <radialGradient id="fireGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD166" stop-opacity="0.9"/>
+      <stop offset="30%" stop-color="#F77F00" stop-opacity="0.6"/>
+      <stop offset="70%" stop-color="#D62828" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#D62828" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Mountain Gradient -->
+    <linearGradient id="mountGrad1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#153B66"/>
+      <stop offset="100%" stop-color="#09213D"/>
+    </linearGradient>
+    <linearGradient id="mountGrad2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0D2744"/>
+      <stop offset="100%" stop-color="#051424"/>
+    </linearGradient>
+
+    <!-- Van Paint Two-Tone -->
+    <linearGradient id="vanUpper" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E2E8F0"/>
+      <stop offset="60%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CBD5E1"/>
+    </linearGradient>
+    <linearGradient id="vanLower" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#002868"/>
+      <stop offset="50%" stop-color="#001E50"/>
+      <stop offset="100%" stop-color="#001233"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky Background -->
+  <rect width="600" height="340" fill="url(#skyGrad)"/>
+  <rect width="600" height="340" fill="url(#horizonGlow)"/>
+
+  <!-- Stars -->
+  <g fill="#FFFFFF" opacity="0.75">
+    <circle cx="45" cy="42" r="1.2"/>
+    <circle cx="95" cy="24" r="1.5"/>
+    <circle cx="150" cy="55" r="1"/>
+    <circle cx="210" cy="30" r="1.8"/>
+    <circle cx="280" cy="65" r="1.2"/>
+    <circle cx="340" cy="22" r="1.5"/>
+    <circle cx="410" cy="48" r="1"/>
+    <circle cx="490" cy="35" r="1.7"/>
+    <circle cx="550" cy="60" r="1.2"/>
+    <circle cx="120" cy="85" r="1"/>
+    <circle cx="460" cy="75" r="1.3"/>
+  </g>
+
+  <!-- Crescent Moon -->
+  <g transform="translate(515, 32)">
+    <path d="M18 0 A18 18 0 1 0 18 36 A14 14 0 1 1 18 0 Z" fill="#FFF8E7" opacity="0.9"/>
+  </g>
+
+  <!-- Distant Mountains Layer 1 -->
+  <path d="M0 230 L70 175 L150 205 L240 145 L340 210 L430 155 L520 200 L600 165 L600 340 L0 340 Z" fill="url(#mountGrad1)" opacity="0.6"/>
+
+  <!-- Mid Mountains Layer 2 -->
+  <path d="M0 250 L90 195 L180 230 L285 170 L390 235 L480 185 L565 225 L600 210 L600 340 L0 340 Z" fill="url(#mountGrad2)"/>
+
+  <!-- Forest Silhouettes in Background -->
+  <g fill="#06182B">
+    <!-- Left Pines -->
+    <path d="M15 270 L25 240 L35 270 Z M20 255 L25 230 L30 255 Z"/>
+    <path d="M35 275 L47 235 L59 275 Z M42 250 L47 225 L52 250 Z"/>
+    <path d="M60 270 L70 245 L80 270 Z"/>
+    <path d="M85 275 L95 240 L105 275 Z"/>
+    <!-- Right Pines -->
+    <path d="M495 275 L508 230 L521 275 Z M502 245 L508 220 L514 245 Z"/>
+    <path d="M525 270 L535 240 L545 270 Z"/>
+    <path d="M550 275 L562 235 L574 275 Z M556 250 L562 225 L568 250 Z"/>
+    <path d="M575 270 L585 245 L595 270 Z"/>
+  </g>
+
+  <!-- Campsite Ground -->
+  <path d="M0 268 Q150 255 300 260 T600 262 L600 340 L0 340 Z" fill="#040F1B"/>
+
+  <!-- VW CALIFORNIA CAMPERVAN -->
+  <g transform="translate(105, 125)">
+    <!-- Pop-up Roof (Aufstelldach) Elevated -->
+    <g id="popup-roof">
+      <!-- Roof Fabric / Canvas bellows -->
+      <polygon points="48,72 165,15 165,72" fill="#475569"/>
+      <!-- Canvas Mesh Window -->
+      <polygon points="75,66 145,28 145,66" fill="#1E293B" opacity="0.8"/>
+      <!-- Roof Top Hard Shell (White/Silver) -->
+      <polygon points="40,74 168,11 176,14 44,77" fill="#F8FAFC"/>
+      <!-- Roof Hinge / Trim -->
+      <line x1="42" y1="75" x2="48" y2="72" stroke="#94A3B8" stroke-width="2"/>
+    </g>
+
+    <!-- Van Upper Body (White) -->
+    <path d="M42 74 Q46 72 70 72 L230 72 Q246 72 250 85 L260 115 L40 115 Z" fill="url(#vanUpper)"/>
+
+    <!-- Windshield & Windows -->
+    <!-- Front Windshield -->
+    <path d="M232 75 L247 88 L257 112 L225 112 L220 75 Z" fill="#0F172A"/>
+    <!-- Cab Window with warm amber glow -->
+    <path d="M172 76 L216 76 L220 112 L172 112 Z" fill="#1E293B"/>
+    <rect x="175" y="79" width="38" height="30" rx="3" fill="#FBBF24" opacity="0.35"/>
+    <!-- Living Area Side Windows (California Camper Window) -->
+    <rect x="105" y="77" width="58" height="32" rx="4" fill="#0F172A"/>
+    <rect x="108" y="80" width="52" height="26" rx="2" fill="#FBBF24" opacity="0.5"/>
+    <!-- Rear Corner Window -->
+    <path d="M47 80 L96 80 L96 112 L43 112 Q42 95 47 80 Z" fill="#1E293B"/>
+
+    <!-- Van Lower Body (VW Deep Navy) -->
+    <path d="M38 115 L260 115 L264 135 Q264 148 252 150 L242 150 
+             A22 22 0 0 0 198 150 L102 150 
+             A22 22 0 0 0 58 150 L38 150 Q34 145 34 132 L38 115 Z" fill="url(#vanLower)"/>
+
+    <!-- Chrome Body Accent Line (California Distinctive Waistline) -->
+    <line x1="38" y1="115" x2="260" y2="115" stroke="#94A3B8" stroke-width="1.5"/>
+
+    <!-- Front Headlight / Indicator -->
+    <path d="M258 120 L263 128 L255 130 Z" fill="#E2E8F0"/>
+    <circle cx="258" cy="125" r="3.5" fill="#F8FAFC"/>
+    <!-- Headlight Beam (Soft Ambient) -->
+    <polygon points="263,123 340,118 350,150 263,132" fill="#FEF08A" opacity="0.12"/>
+
+    <!-- Rear Tail Light -->
+    <rect x="35" y="120" width="4" height="15" rx="1.5" fill="#EF4444"/>
+
+    <!-- Wheels & Rims -->
+    <!-- Rear Wheel -->
+    <g transform="translate(80, 150)">
+      <circle cx="0" cy="0" r="20" fill="#0A0F1D"/>
+      <circle cx="0" cy="0" r="13" fill="#64748B"/>
+      <circle cx="0" cy="0" r="11" fill="#CBD5E1"/>
+      <circle cx="0" cy="0" r="5" fill="#001E50"/>
+    </g>
+    <!-- Front Wheel -->
+    <g transform="translate(220, 150)">
+      <circle cx="0" cy="0" r="20" fill="#0A0F1D"/>
+      <circle cx="0" cy="0" r="13" fill="#64748B"/>
+      <circle cx="0" cy="0" r="11" fill="#CBD5E1"/>
+      <circle cx="0" cy="0" r="5" fill="#001E50"/>
+    </g>
+  </g>
+
+  <!-- Cozy Camp Scene (Campfire & Chair) -->
+  <g transform="translate(415, 235)">
+    <!-- Campfire Ambient Glow -->
+    <circle cx="20" cy="15" r="45" fill="url(#fireGlow)"/>
+    <!-- Campfire Logs -->
+    <line x1="8" y1="26" x2="32" y2="18" stroke="#5C3D2E" stroke-width="4" stroke-linecap="round"/>
+    <line x1="10" y1="18" x2="30" y2="26" stroke="#4A2810" stroke-width="4" stroke-linecap="round"/>
+    <!-- Flame Shapes -->
+    <path d="M15 20 Q20 2 21 8 Q23 0 25 10 Q28 14 26 22 Z" fill="#F59E0B"/>
+    <path d="M18 20 Q20 8 22 13 Q24 10 23 21 Z" fill="#FBBF24"/>
+    <circle cx="20" cy="4" r="1" fill="#FDE68A" opacity="0.8"/>
+    <circle cx="23" cy="-2" r="0.8" fill="#FDE68A" opacity="0.6"/>
+
+    <!-- Camping Chair Silhouette -->
+    <path d="M52 28 L62 12 L72 28 M56 20 L68 20 M62 12 L68 5" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- VW California Brand Pill Badge -->
+  <g transform="translate(24, 24)">
+    <rect width="185" height="34" rx="17" fill="#000E26" fill-opacity="0.82" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="1"/>
+    <text x="16" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14">🏕️</text>
+    <text x="42" y="21" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF" letter-spacing="0.5">MIEJSCE NOCLEGOWE</text>
+  </g>
+
+  <!-- Bottom Brand Watermark -->
+  <g transform="translate(24, 305)">
+    <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#FFFFFF" fill-opacity="0.65" letter-spacing="0.8">VW CALIFORNIA • CAMPING EXPERIENCE</text>
+  </g>
+</svg>

@@ -1,7 +1,7 @@
 {
-  "name": "VW California AI Trip Planner",
-  "short_name": "VW Planner",
-  "description": "Inteligentny planista podróży dla właścicieli VW California z pamięcią podróży i interaktywną mapą.",
+  "name": "Volkswagen Sniffer — AI Trip Planner",
+  "short_name": "VW Sniffer",
+  "description": "Inteligentny planista podróży dla właścicieli VW California z maskotką Sniffer, pamięcią podróży i interaktywną mapą.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000E26",

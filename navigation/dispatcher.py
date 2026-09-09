@@ -27,6 +27,32 @@ TOOL_REGISTRY = {
 }
 
 
+def _sanitize_trip_start_date(raw_date):
+    """
+    Ensure start_date is in current year or later. If year is in past (< current year),
+    bump it to current year (2026) so outdated model priors don't corrupt trips.
+    """
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    if not raw_date:
+        return today_str
+    try:
+        dt = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
+        if dt.year < today.year:
+            try:
+                candidate = dt.replace(year=today.year)
+                if candidate.date() < today.date():
+                    return today_str
+                return candidate.strftime("%Y-%m-%d")
+            except ValueError:
+                return today_str
+        elif dt.date() < today.date():
+            return today_str
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return today_str
+
+
 def dispatch(function_name, arguments):
     """
     Dispatch an OpenAI function call to the appropriate tool.
@@ -38,11 +64,17 @@ def dispatch(function_name, arguments):
     Returns:
         dict: Tool execution result.
     """
+    # Sanitize dates for trip planning tools to ensure year 2026
+    if function_name == "plan_route" and isinstance(arguments, dict):
+        arguments["start_date"] = _sanitize_trip_start_date(arguments.get("start_date"))
+
     # Inline handlers for mutation tools
     if function_name == "modify_route":
         return _handle_modify_route(arguments)
     if function_name == "add_attraction":
         return _handle_add_attraction(arguments)
+    if function_name == "add_waypoint":
+        return _handle_add_waypoint(arguments)
     if function_name == "edit_waypoint":
         return _handle_edit_waypoint(arguments)
 
@@ -51,7 +83,7 @@ def dispatch(function_name, arguments):
             "status": "error",
             "message": (
                 f"Unknown function: '{function_name}'. "
-                f"Available: {list(TOOL_REGISTRY.keys()) + ['modify_route', 'add_attraction', 'edit_waypoint']}"
+                f"Available: {list(TOOL_REGISTRY.keys()) + ['modify_route', 'add_attraction', 'add_waypoint', 'edit_waypoint']}"
             ),
         }
 
@@ -81,14 +113,14 @@ def _handle_modify_route(arguments):
     """
     Handle route modification by re-planning with amended parameters.
 
-    Accepts exclude_places, force_overnight_change, and other overrides
-    on top of the original trip parameters. Falls back to a fresh
-    plan_route call with the updated context.
+    Accepts exclude_places, waypoints/include_places, force_overnight_change,
+    round_trip, and other overrides on top of the original trip parameters.
+    Falls back to a fresh plan_route call with the updated context.
 
     Args:
         arguments (dict): May include trip_id, origin, destination,
-            num_days, start_date, exclude_places, preferred_overnight,
-            preferred_amenities, wild_camping, notes.
+            num_days, start_date, waypoints, exclude_places, preferred_overnight,
+            preferred_amenities, wild_camping, notes, round_trip.
 
     Returns:
         dict: New trip data from plan_route.
@@ -96,9 +128,10 @@ def _handle_modify_route(arguments):
     try:
         from tools.db import get_engine
         from sqlalchemy import text
+        import json
 
         trip_id = arguments.get("trip_id")
-        exclude_places = arguments.get("exclude_places", [])
+        exclude_places = arguments.get("exclude_places", []) or []
         preferred_overnight = arguments.get("preferred_overnight")
         notes = arguments.get("notes", "")
 
@@ -109,31 +142,94 @@ def _handle_modify_route(arguments):
         start_date = arguments.get("start_date")
         preferred_amenities = arguments.get("preferred_amenities")
         user_id = arguments.get("user_id")
+        round_trip = arguments.get("round_trip")
 
-        if trip_id and not all([origin, destination, num_days, start_date]):
-            engine = get_engine()
-            with engine.connect() as conn:
-                row = conn.execute(
-                    text(
-                        "SELECT origin_label, origin_lat, origin_lng, "
-                        "destination_label, destination_lat, destination_lng, "
-                        "start_date, end_date, user_id "
-                        "FROM trips WHERE id = :id"
-                    ),
-                    {"id": trip_id}
-                ).fetchone()
+        # Extract newly requested waypoints / via places
+        raw_waypoints = (
+            arguments.get("waypoints")
+            or arguments.get("via_places")
+            or arguments.get("include_places")
+            or []
+        )
+        if isinstance(raw_waypoints, (str, dict)):
+            raw_waypoints = [raw_waypoints]
 
-                if row:
-                    origin = origin or {
-                        "label": row[0], "lat": float(row[1]), "lng": float(row[2])
-                    }
-                    destination = destination or {
-                        "label": row[3], "lat": float(row[4]), "lng": float(row[5])
-                    }
-                    if not num_days and row[6] and row[7]:
-                        num_days = (row[7] - row[6]).days + 1
-                    start_date = start_date or str(row[6])
-                    user_id = user_id or str(row[8])
+        existing_attractions = []
+
+        if trip_id:
+            try:
+                engine = get_engine()
+                with engine.connect() as conn:
+                    row = conn.execute(
+                        text(
+                            "SELECT origin_label, origin_lat, origin_lng, "
+                            "destination_label, destination_lat, destination_lng, "
+                            "start_date, end_date, user_id "
+                            "FROM trips WHERE id = :id"
+                        ),
+                        {"id": trip_id}
+                    ).fetchone()
+
+                    if row:
+                        origin = origin or {
+                            "label": row[0], "lat": float(row[1]), "lng": float(row[2])
+                        }
+                        destination = destination or {
+                            "label": row[3], "lat": float(row[4]), "lng": float(row[5])
+                        }
+                        if not num_days and row[6] and row[7]:
+                            num_days = (row[7] - row[6]).days + 1
+                        start_date = start_date or str(row[6])
+                        user_id = user_id or (str(row[8]) if row[8] else None)
+
+                    # Inspect daily schedules to detect round_trip and preserve existing waypoints
+                    sched_rows = conn.execute(
+                        text(
+                            "SELECT day_number, waypoints FROM daily_schedules "
+                            "WHERE trip_id = :id ORDER BY day_number ASC"
+                        ),
+                        {"id": trip_id}
+                    ).fetchall()
+
+                    if sched_rows:
+                        if round_trip is None:
+                            # Check if last waypoint of the last day matches origin
+                            last_day_wps = sched_rows[-1][1]
+                            if isinstance(last_day_wps, str):
+                                try:
+                                    last_day_wps = json.loads(last_day_wps)
+                                except Exception:
+                                    last_day_wps = []
+                            if last_day_wps:
+                                last_wp = last_day_wps[-1]
+                                if origin:
+                                    is_match_label = (
+                                        last_wp.get("label")
+                                        and last_wp.get("label") == origin.get("label")
+                                    )
+                                    is_match_coords = (
+                                        abs(float(last_wp.get("lat", 0)) - float(origin.get("lat", 0))) < 0.05
+                                        and abs(float(last_wp.get("lng", 0)) - float(origin.get("lng", 0))) < 0.05
+                                    )
+                                    if is_match_label or is_match_coords:
+                                        round_trip = True
+
+                        for sr in sched_rows:
+                            wps = sr[1]
+                            if isinstance(wps, str):
+                                try:
+                                    wps = json.loads(wps)
+                                except Exception:
+                                    wps = []
+                            for wp in (wps or []):
+                                if wp.get("type") in ("attraction", "waypoint"):
+                                    wp_label = wp.get("label", "")
+                                    # Filter out excluded places
+                                    if any(ex.lower() in wp_label.lower() for ex in exclude_places if ex):
+                                        continue
+                                    existing_attractions.append(wp)
+            except Exception as e:
+                print(f"Error reading existing trip context in modify_route: {e}")
 
         if not all([origin, destination, num_days, start_date]):
             try:
@@ -163,6 +259,30 @@ def _handle_modify_route(arguments):
                 ),
             }
 
+        if round_trip is None:
+            if origin.get("label") == destination.get("label") or (
+                origin.get("lat") == destination.get("lat") and origin.get("lng") == destination.get("lng")
+            ):
+                round_trip = True
+            else:
+                round_trip = False
+
+        # Merge newly requested waypoints with existing waypoints
+        all_waypoints = []
+        seen_keys = set()
+        for wp in raw_waypoints:
+            lbl = (wp.get("label") or wp.get("name") if isinstance(wp, dict) else str(wp)).strip()
+            if any(ex.lower() in lbl.lower() for ex in exclude_places if ex):
+                continue
+            all_waypoints.append(wp)
+            seen_keys.add(lbl.lower())
+
+        for wp in existing_attractions:
+            lbl = wp.get("label", "").strip()
+            if lbl.lower() not in seen_keys and not any(ex.lower() in lbl.lower() for ex in exclude_places if ex):
+                all_waypoints.append(wp)
+                seen_keys.add(lbl.lower())
+
         # Build exclusion note for the routing engine
         extra_notes = []
         if exclude_places:
@@ -172,6 +292,8 @@ def _handle_modify_route(arguments):
         if notes:
             extra_notes.append(notes)
 
+        start_date = _sanitize_trip_start_date(start_date)
+
         result = plan_route(
             origin=origin,
             destination=destination,
@@ -180,17 +302,57 @@ def _handle_modify_route(arguments):
             preferred_amenities=preferred_amenities,
             user_id=user_id,
             notes=" | ".join(extra_notes) if extra_notes else None,
+            round_trip=bool(round_trip),
+            waypoints=all_waypoints,
         )
 
         # Tag result as a route modification
         if result.get("status") == "success":
             result["mutation_type"] = "modify_route"
             result["excluded_places"] = exclude_places
+            result["waypoints"] = all_waypoints
 
         return result
 
     except Exception as e:
         return {"status": "error", "message": f"modify_route failed: {e}"}
+
+
+def _handle_add_waypoint(arguments):
+    """
+    Handle adding a waypoint or via-point to the route.
+    If day_number is specified, delegates to _handle_add_attraction.
+    Otherwise delegates to _handle_modify_route with waypoints=[...].
+    """
+    day_number = arguments.get("day_number")
+    label = arguments.get("label") or arguments.get("query") or arguments.get("name")
+    trip_id = arguments.get("trip_id")
+    lat = arguments.get("lat")
+    lng = arguments.get("lng")
+
+    if not trip_id or not label:
+        return {"status": "error", "message": "trip_id and label are required for add_waypoint."}
+
+    if day_number is not None:
+        return _handle_add_attraction({
+            "trip_id": trip_id,
+            "day_number": day_number,
+            "query": label,
+            "lat": lat,
+            "lng": lng,
+            "is_overnight": False,
+        })
+
+    # Otherwise route modification with via point
+    wp_dict = {"label": label}
+    if lat is not None and lng is not None:
+        wp_dict["lat"] = lat
+        wp_dict["lng"] = lng
+
+    mod_args = dict(arguments)
+    mod_args["waypoints"] = [wp_dict]
+    return _handle_modify_route(mod_args)
+
 
 
 def _handle_add_attraction(arguments):
@@ -285,6 +447,14 @@ def _handle_add_attraction(arguments):
             schedule_id = schedule_row[0]
             existing_waypoints = schedule_row[1] or []
 
+            types = place.get("types", [])
+            from tools.suggest_attractions import CATEGORY_MAP
+            cat_emoji, cat_color, cat_label = "⭐", "#F9A825", "Atrakcja"
+            for t in types:
+                if t in CATEGORY_MAP:
+                    cat_emoji, cat_color, cat_label = CATEGORY_MAP[t]
+                    break
+
             new_waypoint = {
                 "order": len(existing_waypoints),
                 "type": "camping" if is_overnight else "attraction",
@@ -292,6 +462,11 @@ def _handle_add_attraction(arguments):
                 "lat": attraction["lat"],
                 "lng": attraction["lng"],
                 "place_id": attraction["place_id"],
+                "address": attraction.get("address", ""),
+                "rating": attraction.get("rating"),
+                "category_label": cat_label,
+                "emoji": cat_emoji,
+                "color": cat_color,
                 "notes": f"Added by AI: {query}",
             }
 
@@ -315,6 +490,15 @@ def _handle_add_attraction(arguments):
                     ),
                     {"wps": json.dumps(updated_waypoints), "sid": str(schedule_id)}
                 )
+
+        # Invalidate attractions cache on server
+        try:
+            from tools.server import _ATTRACTIONS_CACHE
+            cache_keys = [k for k in list(_ATTRACTIONS_CACHE.keys()) if k.startswith(f"{trip_id}:")]
+            for k in cache_keys:
+                _ATTRACTIONS_CACHE.pop(k, None)
+        except Exception:
+            pass
 
         return {
             "status": "success",
@@ -690,6 +874,7 @@ OPENAI_TOOL_DEFINITIONS = [
             "name": "modify_route",
             "description": (
                 "Modify an existing trip route. Use when the user wants to "
+                "add a town/city/place to drive through or visit (e.g. 'Gardelegen'), "
                 "remove or replace an overnight stop, avoid a specific town, "
                 "or significantly restructure any day. Re-plans the full "
                 "route with updated constraints."
@@ -701,10 +886,27 @@ OPENAI_TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": "UUID of the active trip to modify.",
                     },
+                    "waypoints": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Name of the place/town to pass through or visit."},
+                                "lat": {"type": "number", "description": "Optional latitude."},
+                                "lng": {"type": "number", "description": "Optional longitude."},
+                            },
+                            "required": ["label"],
+                        },
+                        "description": "List of intermediate places, cities, or towns to pass through or visit along the route (e.g. [{'label': 'Gardelegen'}]).",
+                    },
                     "exclude_places": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of place names to avoid.",
+                        "description": "List of place names to avoid or remove.",
+                    },
+                    "round_trip": {
+                        "type": "boolean",
+                        "description": "Whether the trip is a round trip returning to origin. Default preserves previous trip setting.",
                     },
                     "preferred_overnight": {
                         "type": "string",
@@ -747,7 +949,43 @@ OPENAI_TOOL_DEFINITIONS = [
                 },
                 "required": ["trip_id"],
             },
-        }
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_waypoint",
+            "description": (
+                "Add an intermediate town, scenic pass, or waypoint to the route. "
+                "Can specify day_number or let the routing engine find the optimal day."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {
+                        "type": "string",
+                        "description": "UUID of the active trip.",
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Name of the town, place, or waypoint to add (e.g. 'Gardelegen').",
+                    },
+                    "day_number": {
+                        "type": "integer",
+                        "description": "Optional specific day number (1-indexed). If omitted, optimal day is chosen automatically.",
+                    },
+                    "lat": {
+                        "type": "number",
+                        "description": "Optional latitude.",
+                    },
+                    "lng": {
+                        "type": "number",
+                        "description": "Optional longitude.",
+                    },
+                },
+                "required": ["trip_id", "label"],
+            },
+        },
     },
     {
         "type": "function",

@@ -104,3 +104,50 @@ class TestAddAttractionToRoute:
             assert "Park Mużakowski" in data["message"]
             assert data["trip_data"]["trip"]["id"] == "test_trip_id"
             mock_recalc.assert_called_once()
+
+    @patch("tools.suggest_attractions.get_engine")
+    @patch("tools.suggest_attractions.googlemaps.Client")
+    def test_suggest_attractions_preserves_saved_attractions(self, mock_gmaps_client, mock_get_engine):
+        """suggest_attractions must return attractions saved in daily_schedules waypoints."""
+        from tools.suggest_attractions import suggest_attractions
+        import os
+
+        os.environ["GOOGLE_MAPS_API_KEY"] = "fake_key"
+
+        mock_conn = MagicMock()
+        # Day 1 has 1 saved attraction waypoint
+        mock_conn.execute.return_value.fetchall.return_value = [
+            (
+                1,
+                [
+                    {"order": 0, "type": "start", "label": "Start", "lat": 50.0, "lng": 15.0},
+                    {
+                        "order": 1,
+                        "type": "attraction",
+                        "label": "Zamek Czocha",
+                        "place_id": "czocha_123",
+                        "lat": 51.03,
+                        "lng": 15.30,
+                        "rating": 4.8,
+                        "category_label": "Zamek",
+                        "emoji": "🏰",
+                        "color": "#8B4513"
+                    },
+                    {"order": 2, "type": "camping", "label": "Camp", "lat": 50.5, "lng": 15.2}
+                ],
+                "mock_polyline"
+            )
+        ]
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_get_engine.return_value = mock_engine
+
+        result = suggest_attractions("test_trip_id")
+        assert result["status"] == "success"
+        day1_attrs = result["attractions_by_day"]["1"]
+        assert len(day1_attrs) >= 1
+        assert day1_attrs[0]["name"] == "Zamek Czocha"
+        assert day1_attrs[0]["place_id"] == "czocha_123"
+        assert day1_attrs[0]["is_in_route"] is True
+        assert day1_attrs[0]["emoji"] == "🏰"
+

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 340" width="100%" height="100%">
+  <defs>
+    <!-- Sky & Golden Hour Horizon Gradient -->
+    <linearGradient id="attrSkyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#001E50"/>
+      <stop offset="35%" stop-color="#0A3268"/>
+      <stop offset="70%" stop-color="#1B5596"/>
+      <stop offset="90%" stop-color="#DD6B20"/>
+      <stop offset="100%" stop-color="#F6AD55"/>
+    </linearGradient>
+
+    <!-- Sun Glow -->
+    <radialGradient id="sunGlow" cx="50%" cy="85%" r="45%">
+      <stop offset="0%" stop-color="#FFFBEB" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#FBBF24" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#F97316" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#001E50" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Mountain Gradients -->
+    <linearGradient id="attrMount1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2D4A6E"/>
+      <stop offset="100%" stop-color="#162942"/>
+    </linearGradient>
+    <linearGradient id="attrMount2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1E3857"/>
+      <stop offset="100%" stop-color="#0A1828"/>
+    </linearGradient>
+
+    <!-- Scenic Road Gradient -->
+    <linearGradient id="roadGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="50%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="600" height="340" fill="url(#attrSkyGrad)"/>
+
+  <!-- Rising Sun Behind Peaks -->
+  <circle cx="300" cy="205" r="95" fill="url(#sunGlow)"/>
+  <circle cx="300" cy="205" r="28" fill="#FFFBEB" opacity="0.9"/>
+
+  <!-- Birds in Distance -->
+  <path d="M120 70 Q127 63 134 70 Q141 63 148 70" stroke="#FFFFFF" stroke-width="1.8" fill="none" opacity="0.75"/>
+  <path d="M142 85 Q147 80 152 85 Q157 80 162 85" stroke="#FFFFFF" stroke-width="1.5" fill="none" opacity="0.6"/>
+  <path d="M460 60 Q466 54 472 60 Q478 54 484 60" stroke="#FFFFFF" stroke-width="1.6" fill="none" opacity="0.7"/>
+
+  <!-- High Mountain Peaks (Snowy caps) -->
+  <path d="M0 240 L95 150 L145 185 L220 120 L300 175 L380 110 L450 170 L525 135 L600 195 L600 340 L0 340 Z" fill="url(#attrMount1)" opacity="0.75"/>
+  <!-- Mountain Snow Caps -->
+  <polygon points="220,120 205,142 215,138 220,146 226,137 236,142" fill="#F8FAFC" opacity="0.85"/>
+  <polygon points="380,110 365,134 374,129 380,137 387,128 396,134" fill="#F8FAFC" opacity="0.85"/>
+
+  <!-- Closer Ridge / Forest Layer -->
+  <path d="M0 260 L80 205 L165 235 L260 185 L350 230 L450 180 L540 225 L600 200 L600 340 L0 340 Z" fill="url(#attrMount2)"/>
+
+  <!-- Pine Tree Silhouettes on Ridges -->
+  <g fill="#071728">
+    <path d="M30 270 L42 225 L54 270 Z M36 245 L42 215 L48 245 Z"/>
+    <path d="M58 275 L70 230 L82 275 Z"/>
+    <path d="M110 275 L120 240 L130 275 Z"/>
+    <path d="M470 275 L482 230 L494 275 Z M476 248 L482 220 L488 248 Z"/>
+    <path d="M500 270 L510 240 L520 270 Z"/>
+    <path d="M535 275 L546 235 L557 275 Z"/>
+  </g>
+
+  <!-- Rolling Foregrounds & Valley -->
+  <path d="M0 270 Q140 250 290 262 T600 265 L600 340 L0 340 Z" fill="#040D17"/>
+
+  <!-- Winding Scenic Road -->
+  <path d="M295 240 Q310 270 240 295 T180 340 L380 340 Q340 300 325 275 T305 240 Z" fill="url(#roadGrad)"/>
+  <!-- Road Center Dashed Line -->
+  <path d="M300 242 Q313 270 247 296 T190 340" stroke="#FDE047" stroke-width="2.5" stroke-dasharray="10 8" fill="none" opacity="0.85"/>
+
+  <!-- Prominent Landmark / Destination Pin in Foreground -->
+  <g transform="translate(300, 155)">
+    <!-- Soft Pin Shadow -->
+    <ellipse cx="0" cy="56" rx="16" ry="6" fill="#000000" opacity="0.4"/>
+    <!-- Pin Body -->
+    <path d="M0 0 C-18 0 -30 14 -30 30 C-30 48 0 68 0 68 C0 68 30 48 30 30 C30 14 18 0 0 0 Z" fill="#F59E0B" filter="drop-shadow(0px 3px 6px rgba(0,0,0,0.35))"/>
+    <circle cx="0" cy="28" r="13" fill="#FFFFFF"/>
+    <!-- Star Icon in Pin -->
+    <polygon points="0,19 3.5,26 11,26 5,30.5 7,38 0,33.5 -7,38 -5,30.5 -11,26 -3.5,26" fill="#001E50"/>
+  </g>
+
+  <!-- VW California Brand Pill Badge -->
+  <g transform="translate(24, 24)">
+    <rect width="195" height="34" rx="17" fill="#000E26" fill-opacity="0.82" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="1"/>
+    <text x="16" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14">⭐</text>
+    <text x="42" y="21" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF" letter-spacing="0.5">ATRAKCJA TURYSTYCZNA</text>
+  </g>
+
+  <!-- Bottom Brand Watermark -->
+  <g transform="translate(24, 305)">
+    <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#FFFFFF" fill-opacity="0.65" letter-spacing="0.8">VW CALIFORNIA • SCENIC WAYPOINT</text>
+  </g>
+</svg>

@@ -6,12 +6,12 @@
     <meta name="theme-color" content="#001E50">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="description" content="VW California AI Trip Planner — Zaplanuj swoją przygodę w kamperze z pomocą AI. Trasy, kempingi, wspomnienia z podróży.">
-    <title>VW California — AI Trip Planner</title>
+    <meta name="description" content="Volkswagen Sniffer — Zaplanuj swoją przygodę w kamperze z pomocą AI. Trasy, kempingi, wspomnienia z podróży.">
+    <title>Volkswagen Sniffer — AI Trip Planner</title>
 
     <link rel="manifest" href="/static/manifest.json">
     <!-- VW Brand Design System -->
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2.2">
 </head>
 <body>
 
@@ -22,9 +22,10 @@
          ═══════════════════════════════════════════════════════ -->
     <nav id="view-nav" aria-label="Główna nawigacja">
 
-        <!-- VW Logo -->
-        <div class="nav-logo">
+        <!-- VW & Sniffer Logo -->
+        <div class="nav-logo" title="Volkswagen Sniffer">
             <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="nav-logo-img">
+            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="nav-sniffer-avatar" title="Volkswagen Sniffer">
         </div>
 
         <!-- View Buttons -->
@@ -75,8 +76,16 @@
             </div>
             <!-- Language Switcher Widget -->
             <div class="lang-switcher" id="lang-switcher">
-                <button class="lang-btn active" data-lang="pl" title="Polski">🇵🇱 PL</button>
-                <button class="lang-btn" data-lang="de" title="Deutsch">🇩🇪 DE</button>
+                <button class="lang-trigger-btn" id="nav-lang-trigger" aria-haspopup="true" aria-expanded="false" title="Zmień język / Sprache ändern / Change language" aria-label="Wybór języka">
+                    <span class="nav-lang-flag" id="nav-current-lang-flag">🇵🇱</span>
+                    <span class="nav-lang-code" id="nav-current-lang-code">PL</span>
+                    <span class="nav-lang-arrow">▾</span>
+                </button>
+                <div class="nav-lang-flyout" id="nav-lang-flyout" role="menu">
+                    <button class="lang-btn active" data-lang="pl" role="menuitem"><span class="lang-flag">🇵🇱</span> Polski</button>
+                    <button class="lang-btn" data-lang="de" role="menuitem"><span class="lang-flag">🇩🇪</span> Deutsch</button>
+                    <button class="lang-btn" data-lang="en" role="menuitem"><span class="lang-flag">🇬🇧</span> English</button>
+                </div>
             </div>
         </div>
     </nav>
@@ -95,6 +104,30 @@
                     <div class="chat-header-title">
                         <h1 id="chat-greeting" data-i18n="chat_greeting">Witaj, podróżniku.</h1>
                         <p class="chat-header-sub" data-i18n="chat_sub">Dokąd chcesz pojechać swoim VW California?</p>
+                    </div>
+                    <div class="chat-header-actions">
+                        <button class="btn-location-toggle active" id="btn-toggle-location" role="switch" aria-checked="true" title="Automatyczna geolokalizacja (włączona)" aria-label="Przełącznik lokalizacji" data-i18n-title="location_tooltip_on">
+                            <span class="location-pulse-dot" id="location-pulse-dot"></span>
+                            <span class="location-icon" id="location-icon">📍</span>
+                            <span class="location-label" id="location-label" data-i18n="location_active">Lokalizacja: Wł.</span>
+                        </button>
+                        <button class="btn-suggestions-header" id="btn-open-suggestions" title="Pokaż inspiracje podróżnicze" aria-label="Inspiracje podróżnicze">
+                            <span class="btn-sparkle">✨</span>
+                            <span data-i18n="btn_travel_inspirations">Inspiracje</span>
+                        </button>
+                        <!-- Prominent Header Language Switcher -->
+                        <div class="chat-lang-dropdown" id="chat-lang-dropdown">
+                            <button class="btn-header-lang" id="btn-header-lang" aria-haspopup="true" aria-expanded="false" title="Zmień język / Sprache ändern / Change language" aria-label="Wybór języka">
+                                <span class="header-lang-flag" id="header-lang-flag">🇵🇱</span>
+                                <span class="header-lang-code" id="header-lang-code">PL</span>
+                                <span class="header-lang-arrow">▾</span>
+                            </button>
+                            <div class="header-lang-menu" id="header-lang-menu" role="menu">
+                                <button class="lang-btn active" data-lang="pl" role="menuitem"><span class="lang-flag">🇵🇱</span> Polski</button>
+                                <button class="lang-btn" data-lang="de" role="menuitem"><span class="lang-flag">🇩🇪</span> Deutsch</button>
+                                <button class="lang-btn" data-lang="en" role="menuitem"><span class="lang-flag">🇬🇧</span> English</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -132,56 +165,28 @@
 
                 <!-- Welcome Screen with Onboarding -->
                 <div class="chat-welcome" id="chat-welcome">
-                    <div class="welcome-icon-wrap">
-                        <div class="welcome-logo-box">
-                            <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="welcome-logo-img">
-                        </div>
+                    <div class="welcome-sniffer-container">
+                        <div class="welcome-sniffer-badge" data-i18n="welcome_sniffer_badge">🐶 Volkswagen Sniffer</div>
+                        <img src="/static/assets/sniffer-sitting.png" alt="Volkswagen Sniffer" class="welcome-sniffer-mascot">
                     </div>
-                    <h2 class="welcome-heading">Co planujesz?</h2>
-
-                    <div class="quick-actions" id="quick-actions">
-                        <button class="quick-action" id="qa-1" data-prompt="Chcę pojechać w góry z rodziną, mam tydzień">
-                            <span class="qa-icon">🏔️</span>
-                            <span class="qa-text">
-                                <strong>Tydzień w górach</strong>
-                                <small>z rodziną</small>
-                            </span>
-                        </button>
-                        <button class="quick-action" id="qa-2" data-prompt="Szukam kempingów z prądem i prysznicami nad Adriatykiem, budżet do 30 euro">
-                            <span class="qa-icon">🌊</span>
-                            <span class="qa-text">
-                                <strong>Wybrzeże Adriatyku</strong>
-                                <small>kempingi do 30€/noc</small>
-                            </span>
-                        </button>
-                        <button class="quick-action" id="qa-3" data-prompt="Zaplanuj mi trasę 5-dniową z Monachium do Chorwacji przez Słowenię">
-                            <span class="qa-icon">🗺️</span>
-                            <span class="qa-text">
-                                <strong>Monachium → Chorwacja</strong>
-                                <small>5 dni, przez Słowenię</small>
-                            </span>
-                        </button>
-                        <button class="quick-action" id="qa-4" data-prompt="Jadę sam, jestem doświadczony, preferuję dzikie biwaki. Mam 10 dni">
-                            <span class="qa-icon">⛺</span>
-                            <span class="qa-text">
-                                <strong>Dzikie biwaki</strong>
-                                <small>10 dni solo</small>
-                            </span>
-                        </button>
-                    </div>
+                    <h2 class="welcome-heading" id="welcome-chat-heading" data-i18n="chat_welcome_heading">Dokąd dzisiaj zmierzamy?</h2>
+                    <p class="welcome-sub" data-i18n="chat_welcome_sub">Zaprojektuj trasę dla swojego VW California lub skorzystaj z rekomendacji AI dopasowanych do Twojego stylu podróży.</p>
                 </div>
 
                 <!-- Typing Indicator -->
-                <div class="typing-indicator" id="typing-indicator" aria-live="polite" aria-label="AI pisze...">
-                    <span class="typing-dot"></span>
-                    <span class="typing-dot"></span>
-                    <span class="typing-dot"></span>
+                <div class="typing-indicator" id="typing-indicator" aria-live="polite" aria-label="Sniffer pisze...">
+                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar">
+                    <div class="typing-dots-wrap">
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                    </div>
                 </div>
 
                 <!-- Planning Route Indicator -->
                 <div class="planning-indicator" id="planning-indicator" aria-live="polite" aria-label="Tworzenie trasy...">
-                    <span class="planning-icon">🚐</span>
-                    <span class="planning-text">Trwa generowanie trasy...</span>
+                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="planning-sniffer-avatar">
+                    <span class="planning-text" data-i18n="planning_route_indicator">Sniffer węszy najlepszą trasę...</span>
                 </div>
             </div>
 
@@ -192,10 +197,19 @@
 
             <!-- Chat Input -->
             <div class="chat-input-wrapper">
+                <div class="chat-location-indicator" id="chat-location-indicator" style="display:none;">
+                    <div class="cli-content">
+                        <span class="cli-icon">📍</span>
+                        <span class="cli-label" data-i18n="location_current_label">Twoja lokalizacja:</span>
+                        <strong class="cli-name" id="cli-name"></strong>
+                    </div>
+                    <button type="button" class="cli-toggle-btn" id="cli-toggle-btn" data-i18n="location_btn_disable">Wyłącz</button>
+                </div>
                 <div class="chat-input-container" id="chat-input-container">
                     <textarea
                         id="chat-input"
                         placeholder="Opisz swoją wymarzoną trasę..."
+                        data-i18n-placeholder="chat_placeholder"
                         rows="1"
                         aria-label="Wpisz wiadomość"
                         maxlength="1000"
@@ -227,7 +241,7 @@
                     <line x1="9" y1="3" x2="9" y2="18"/>
                     <line x1="15" y1="6" x2="15" y2="21"/>
                 </svg>
-                Pokaż na mapie
+                <span data-i18n="btn_show_on_map">Pokaż na mapie</span>
             </button>
 
         </section>
@@ -240,39 +254,32 @@
 
             <!-- Map Overlay Controls -->
             <div class="map-overlay" id="map-overlay">
-                <button class="map-control-btn" id="btn-toggle-trip-info" aria-label="Plan trasu" title="Pokaż plan wyjazdu" style="display: none;">
+                <button class="map-control-btn" id="btn-toggle-trip-info" aria-label="Plan trasy" title="Pokaż plan wyjazdu" style="display: none;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="4" width="18" height="16" rx="2"/>
                         <line x1="16" y1="2" x2="16" y2="6"/>
                         <line x1="8" y1="2" x2="8" y2="6"/>
                         <line x1="3" y1="10" x2="21" y2="10"/>
                     </svg>
-                    <span class="btn-label">Plan</span>
+                    <span class="btn-label" data-i18n="map_btn_plan">Plan</span>
                 </button>
                 <button class="map-control-btn" id="btn-center-map" aria-label="Wyśrodkuj mapę" title="Wyśrodkuj">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
                     </svg>
-                    <span class="btn-label">Wyśrodkuj</span>
-                </button>
-                <button class="map-control-btn" id="btn-toggle-campings" aria-label="Kempingi" title="Pokaż kempingi">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                        <polyline points="9 22 9 12 15 12 15 22"/>
-                    </svg>
-                    <span class="btn-label">Kempingi</span>
+                    <span class="btn-label" data-i18n="map_btn_center">Wyśrodkuj</span>
                 </button>
                 <button class="map-control-btn" id="btn-toggle-attractions" aria-label="Atrakcje" title="Pokaż atrakcje wzdłuż trasy">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                     </svg>
-                    <span class="btn-label">Atrakcje</span>
+                    <span class="btn-label" data-i18n="map_btn_attractions">Atrakcje</span>
                     <span class="attractions-badge" id="attractions-count-badge" style="display:none;">0</span>
                 </button>
-                <button class="map-control-btn btn-top-attractions-btn" id="btn-top-attractions" aria-label="Top 5 Atrakcji" title="Zobacz Top 5 Must-See Atrakcji na trasie">
+                <button class="map-control-btn btn-top-attractions-btn" id="btn-top-attractions" aria-label="Top 8 Atrakcji" title="Zobacz Top 8 Must-See Atrakcji na trasie">
                     <span style="font-size: 1.1rem; line-height: 1;">🌟</span>
-                    <span class="btn-label" style="font-weight: 700; color: #E65100;">Top 5</span>
+                    <span class="btn-label" style="font-weight: 700; color: #E65100;" data-i18n="map_btn_top5">Top 8</span>
                 </button>
             </div>
 
@@ -281,6 +288,7 @@
                 <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span data-i18n="legend_start_end">Start / Koniec</span></div>
                 <div class="legend-item"><span class="legend-line" style="background:#001E50"></span> <span data-i18n="legend_outbound_route">Trasa dojazdowa</span></div>
                 <div class="legend-item"><span class="legend-line" style="background:#E65100"></span> <span data-i18n="legend_return_route">Trasa powrotna</span></div>
+                <div class="legend-item"><span class="legend-stage-dot">D1</span> <span data-i18n="legend_day_stages">Etapy dni (D1, D2...)</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#00875A"></span> <span data-i18n="legend_camping">Kemping</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
@@ -292,22 +300,28 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                     </svg>
-                    <span class="btn-label">Czat</span>
+                    <span class="btn-label" data-i18n="map_chat_bubble">Czat</span>
                 </button>
                 <div class="map-chat-panel" id="map-chat-panel" style="display:none;">
                     <div class="map-chat-header">
-                        <span>Asystent AI</span>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" style="width:20px; height:20px; border-radius:50%; border:1px solid #FFFFFF;">
+                            <span data-i18n="map_chat_header">Volkswagen Sniffer</span>
+                        </div>
                         <button class="map-chat-close" id="map-chat-close" aria-label="Zamknij czat">✕</button>
                     </div>
                     <div class="map-chat-messages" id="map-chat-messages">
                         <div class="typing-indicator" id="map-typing-indicator">
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
+                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar" style="width:20px; height:20px;">
+                            <div class="typing-dots-wrap">
+                                <div class="typing-dot"></div>
+                                <div class="typing-dot"></div>
+                                <div class="typing-dot"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="map-chat-input-wrap">
-                        <textarea id="map-chat-input" placeholder="Zapytaj o trasę..." rows="1" maxlength="1000"></textarea>
+                        <textarea id="map-chat-input" placeholder="Zapytaj o trasę..." data-i18n-placeholder="map_chat_placeholder" rows="1" maxlength="1000"></textarea>
                         <button class="mic-btn map-mic-btn" id="map-mic-btn" aria-label="Mów" title="Dyktuj wiadomość" style="display:none;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -338,7 +352,7 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                             </svg>
-                            Czat
+                            <span data-i18n="map_btn_back_to_chat">Czat</span>
                         </button>
                         <button class="trip-info-close" id="trip-info-close" aria-label="Zamknij panel">✕</button>
                     </div>
@@ -346,19 +360,19 @@
                 <div class="trip-stats">
                     <div class="trip-stat">
                         <span class="stat-value" id="stat-days">—</span>
-                        <span class="stat-label">Dni</span>
+                        <span class="stat-label" data-i18n="stat_label_days">Dni</span>
                     </div>
                     <div class="trip-stat">
                         <span class="stat-value" id="stat-km">—</span>
-                        <span class="stat-label">Kilometrów</span>
+                        <span class="stat-label" data-i18n="stat_label_km">Kilometrów</span>
                     </div>
                     <div class="trip-stat">
                         <span class="stat-value" id="stat-hours">—</span>
-                        <span class="stat-label">Jazdy</span>
+                        <span class="stat-label" data-i18n="stat_label_drive">Jazdy</span>
                     </div>
                     <div class="trip-stat">
                         <span class="stat-value" id="stat-campings">—</span>
-                        <span class="stat-label">Postojów</span>
+                        <span class="stat-label" data-i18n="stat_label_stops">Postojów</span>
                     </div>
                 </div>
                 <div class="day-cards" id="day-cards">
@@ -375,8 +389,8 @@
 
                 <!-- Memory Header -->
                 <div class="memory-header">
-                    <h2 class="memory-title">Wspomnienia z podróży</h2>
-                    <p class="memory-sub">Wgraj zdjęcia z wyprawy — automatycznie połączymy je z miejscami na mapie.</p>
+                    <h2 class="memory-title" data-i18n="memory_title">Wspomnienia z podróży</h2>
+                    <p class="memory-sub" data-i18n="memory_sub">Wgraj zdjęcia z wyprawy — automatycznie połączymy je z miejscami na mapie.</p>
 
                     <!-- Upload Zone -->
                     <div class="upload-zone" id="upload-zone" role="button" tabindex="0" aria-label="Wgraj zdjęcia">
@@ -385,8 +399,8 @@
                             <circle cx="8.5" cy="8.5" r="1.5"/>
                             <polyline points="21 15 16 10 5 21"/>
                         </svg>
-                        <p>Przeciągnij zdjęcia tutaj lub <span class="upload-cta">kliknij, żeby wybrać</span></p>
-                        <small>JPEG, PNG, HEIC — dane GPS zostaną automatycznie odczytane.<br>Brak GPS? Przypniesz zdjęcie ręcznie na mapie.</small>
+                        <p data-i18n="memory_drag_drop">Przeciągnij zdjęcia tutaj lub kliknij, żeby wybrać</p>
+                        <small data-i18n="memory_formats_hint">JPEG, PNG, HEIC — dane GPS zostaną automatycznie odczytane.<br>Brak GPS? Przypniesz zdjęcie ręcznie na mapie.</small>
                         <input type="file" id="photo-upload" accept="image/*" multiple style="display: none;">
                         <!-- Upload Progress -->
                         <div class="upload-progress" id="upload-progress" style="display:none;">
@@ -410,7 +424,7 @@
                             <circle cx="17" cy="17" r="5"/>
                             <polyline points="45 33 34 22 3 45"/>
                         </svg>
-                        <p>Brak zdjęć — wgraj swoje wspomnienia z trasy</p>
+                        <p data-i18n="memory_photo_empty">Brak zdjęć — wgraj swoje wspomnienia z trasy</p>
                     </div>
                 </div>
 
@@ -421,7 +435,7 @@
                             <polygon points="23 7 16 12 23 17 23 7"/>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                         </svg>
-                        Stwórz podsumowanie podróży
+                        <span data-i18n="memory_btn_summary">Stwórz podsumowanie podróży</span>
                     </button>
                     <button class="btn-secondary" id="btn-open-memories-gallery">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
@@ -430,7 +444,7 @@
                             <rect x="2" y="14" width="8" height="8" rx="1"/>
                             <rect x="14" y="14" width="8" height="8" rx="1"/>
                         </svg>
-                        Galeria Memories
+                        <span data-i18n="memory_btn_gallery">Galeria Memories</span>
                         <span class="memories-badge" id="memories-count-badge" style="display:none;">0</span>
                     </button>
                 </div>
@@ -454,8 +468,8 @@
         <div class="pin-photo-overlay" id="pin-photo-overlay" style="display:none;">
             <div class="pin-photo-banner">
                 <img id="pin-photo-preview" src="" alt="" class="pin-photo-thumb">
-                <span>📍 Kliknij na mapie, aby przypiąć to zdjęcie</span>
-                <button class="pin-photo-cancel" id="pin-photo-cancel">Anuluj</button>
+                <span data-i18n="pin_photo_prompt">📍 Kliknij na mapie, aby przypiąć to zdjęcie</span>
+                <button class="pin-photo-cancel" id="pin-photo-cancel" data-i18n="btn_cancel">Anuluj</button>
             </div>
         </div>
 
@@ -463,53 +477,142 @@
 
 </div><!-- end #app -->
 
+<!-- ─── Photo Edit Modal ─────────────────────────────────────── -->
+<div class="modal-overlay" id="photo-edit-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Edycja zdjęcia">
+    <div class="modal-card" style="max-width: 500px; width: 92%; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                <span>📷</span> <span data-i18n="photo_edit_title">Edytuj datę i lokalizację zdjęcia</span>
+            </h3>
+            <button class="modal-close-btn" id="photo-edit-close" aria-label="Zamknij">&times;</button>
+        </div>
+        
+        <div style="text-align: center; margin: 16px 0;">
+            <img id="photo-edit-preview" src="" alt="Podgląd" style="max-height: 200px; max-width: 100%; border-radius: 12px; object-fit: contain; box-shadow: 0 4px 16px rgba(0,0,0,0.15); background: #000E26;" />
+            <div id="photo-edit-filename" style="font-size: 0.82rem; color: var(--vw-text-secondary); margin-top: 6px; word-break: break-all;"></div>
+        </div>
+
+        <input type="hidden" id="photo-edit-id" value="" />
+        <input type="hidden" id="photo-edit-lat" value="" />
+        <input type="hidden" id="photo-edit-lng" value="" />
+
+        <div class="form-group" style="margin-bottom: 14px; text-align: left;">
+            <label for="photo-edit-date" style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; display: block;" data-i18n="photo_edit_date_label">📅 Data wykonania zdjęcia:</label>
+            <input type="date" id="photo-edit-date" class="form-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--vw-border);" />
+            <small style="color: var(--vw-text-secondary); font-size: 0.78rem; display: block; margin-top: 4px;" data-i18n="photo_edit_date_hint">Wpływa na kolejność i przypisanie do odpowiedniego dnia w filmie z podróży.</small>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 14px; text-align: left;">
+            <label for="photo-edit-day" style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; display: block;" data-i18n="photo_edit_day_label">🚐 Przypisz do dnia wyprawy:</label>
+            <select id="photo-edit-day" class="form-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--vw-border);">
+                <option value="" data-i18n="photo_edit_day_auto">Automatycznie (wg daty / lokalizacji)</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 20px; text-align: left;">
+            <label style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; display: block;" data-i18n="photo_edit_location_label">📍 Pozycja na mapie:</label>
+            <div style="display: flex; align-items: center; justify-content: space-between; background: var(--vw-bg); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--vw-border); gap: 10px;">
+                <span id="photo-edit-coords-text" style="font-size: 0.84rem; color: var(--vw-text-primary); font-family: monospace;">Brak współrzędnych GPS</span>
+                <button type="button" id="btn-photo-pick-location" class="btn-secondary" style="padding: 6px 12px; font-size: 0.82rem; white-space: nowrap;" data-i18n="photo_edit_pick_map">🗺️ Wskaż na mapie</button>
+            </div>
+        </div>
+
+        <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="button" id="photo-edit-cancel" class="btn-secondary" data-i18n="btn_cancel">Anuluj</button>
+            <button type="button" id="photo-edit-save" class="btn-primary" data-i18n="btn_save">💾 Zapisz</button>
+        </div>
+    </div>
+</div>
+
 <!-- ─── Summary Modal ────────────────────────────────────────── -->
 <div class="modal-overlay" id="summary-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Eksport podsumowania">
     <div class="modal-header">
         <button class="modal-close-btn" id="summary-close-btn" aria-label="Zamknij">&times;</button>
     </div>
-    <div id="summary-options" class="modal-card" style="max-width: 480px;">
-        <h3>Wybierz format eksportu</h3>
-        <p style="color: var(--vw-text-secondary); margin-bottom: 20px;">Jak chcesz podzielić się swoją przygodą?</p>
+    <div id="summary-options" class="modal-card" style="max-width: 560px; width: 92%; max-height: 90vh; overflow-y: auto;">
+        <h3 data-i18n="summary_modal_title">Wybierz format eksportu</h3>
+        <p style="color: var(--vw-text-secondary); margin-bottom: 16px;" data-i18n="summary_modal_sub">Jak chcesz podzielić się swoją przygodą?</p>
         
-        <!-- Music Track Selection -->
-        <div style="margin-bottom: 24px; text-align: left; background: var(--vw-bg); padding: 16px; border-radius: 16px; border: 1px solid var(--vw-border);">
-            <label for="select-music-track" style="font-weight: bold; font-size: 0.9rem; color: var(--vw-primary); display: block; margin-bottom: 8px;">🎵 Ścieżka dźwiękowa do filmu:</label>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <select id="select-music-track" class="form-input" style="margin-bottom: 0; flex: 1; padding: 10px; border-radius: 12px;">
-                    <optgroup label="🌿 Relaks">
-                        <option value="acoustic_sunset">🌅 Acoustic Sunset</option>
-                        <option value="vanlife_chill">🚐 Vanlife Chill</option>
-                        <option value="coastal_breeze">🌊 Coastal Breeze</option>
-                        <option value="alpine_acoustic">🌲 Alpine Acoustic</option>
-                    </optgroup>
-                    <optgroup label="🎷 Jazz">
-                        <option value="jazz_trio">🎷 Jazz Trio</option>
-                    </optgroup>
-                    <optgroup label="🎸 Folk / Gitara">
-                        <option value="folk_guitar">🎸 Folk Guitar</option>
-                        <option value="reggae_sunshine">☀️ Reggae Sunshine</option>
-                    </optgroup>
-                    <optgroup label="🎬 Klimat">
-                        <option value="cinematic_orchestral">🎬 Cinematic Orchestral</option>
-                        <option value="electronic_lofi">🎧 Electronic Lo-Fi</option>
-                    </optgroup>
-                    <option value="none">🔇 Bez muzyki</option>
-                </select>
-                <button id="btn-preview-audio" class="btn-primary" style="padding: 10px 14px; border-radius: 12px; font-size: 0.85rem;" title="Odsłuchaj ścieżkę">▶ Odsłuchaj</button>
+        <!-- Audius Music Track Selection -->
+        <div style="margin-bottom: 20px; text-align: left; background: var(--vw-bg); padding: 16px; border-radius: 16px; border: 1px solid var(--vw-border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <label style="font-weight: 700; font-size: 0.92rem; color: var(--vw-primary); margin: 0;" data-i18n="summary_soundtrack_label">🎵 Ścieżka dźwiękowa do filmu:</label>
+                <span class="audius-streaming-badge" title="Darmowy streaming muzyki niezależnych twórców">
+                    <span class="pulse-dot"></span> <span data-i18n="summary_audius_badge">Streaming Audius</span>
+                </span>
             </div>
-            <audio id="audio-preview-player" style="display: none;"></audio>
+
+            <!-- Mood Filter Pills -->
+            <div class="music-mood-pills" id="music-mood-pills">
+                <button type="button" class="music-mood-pill active" data-mood="roadtrip">🚐 Vanlife</button>
+                <button type="button" class="music-mood-pill" data-mood="lofi">🌅 Lo-Fi</button>
+                <button type="button" class="music-mood-pill" data-mood="acoustic">🎸 Folk</button>
+                <button type="button" class="music-mood-pill" data-mood="nature">🌲 Nature</button>
+                <button type="button" class="music-mood-pill" data-mood="summer">☀️ Summer</button>
+                <button type="button" class="music-mood-pill" data-mood="jazz">🎷 Jazz</button>
+                <button type="button" class="music-mood-pill" data-mood="offline">📁 Offline</button>
+            </div>
+
+            <!-- Search input -->
+            <div class="music-search-bar-wrap">
+                <span class="music-search-icon">🔍</span>
+                <input type="text" id="music-search-input" class="music-search-input" placeholder="🔍 Szukaj piosenki, wykonawcy na Audius..." data-i18n-placeholder="summary_music_search_placeholder" />
+                <button type="button" id="btn-clear-music-search" class="music-clear-btn" style="display: none;">&times;</button>
+            </div>
+
+            <!-- Scrollable Track List -->
+            <div id="music-tracks-container" class="music-tracks-scrollable">
+                <div style="text-align: center; padding: 20px; color: var(--vw-text-secondary); font-size: 0.85rem;" data-i18n="summary_music_searching">
+                    Ładowanie utworów z Audius... 🎵
+                </div>
+            </div>
+
+            <!-- Selected Track Banner -->
+            <div class="selected-music-banner" id="selected-music-banner">
+                <div class="selected-music-info">
+                    <span class="selected-music-label" data-i18n="summary_selected_track_label">Wybrana ścieżka:</span>
+                    <span class="selected-music-title" id="selected-music-title">🚐 Ładowanie...</span>
+                </div>
+                <button type="button" id="btn-toggle-no-music" class="btn-no-music" data-i18n="summary_music_no_music_opt">🔇 Bez muzyki</button>
+            </div>
+
+            <!-- Hidden Inputs & Audio Player -->
+            <input type="hidden" id="select-music-track" value="audius:RG0N5dQ" />
+            <audio id="audio-preview-player" preload="none" style="display: none;"></audio>
+        </div>
+
+        <!-- Trip Dates & Stats Overview in Summary Modal -->
+        <div id="summary-trip-info" style="margin-bottom: 20px; text-align: left; background: var(--vw-bg); padding: 14px; border-radius: 14px; border: 1px solid var(--vw-border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-weight: 700; font-size: 0.88rem; color: var(--vw-primary);">📅 <span data-i18n="summary_trip_dates_label">Termin wyprawy:</span></span>
+                <button type="button" id="btn-edit-trip-dates" class="btn-secondary" style="padding: 4px 10px; font-size: 0.78rem;" data-i18n="summary_btn_edit_dates">✏️ Zmień datę</button>
+            </div>
+            <div id="summary-trip-dates-display" style="font-size: 0.95rem; font-weight: 600; color: var(--vw-text-primary);">--</div>
+            <div id="summary-trip-dates-editor" style="display: none; margin-top: 10px; gap: 8px; flex-direction: column;">
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <label for="summary-edit-start-date" style="font-size: 0.8rem; min-width: 45px;">Od:</label>
+                    <input type="date" id="summary-edit-start-date" class="form-input" style="padding: 6px; flex: 1;" />
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <label for="summary-edit-end-date" style="font-size: 0.8rem; min-width: 45px;">Do:</label>
+                    <input type="date" id="summary-edit-end-date" class="form-input" style="padding: 6px; flex: 1;" />
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;">
+                    <button type="button" id="btn-cancel-trip-dates" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;" data-i18n="btn_cancel">Anuluj</button>
+                    <button type="button" id="btn-save-trip-dates" class="btn-primary" style="padding: 4px 12px; font-size: 0.8rem;" data-i18n="btn_save">Zapisz</button>
+                </div>
+            </div>
         </div>
 
         <div class="modal-actions" style="justify-content: center; gap: 12px;">
-            <button id="btn-export-slideshow" class="btn-primary">Pokaz slajdów</button>
-            <button id="btn-export-video" class="btn-primary btn-success">Wideo (.mp4)</button>
+            <button id="btn-export-slideshow" class="btn-primary" data-i18n="summary_btn_slideshow">🖼️ Pokaz slajdów</button>
+            <button id="btn-export-video" class="btn-primary btn-success" data-i18n="summary_btn_video">🎬 Film z podróży (Cinematic MP4)</button>
         </div>
     </div>
     <div id="summary-result-view" style="display: none; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center;">
         <div class="summary-carousel" id="summary-carousel"></div>
         <div id="summary-controls">
-            <span id="summary-loading" style="display: none; color: white;">Generuję podsumowanie podróży... 🚐</span>
+            <span id="summary-loading" style="display: none; color: white;" data-i18n="summary_generating">Generuję podsumowanie podróży... 🚐</span>
         </div>
     </div>
 </div>
@@ -524,17 +627,17 @@
 
         <div id="login-view">
             <input type="email" id="login-email" placeholder="Email" class="form-input" autocomplete="email"/>
-            <input type="password" id="login-password" placeholder="Hasło" class="form-input" autocomplete="current-password"/>
-            <button id="btn-login" class="btn-primary btn-full">Zaloguj się</button>
-            <p class="auth-switch">Nie masz konta? <a href="#" id="link-show-register" onclick="window.showRegisterView &amp;&amp; window.showRegisterView(); return false;">Zarejestruj się</a></p>
+            <input type="password" id="login-password" placeholder="Hasło" data-i18n-placeholder="auth_password" class="form-input" autocomplete="current-password"/>
+            <button id="btn-login" class="btn-primary btn-full" data-i18n="auth_login_btn">Zaloguj się</button>
+            <p class="auth-switch"><a href="#" id="link-show-register" onclick="window.showRegisterView &amp;&amp; window.showRegisterView(); return false;" data-i18n="auth_switch_no_account">Nie masz konta? Zarejestruj się</a></p>
         </div>
 
         <div id="register-view" style="display: none;">
-            <input type="text" id="register-name" placeholder="Imię i nazwisko" class="form-input" autocomplete="name"/>
+            <input type="text" id="register-name" placeholder="Imię i nazwisko" data-i18n-placeholder="auth_display_name" class="form-input" autocomplete="name"/>
             <input type="email" id="register-email" placeholder="Email" class="form-input" autocomplete="email"/>
-            <input type="password" id="register-password" placeholder="Hasło" class="form-input" autocomplete="new-password"/>
-            <button id="btn-register" class="btn-primary btn-full">Utwórz konto</button>
-            <p class="auth-switch">Masz już konto? <a href="#" id="link-show-login" onclick="window.showLoginView &amp;&amp; window.showLoginView(); return false;">Zaloguj się</a></p>
+            <input type="password" id="register-password" placeholder="Hasło" data-i18n-placeholder="auth_password" class="form-input" autocomplete="new-password"/>
+            <button id="btn-register" class="btn-primary btn-full" data-i18n="auth_register_btn">Utwórz konto</button>
+            <p class="auth-switch"><a href="#" id="link-show-login" onclick="window.showLoginView &amp;&amp; window.showLoginView(); return false;" data-i18n="auth_switch_has_account">Masz już konto? Zaloguj się</a></p>
         </div>
 
         <div id="auth-error" class="form-error" style="display: none;"></div>
@@ -596,11 +699,11 @@
 <div class="modal-overlay" id="profile-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Profil i Preferencje VW">
     <div class="modal-card profile-card">
         <div class="modal-header">
-            <h3>⚙️ Profil & Preferencje VW California</h3>
+            <h3 data-i18n="pref_title">⚙️ Profil & Preferencje VW California</h3>
             <button class="modal-close-btn" id="profile-close-btn" aria-label="Zamknij">&times;</button>
         </div>
         <div class="form-group">
-            <label for="pref-vehicle">Model Pojazdu:</label>
+            <label for="pref-vehicle" data-i18n="pref_vehicle_model">Model Pojazdu:</label>
             <select id="pref-vehicle" class="form-input">
                 <option value="VW California Ocean 6.1">VW California Ocean 6.1</option>
                 <option value="VW California Coast">VW California Coast</option>
@@ -609,35 +712,35 @@
             </select>
         </div>
         <div class="form-group">
-            <label for="pref-drive-hours">Maksymalny dzienny czas jazdy (h):</label>
+            <label for="pref-drive-hours" data-i18n="pref_max_drive_hours">Maksymalny dzienny czas jazdy (h):</label>
             <input type="number" id="pref-drive-hours" class="form-input" min="2" max="12" step="0.5" value="6.0">
         </div>
         <div class="form-group">
-            <label for="pref-hookup">Typ Przyłącza Prądu:</label>
+            <label for="pref-hookup" data-i18n="pref_hookup_type">Typ Przyłącza Prądu:</label>
             <select id="pref-hookup" class="form-input">
-                <option value="shore_power">Shore Power (Prąd kempingowy CEE)</option>
-                <option value="full_hookup">Full Hookup (Prąd + Woda + Ścieki)</option>
-                <option value="none">Brak (Samowystarczalny / Solary)</option>
+                <option value="shore_power" data-i18n="pref_hookup_shore">Shore Power (Prąd kempingowy CEE)</option>
+                <option value="full_hookup" data-i18n="pref_hookup_full">Full Hookup (Prąd + Woda + Ścieki)</option>
+                <option value="none" data-i18n="pref_hookup_none">Brak (Samowystarczalny / Solary)</option>
             </select>
         </div>
         <div class="form-group">
-            <label for="pref-budget">Maksymalny budżet za noc (€):</label>
+            <label for="pref-budget" data-i18n="pref_max_budget">Maksymalny budżet za noc (€):</label>
             <input type="number" id="pref-budget" class="form-input" min="0" max="200" value="35">
         </div>
         <div class="form-group">
-            <label>Wymagane Udogodnienia:</label>
+            <label data-i18n="pref_required_amenities">Wymagane Udogodnienia:</label>
             <div class="checkbox-group">
-                <label><input type="checkbox" id="pref-amenity-power" value="power" checked> Prąd</label>
-                <label><input type="checkbox" id="pref-amenity-water" value="water" checked> Woda</label>
-                <label><input type="checkbox" id="pref-amenity-showers" value="showers" checked> Prysznice</label>
-                <label><input type="checkbox" id="pref-amenity-wifi" value="wifi"> Wi-Fi</label>
-                <label><input type="checkbox" id="pref-amenity-waste" value="waste_disposal"> Zrzut ścieków</label>
+                <label><input type="checkbox" id="pref-amenity-power" value="power" checked> <span data-i18n="pref_amenity_power">Prąd</span></label>
+                <label><input type="checkbox" id="pref-amenity-water" value="water" checked> <span data-i18n="pref_amenity_water">Woda</span></label>
+                <label><input type="checkbox" id="pref-amenity-showers" value="showers" checked> <span data-i18n="pref_amenity_showers">Prysznice</span></label>
+                <label><input type="checkbox" id="pref-amenity-wifi" value="wifi"> <span data-i18n="pref_amenity_wifi">Wi-Fi</span></label>
+                <label><input type="checkbox" id="pref-amenity-waste" value="waste_disposal"> <span data-i18n="pref_amenity_waste">Zrzut ścieków</span></label>
             </div>
         </div>
         <div class="modal-actions" style="display: flex; flex-wrap: wrap; gap: 8px;">
-            <button id="btn-save-preferences" class="btn-primary">Zapisz preferencje</button>
-            <button id="btn-restart-tutorial" class="btn-secondary">▶️ Samouczek</button>
-            <button id="btn-user-logout" class="btn-secondary">Wyloguj się</button>
+            <button id="btn-save-preferences" class="btn-primary" data-i18n="pref_btn_save">Zapisz preferencje</button>
+            <button id="btn-restart-tutorial" class="btn-secondary" data-i18n="pref_btn_tutorial">▶️ Samouczek</button>
+            <button id="btn-user-logout" class="btn-secondary" data-i18n="pref_btn_logout">Wyloguj się</button>
         </div>
     </div>
 </div>
@@ -658,70 +761,133 @@
 <!-- ─── Camping Selection Modal (3 Proposals per Day) ─────────── -->
 <div class="modal-overlay camping-selection-overlay" id="camping-selection-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Wybór noclegu">
     <div class="camping-selection-card">
-        <div class="camping-selection-header">
-            <div class="camping-modal-header-title">
-                <h3 id="camping-modal-title" data-i18n="camping_modal_title">🏕️ Wybierz Nocleg</h3>
-                <span class="day-badge" id="camping-modal-day-badge">Dzień 1</span>
+        <!-- Fixed Header Area -->
+        <div class="camping-selection-header-wrap">
+            <div class="camping-selection-header">
+                <div class="camping-modal-header-title">
+                    <h3 id="camping-modal-title" data-i18n="camping_modal_title">🏕️ Wybierz Nocleg</h3>
+                    <span class="day-badge" id="camping-modal-day-badge">Dzień 1</span>
+                </div>
+                <button class="camping-modal-close-btn" id="camping-modal-close" aria-label="Zamknij">&times;</button>
             </div>
-            <button class="camping-modal-close-btn" id="camping-modal-close" aria-label="Zamknij">&times;</button>
-        </div>
-        <p class="camping-modal-sub" id="camping-modal-sub" data-i18n="camping_modal_sub">Oto 3 propozycje kempingów dostosowane do Twojego VW California. Wybierz idealne miejsce na nocleg:</p>
-        
-        <!-- Day Tabs for Multi-day trips -->
-        <div class="camping-day-tabs" id="camping-day-tabs"></div>
-
-        <!-- 3 Camping Proposal Cards -->
-        <div class="camping-cards-grid" id="camping-cards-grid">
-            <!-- Cards rendered dynamically -->
+            <p class="camping-modal-sub" id="camping-modal-sub" data-i18n="camping_modal_sub">Oto 3 propozycje kempingów dostosowane do Twojego VW California. Wybierz idealne miejsce na nocleg:</p>
+            
+            <!-- Day Tabs for Multi-day trips -->
+            <div class="camping-day-tabs" id="camping-day-tabs"></div>
         </div>
 
-        <!-- Day Attractions Section -->
-        <div class="day-attractions-modal-section" id="day-attractions-modal-section" style="margin-top: 20px; border-top: 1px dashed #CBD5E0; padding-top: 16px;">
-            <h4 id="day-attractions-modal-title" style="margin: 0 0 12px 0; color: #001E50; font-size: 1.05rem; font-weight: 700;">⭐ Rekomendowane atrakcje na ten dzień trasy:</h4>
-            <div class="day-attractions-modal-grid" id="day-attractions-modal-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
-                <!-- Attraction cards rendered dynamically -->
+        <!-- Scrollable Middle Body -->
+        <div class="camping-selection-body" id="camping-selection-body">
+            <!-- 3 Camping Proposal Cards -->
+            <div class="camping-cards-grid" id="camping-cards-grid">
+                <!-- Cards rendered dynamically -->
+            </div>
+
+            <!-- Day Attractions Section -->
+            <div class="day-attractions-modal-section" id="day-attractions-modal-section">
+                <h4 id="day-attractions-modal-title" style="margin: 0 0 12px 0; color: #001E50; font-size: 1.05rem; font-weight: 700;">⭐ Rekomendowane atrakcje na ten dzień trasy:</h4>
+                <div class="day-attractions-modal-grid" id="day-attractions-modal-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+                    <!-- Attraction cards rendered dynamically -->
+                </div>
             </div>
         </div>
 
-        <div class="camping-modal-footer" style="display: flex; justify-content: flex-end; margin-top: 16px;">
-            <button id="btn-camping-modal-done" class="btn-primary" style="padding: 12px 28px; border-radius: 24px; font-weight: 700;" data-i18n="camping_confirm_all">Gotowe</button>
+        <!-- Pinned Sticky Footer with Gotowe button -->
+        <div class="camping-modal-footer">
+            <button id="btn-camping-modal-done" class="btn-primary btn-camping-done" data-i18n="camping_confirm_all">Gotowe</button>
         </div>
     </div>
 </div>
 
 <!-- ─── Top 5 Must-See Attractions Modal ───────────────────── -->
-<div class="modal-overlay top-attractions-overlay" id="top-attractions-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Top 5 Atrakcji">
+<div class="modal-overlay top-attractions-overlay" id="top-attractions-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Top 8 Atrakcji">
     <div class="top-attractions-card">
         <div class="top-attractions-header">
             <div class="top-attractions-title-box">
-                <h3 id="top-attractions-title">🌟 Top 5 Must-See Atrakcji na Trasie</h3>
-                <p id="top-attractions-subtitle">Najwyżej oceniane i najbardziej spektakularne miejsca wyselekcjonowane dla Twojej wyprawy VW California:</p>
+                <h3 id="top-attractions-title" data-i18n="top_attractions_title">🌟 Top 8 Must-See Atrakcji na Trasie</h3>
+                <p id="top-attractions-subtitle" data-i18n="top_attractions_subtitle">Najchętniej odwiedzane i najbardziej spektakularne miejsca wyselekcjonowane dla Twojej wyprawy VW California:</p>
             </div>
             <div class="top-attractions-header-controls" style="display: flex; align-items: center; gap: 14px;">
                 <div class="top-sort-wrapper" style="display: flex; align-items: center; gap: 6px;">
-                    <label for="top-attractions-sort" style="font-size: 0.88rem; font-weight: 700; color: #001E50; white-space: nowrap;">Sortuj:</label>
+                    <label for="top-attractions-sort" style="font-size: 0.88rem; font-weight: 700; color: #001E50; white-space: nowrap;" data-i18n="top_attractions_sort">Sortuj:</label>
                     <select id="top-attractions-sort" class="top-sort-select">
-                        <option value="rating">🌟 Najwyżej oceniane</option>
-                        <option value="day">📅 Według dni trasy (Dzień 1 ➔ N)</option>
+                        <option value="reviews" selected data-i18n="top_attractions_sort_reviews">👥 Najwięcej opinii</option>
+                        <option value="rating" data-i18n="top_attractions_sort_rating">🌟 Najwyżej oceniane</option>
+                        <option value="day" data-i18n="top_attractions_sort_day">📅 Według dni trasy (Dzień 1 ➔ N)</option>
                     </select>
                 </div>
                 <button class="top-attractions-close-btn" id="top-attractions-close" aria-label="Zamknij">&times;</button>
             </div>
         </div>
 
-        <!-- 5 Cards Responsive Grid -->
+        <!-- 8 Cards Responsive Grid -->
         <div class="top-attractions-grid" id="top-attractions-grid">
             <!-- Cards rendered dynamically -->
         </div>
 
         <!-- Pagination Footer Bar -->
         <div class="top-attractions-footer">
-            <button class="btn-top-nav" id="btn-top-prev" disabled>
-                ⬅️ Poprzednie 5
+            <button class="btn-top-nav" id="btn-top-prev" disabled data-i18n="top_attractions_prev">
+                ⬅️ Poprzednie 8
             </button>
-            <span class="top-page-indicator" id="top-page-indicator">Atrakcje #1–#5</span>
-            <button class="btn-top-nav btn-top-next" id="btn-top-next">
-                Następne 5 ➡️
+            <span class="top-page-indicator" id="top-page-indicator">Atrakcje #1–#8</span>
+            <button class="btn-top-nav btn-top-next" id="btn-top-next" data-i18n="top_attractions_next">
+                Następne 8 ➡️
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Suggestive Travel Inspirations Modal (Middle-Aged Focus + RAG) ────── -->
+<div class="modal-overlay travel-suggestions-overlay" id="travel-suggestions-modal" style="display: none;" role="dialog" aria-modal="true" aria-label="Inspiracje podróżnicze VW California">
+    <div class="travel-suggestions-card">
+        <div class="travel-suggestions-header-wrap">
+            <div class="travel-suggestions-header">
+                <div class="travel-suggestions-header-left">
+                    <div class="suggestions-badge-pill">
+                        <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="suggestions-sniffer-pill-icon">
+                        <span data-i18n="suggestions_vw_badge">Wywęszone przez Sniffera</span>
+                    </div>
+                    <h2 id="travel-suggestions-title" class="travel-suggestions-title" data-i18n="suggestions_title">Dokąd dzisiaj zmierzasz?</h2>
+                    <p id="travel-suggestions-subtitle" class="travel-suggestions-subtitle" data-i18n="suggestions_subtitle">
+                        Oto starannie dobrane pomysły na podróż — malownicze trasy, spokojne tempo, kempingi z prądem 230V i lokalne smaki.
+                    </p>
+                </div>
+                <button class="travel-suggestions-close-btn" id="travel-suggestions-close" aria-label="Zamknij">&times;</button>
+            </div>
+
+            <!-- Trip Duration Filter Pills (Middle-Aged Pacing) -->
+            <div class="suggestions-duration-pills" id="suggestions-duration-pills" role="tablist" aria-label="Filtruj czas trwania podróży">
+                <button class="duration-pill active" data-duration="all" role="tab" aria-selected="true" data-i18n="suggestions_pill_all">
+                    Wszystkie długości
+                </button>
+                <button class="duration-pill" data-duration="weekend" role="tab" aria-selected="false" data-i18n="suggestions_pill_weekend">
+                    Weekend (2–4 dni)
+                </button>
+                <button class="duration-pill" data-duration="week" role="tab" aria-selected="false" data-i18n="suggestions_pill_week">
+                    Tydzień (5–8 dni)
+                </button>
+                <button class="duration-pill" data-duration="expedition" role="tab" aria-selected="false" data-i18n="suggestions_pill_expedition">
+                    Wyprawa (9–14 dni)
+                </button>
+            </div>
+        </div>
+
+        <div class="travel-suggestions-body">
+            <!-- Dynamic Grid of Visual Suggestion Cards -->
+            <div class="travel-suggestions-grid" id="travel-suggestions-grid">
+                <!-- Populated dynamically by app.js or skeleton loader -->
+            </div>
+        </div>
+
+        <!-- Action / Footer bar -->
+        <div class="travel-suggestions-footer">
+            <button class="btn-suggestions-refresh" id="btn-refresh-suggestions" title="Wylosuj nowe propozycje">
+                <span class="refresh-icon">🔄</span>
+                <span data-i18n="suggestions_refresh">Nowe inspiracje</span>
+            </button>
+            <button class="btn-suggestions-skip" id="btn-skip-suggestions" data-i18n="suggestions_skip">
+                Wpisz własny cel na czacie &rarr;
             </button>
         </div>
     </div>
@@ -730,14 +896,18 @@
 <!-- ─── Welcome Overlay (Dark Blue Brand Greeting) ──────────────── -->
 <div id="welcome-overlay" class="welcome-overlay" style="display: none;">
     <div class="welcome-content">
-        <div class="welcome-badge">🚐 VW California AI Trip Planner</div>
-        <h1 class="welcome-title" id="welcome-user-name">Witaj!</h1>
-        <p class="welcome-subtitle">Dokąd dzisiaj zmierzamy?</p>
+        <div class="welcome-overlay-mascot">
+            <img src="/static/assets/sniffer-avatar.png" alt="Volkswagen Sniffer" class="welcome-overlay-avatar">
+        </div>
+        <div class="welcome-badge" data-i18n="welcome_badge">🐶 Volkswagen Sniffer — AI Trip Planner</div>
+        <h1 class="welcome-title" id="welcome-user-name" data-i18n="welcome_title">Witaj!</h1>
+        <p class="welcome-subtitle" data-i18n="welcome_subtitle">Dokąd dzisiaj zmierzamy?</p>
     </div>
 </div>
 
 <!-- ─── Interactive Tutorial Overlay ───────────────────────────── -->
 <div id="tutorial-overlay" class="tutorial-overlay" style="display: none;">
+    <div id="tutorial-backdrop" class="tutorial-backdrop"></div>
     <div id="tutorial-highlight-box" class="tutorial-highlight-box"></div>
     <div id="tutorial-card" class="tutorial-card">
         <div class="tutorial-step-badge" id="tutorial-step-badge">Krok 1 z 5</div>

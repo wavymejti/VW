@@ -65,10 +65,37 @@ def run_e2e_tests():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context()
+            
+            # Pre-set localStorage to avoid tutorial and welcome overlays
+            context.add_init_script("""
+                localStorage.setItem('vw_tut_main_seen', 'true');
+                localStorage.setItem('vw_tut_map_seen', 'true');
+                localStorage.setItem('vw_tut_memory_seen', 'true');
+                localStorage.setItem('vw_tut_trips_seen', 'true');
+            """)
+
             page = context.new_page()
             page.set_default_timeout(10000)
 
             # Mock backend API calls to ensure predictable, fast UI test execution
+            page.route("**/api/me", lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"status":"success", "user":{"id":"test-user-id", "display_name":"Tester VW", "email":"tester@vw.pl"}}'
+            ))
+
+            page.route("**/api/memories", lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"status":"success", "memories":[]}'
+            ))
+
+            page.route("**/api/user_memories", lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"status":"success", "memories":[]}'
+            ))
+
             page.route("**/api/chat", lambda route: route.fulfill(
                 status=200,
                 content_type="application/json",
@@ -76,6 +103,7 @@ def run_e2e_tests():
             ))
 
             page.goto(BASE_URL + "/", wait_until="networkidle")
+
 
             # -------------------------------------------------------------
             # TEST GROUP 1: #chat-input Verification

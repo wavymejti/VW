@@ -21,8 +21,11 @@ def test_index_html_contains_camping_modal():
         content = f.read()
 
     assert "camping-selection-modal" in content
+    assert "camping-selection-header-wrap" in content
+    assert "camping-selection-body" in content
     assert "camping-day-tabs" in content
     assert "camping-cards-grid" in content
+    assert "camping-modal-footer" in content
     assert "btn-camping-modal-done" in content
 
 
@@ -32,6 +35,10 @@ def test_styles_css_contains_camping_modal_rules():
         content = f.read()
 
     assert ".camping-selection-card" in content
+    assert ".camping-selection-header-wrap" in content
+    assert ".camping-selection-body" in content
+    assert ".camping-modal-footer" in content
+    assert ".btn-camping-done" in content
     assert ".camping-day-tabs" in content
     assert ".camping-proposal-card" in content
     assert ".btn-select-camping" in content

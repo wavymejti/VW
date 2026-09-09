@@ -119,3 +119,20 @@ The AI stops asking for trip parameters and handles intents:
 - **New Trip**: Requires explicit user confirmation before overwriting the current plan.
 - **Ambiguous Command**: If the user says "change the camping", the AI must ask "which day?" before calling a tool.
 - **Destructive Changes**: AI must briefly warn/confirm before deleting a day or shortening the trip.
+
+---
+
+## User Location Context & Geolocation Privacy
+
+When the user enables automatic location in the chat interface:
+1. The frontend acquires GPS coordinates via `navigator.geolocation` and resolves a human-readable city/region name via `POST /api/location/reverse`.
+2. The coordinates and location label are sent in the chat payload (`user_location: { lat, lng, name, city, country }`).
+3. The backend injects a system note into the LLM context:
+   `[SYSTEM NOTE] User Current Location: <name> (lat: <lat>, lng: <lng>).`
+4. The AI uses this context to:
+   - Immediately know where the user is when asked ("Gdzie jestem?", "What is my location?").
+   - Offer or pre-fill the `origin` hard slot if the user says "stąd", "from here", or omits a starting point.
+   - Execute `search_campings` near the user when asked for campgrounds "w pobliżu" / "near me".
+5. **Privacy & Toggle**:
+   - The user has a prominent toggle button in the chat header and a quick toggle above the input.
+   - When disabled, no coordinates or location context are sent or stored in the chat thread. The AI treats location as unknown and prompts the user naturally if origin or location is needed.

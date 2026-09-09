@@ -87,7 +87,8 @@ def test_welcome_and_tutorial():
             badge_1 = page.inner_text("#tutorial-step-badge")
             title_1 = page.inner_text("#tutorial-card-title")
             print(f"✅ Tutorial Step 1 active: '{badge_1}' — {title_1}")
-            assert "KROK 1 Z 5" in badge_1.upper()
+            badge_1_upper = badge_1.upper()
+            assert "1" in badge_1_upper and "5" in badge_1_upper and ("KROK" in badge_1_upper or "STEP" in badge_1_upper or "SCHRITT" in badge_1_upper)
 
             # 5. Click through steps 2..5
             for step_num in range(2, 6):
@@ -96,7 +97,8 @@ def test_welcome_and_tutorial():
                 badge = page.inner_text("#tutorial-step-badge")
                 title = page.inner_text("#tutorial-card-title")
                 print(f"✅ Tutorial Step {step_num} active: '{badge}' — {title}")
-                assert f"KROK {step_num} Z 5" in badge.upper()
+                b_upper = badge.upper()
+                assert str(step_num) in b_upper and "5" in b_upper and ("KROK" in b_upper or "STEP" in b_upper or "SCHRITT" in b_upper)
 
             # 6. Complete final step -> Tutorial hides
             page.click("#tutorial-btn-next")

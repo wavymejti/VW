@@ -7,6 +7,7 @@ campground stops, daily schedules, and precise route polylines.
 See: architecture/routing_sop.md
 """
 
+import math
 import uuid
 from datetime import datetime, timedelta
 
@@ -16,6 +17,81 @@ from tools.search_campings import search_campings
 from tools.get_weather import get_weather_forecast
 
 from sqlalchemy import text
+
+
+def _haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate great-circle distance between two points in kilometers."""
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
+
+
+def _normalize_waypoints(waypoints, client=None):
+    """
+    Normalize waypoints into a list of dicts with label, lat, lng.
+    Geocodes via Google Maps API if lat/lng are missing.
+    """
+    if not waypoints:
+        return []
+    if isinstance(waypoints, (str, dict)):
+        waypoints = [waypoints]
+
+    normalized = []
+    for item in waypoints:
+        if not item:
+            continue
+        if isinstance(item, str):
+            label = item.strip()
+            lat, lng, place_id = None, None, None
+            notes = None
+            emoji = "📍"
+            color = "#001E50"
+            category_label = "Punkt na trasie"
+        elif isinstance(item, dict):
+            label = item.get("label") or item.get("name") or "Waypoint"
+            lat = item.get("lat")
+            lng = item.get("lng")
+            place_id = item.get("place_id")
+            notes = item.get("notes")
+            emoji = item.get("emoji") or "📍"
+            color = item.get("color") or "#001E50"
+            category_label = item.get("category_label") or "Punkt na trasie"
+        else:
+            continue
+
+        if (lat is None or lng is None) and client and label:
+            try:
+                res = client.geocode(label)
+                if res:
+                    loc = res[0]["geometry"]["location"]
+                    lat, lng = loc["lat"], loc["lng"]
+                    place_id = place_id or res[0].get("place_id")
+                    if not label or label == "Waypoint":
+                        label = res[0].get("formatted_address", label)
+            except Exception as e:
+                print(f"Failed to geocode waypoint '{label}': {e}")
+
+        if lat is not None and lng is not None:
+            normalized.append({
+                "label": label,
+                "lat": float(lat),
+                "lng": float(lng),
+                "place_id": place_id,
+                "type": "attraction",
+                "emoji": emoji,
+                "color": color,
+                "category_label": category_label,
+                "notes": notes,
+            })
+    return normalized
 
 
 def plan_route(
@@ -52,8 +128,11 @@ def plan_route(
     if preferred_amenities is None:
         preferred_amenities = []
 
+    client = get_maps_client()
+    normalized_waypoints = _normalize_waypoints(waypoints, client)
+
     # Step 1: Get the total route via Google Maps
-    total_route = _compute_total_route(origin, destination, round_trip, waypoints)
+    total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
 
     if total_route["status"] == "error":
         return total_route
@@ -81,11 +160,41 @@ def plan_route(
         legs, total_duration_s, num_days, origin, route_end
     )
 
+    # Pre-calculate nominal start and end for each day to assign waypoints
+    day_nominal_segments = {}
+    for d in range(1, num_days + 1):
+        d_start = origin if d == 1 else intermediate_points[d - 2]
+        d_end = (
+            origin if (d == num_days and round_trip)
+            else destination if (d == num_days and not round_trip)
+            else intermediate_points[d - 1]
+        )
+        day_nominal_segments[d] = (d_start, d_end)
+
+    day_waypoints_map = {d: [] for d in range(1, num_days + 1)}
+    for wp in normalized_waypoints:
+        best_day = 1
+        min_detour = float("inf")
+        for d, (s_loc, e_loc) in day_nominal_segments.items():
+            s_lat, s_lng = s_loc["lat"], s_loc["lng"]
+            e_lat, e_lng = e_loc["lat"], e_loc["lng"]
+            if s_lat == e_lat and s_lng == e_lng:
+                detour = 2 * _haversine_distance(s_lat, s_lng, wp["lat"], wp["lng"])
+            else:
+                detour = (
+                    _haversine_distance(s_lat, s_lng, wp["lat"], wp["lng"])
+                    + _haversine_distance(wp["lat"], wp["lng"], e_lat, e_lng)
+                    - _haversine_distance(s_lat, s_lng, e_lat, e_lng)
+                )
+            if detour < min_detour:
+                min_detour = detour
+                best_day = d
+        day_waypoints_map[best_day].append(wp)
+
     # Step 3: Find campgrounds and precise daily routes
     daily_schedules = []
     start = datetime.strptime(start_date, "%Y-%m-%d")
 
-    client = get_maps_client()
     previous_day_end = None
 
     for day_num in range(1, num_days + 1):
@@ -102,6 +211,8 @@ def plan_route(
             else destination if (day_num == num_days and not round_trip)
             else intermediate_points[day_num - 1]
         )
+
+        day_wps = day_waypoints_map.get(day_num, [])
 
         # Find overnight camping (except last day at destination)
         overnight_camping = None
@@ -122,21 +233,30 @@ def plan_route(
 
         # Get exact directions for this day
         target_end = overnight_camping if overnight_camping else day_end
+        ordered_day_wps = list(day_wps)
         try:
-            day_directions = client.directions(
-                origin=f"{day_start['lat']},{day_start['lng']}",
-                destination=f"{target_end['lat']},{target_end['lng']}",
-                mode="driving",
-                departure_time=max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
-                traffic_model="best_guess",
-                optimize_waypoints=True
-            )
+            directions_kwargs = {
+                "origin": f"{day_start['lat']},{day_start['lng']}",
+                "destination": f"{target_end['lat']},{target_end['lng']}",
+                "mode": "driving",
+                "departure_time": max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
+                "traffic_model": "best_guess",
+            }
+            if day_wps:
+                directions_kwargs["waypoints"] = [f"{w['lat']},{w['lng']}" for w in day_wps]
+                directions_kwargs["optimize_waypoints"] = True
+
+            day_directions = client.directions(**directions_kwargs)
             if day_directions:
                 day_route = day_directions[0]
                 day_legs = day_route.get("legs", [])
                 day_distance_km = sum(l["distance"]["value"] for l in day_legs) / 1000
                 day_duration_hours = sum(l["duration"]["value"] for l in day_legs) / 3600
                 route_polyline = day_route["overview_polyline"]["points"]
+
+                if day_wps and day_route.get("waypoint_order"):
+                    wp_order = day_route["waypoint_order"]
+                    ordered_day_wps = [day_wps[i] for i in wp_order if i < len(day_wps)]
             else:
                 day_distance_km = total_distance_km / num_days
                 day_duration_hours = total_duration_hours / num_days
@@ -148,7 +268,7 @@ def plan_route(
             route_polyline = None
 
         # Build waypoints for this day
-        waypoints = [
+        day_schedule_waypoints = [
             {
                 "order": 1,
                 "type": "start",
@@ -160,9 +280,25 @@ def plan_route(
             },
         ]
 
+        for wp in ordered_day_wps:
+            day_schedule_waypoints.append({
+                "order": len(day_schedule_waypoints) + 1,
+                "type": "attraction",
+                "label": wp.get("label", "Waypoint"),
+                "lat": wp["lat"],
+                "lng": wp["lng"],
+                "place_id": wp.get("place_id"),
+                "address": wp.get("address", ""),
+                "rating": wp.get("rating"),
+                "emoji": wp.get("emoji", "📍"),
+                "color": wp.get("color", "#001E50"),
+                "category_label": wp.get("category_label", "Punkt na trasie"),
+                "notes": wp.get("notes"),
+            })
+
         if overnight_camping:
-            waypoints.append({
-                "order": 2,
+            day_schedule_waypoints.append({
+                "order": len(day_schedule_waypoints) + 1,
                 "type": "camping",
                 "label": overnight_camping["name"],
                 "lat": overnight_camping["lat"],
@@ -170,8 +306,8 @@ def plan_route(
                 "place_id": overnight_camping.get("place_id"),
             })
         else:
-            waypoints.append({
-                "order": 2,
+            day_schedule_waypoints.append({
+                "order": len(day_schedule_waypoints) + 1,
                 "type": "end",
                 "label": day_end.get(
                     "label", f"Day {day_num} End"
@@ -198,7 +334,7 @@ def plan_route(
             "date": day_date.strftime("%Y-%m-%d"),
             "driving_hours": round(day_duration_hours, 1),
             "driving_km": round(day_distance_km, 1),
-            "waypoints": waypoints,
+            "waypoints": day_schedule_waypoints,
             "overnight_camping": overnight_camping,
             "overnight_options": overnight_options,
             "route_polyline": route_polyline,
@@ -262,7 +398,8 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
 
     try:
         client = get_maps_client()
-        wp_list = [f"{wp['lat']},{wp['lng']}" for wp in waypoints]
+        normalized_wps = _normalize_waypoints(waypoints, client)
+        wp_list = [f"{wp['lat']},{wp['lng']}" for wp in normalized_wps]
         
         if round_trip:
             # Add destination to waypoints as the turnaround point if it's different from origin
@@ -290,6 +427,12 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
             )
 
         if not directions:
+            if normalized_wps:
+                wp_names = ", ".join(w.get("label", "waypoint") for w in normalized_wps)
+                return {
+                    "status": "error",
+                    "message": f"Nie można wyznaczyć trasy przejazdu przez punkt: {wp_names}. Upewnij się, że miejsce posiada bezpośredni dojazd samochodowy.",
+                }
             return {
                 "status": "error",
                 "message": "No route found between origin "

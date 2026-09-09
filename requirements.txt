@@ -33,3 +33,7 @@ pytest>=8.0.0
 # Web framework for API server
 Flask>=3.0.0
 flask-cors>=4.0.0
+
+# Audio DSP & procedural music generation
+numpy>=2.0.0
+scipy>=1.13.0
