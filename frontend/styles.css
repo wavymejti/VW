@@ -486,9 +486,9 @@ button { font-family: var(--font-body); cursor: pointer; border: none; outline: 
 /* Assistant Message (Volkswagen Sniffer) */
 .message.assistant {
     align-self: flex-start;
-    max-width: 88%;
+    max-width: 92%;
     display: flex;
-    gap: 14px;
+    gap: 16px;
     align-items: flex-start;
     background: transparent;
     border: none;
@@ -496,24 +496,53 @@ button { font-family: var(--font-body); cursor: pointer; border: none; outline: 
 }
 
 .message-avatar-sniffer {
-    width: 44px;
-    height: 44px;
+    width: 96px;
+    height: 96px;
     flex-shrink: 0;
     border-radius: 50%;
     background: #FFFFFF;
-    border: 2px solid #001E50;
+    border: 3px solid #001E50;
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 3px 10px rgba(0, 30, 80, 0.14);
-    margin-top: 2px;
+    box-shadow: 0 6px 20px rgba(0, 30, 80, 0.18);
+    margin-top: 4px;
 }
 
-.message-avatar-sniffer img {
+.message-avatar-sniffer img,
+.message-avatar-sniffer video,
+.sniffer-avatar-video {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+.message-avatar-sniffer .sniffer-avatar-wrap {
+    width: 100% !important;
+    height: 100% !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+}
+
+.message.assistant.is-speaking .message-avatar-sniffer {
+    border-color: #0000EE;
+    box-shadow: 0 0 0 3px rgba(0, 0, 238, 0.28), 0 4px 14px rgba(0, 30, 80, 0.22);
+    animation: sniffer-msg-avatar-pulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes sniffer-msg-avatar-pulse {
+    0% {
+        box-shadow: 0 0 0 2px rgba(0, 0, 238, 0.2), 0 3px 10px rgba(0, 30, 80, 0.14);
+    }
+    100% {
+        box-shadow: 0 0 0 5px rgba(0, 0, 238, 0.38), 0 5px 18px rgba(0, 0, 238, 0.25);
+    }
 }
 
 .message.assistant .message-content-wrap {
@@ -649,9 +678,9 @@ button { font-family: var(--font-body); cursor: pointer; border: none; outline: 
 }
 
 .map-chat-messages .message.assistant .message-avatar-sniffer {
-    width: 30px;
-    height: 30px;
-    border-width: 1.5px;
+    width: 48px;
+    height: 48px;
+    border-width: 2px;
     margin-top: 1px;
 }
 
@@ -2129,8 +2158,8 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     }
 
     .message-avatar-sniffer {
-        width: 36px;
-        height: 36px;
+        width: 64px;
+        height: 64px;
     }
 
     .message.assistant .message-content-wrap {
@@ -4153,6 +4182,250 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     border-color: #A0AEC0;
     color: #1A202C;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Volkswagen Sniffer - Articulated Avatar & Speech Widget
+   ═══════════════════════════════════════════════════════════════ */
+
+.sniffer-speech-widget {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #FFFFFF;
+    border: 1.5px solid #CBD5E0;
+    border-radius: 24px;
+    padding: 3px 10px 3px 4px;
+    transition: all 0.25s ease;
+    box-shadow: 0 2px 8px rgba(0, 30, 80, 0.06);
+    user-select: none;
+}
+
+.sniffer-speech-widget:hover {
+    border-color: #001E50;
+    box-shadow: 0 4px 14px rgba(0, 30, 80, 0.12);
+}
+
+.sniffer-speech-widget.is-speaking {
+    border-color: #3B82F6;
+    background: #F0F7FF;
+    box-shadow: 0 0 14px rgba(59, 130, 246, 0.35);
+}
+
+.sniffer-widget-avatar-box {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #F8FAFC;
+    border: 2px solid #001E50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sniffer-widget-avatar-box:hover {
+    transform: scale(1.06);
+}
+
+.sniffer-speech-widget.is-speaking .sniffer-widget-avatar-box {
+    border-color: #2563EB;
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.5);
+    animation: sniffer-speaking-pulse 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes sniffer-speaking-pulse {
+    0% { transform: scale(1); }
+    100% { transform: scale(1.08); }
+}
+
+.btn-sniffer-voice-toggle {
+    background: transparent;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 14px;
+    color: #001E50;
+    font-size: 0.85rem;
+    font-weight: 700;
+    transition: all 0.2s ease;
+}
+
+.btn-sniffer-voice-toggle:hover {
+    background: #EBF1F8;
+}
+
+.btn-sniffer-voice-toggle.muted {
+    color: #94A3B8;
+    opacity: 0.8;
+}
+
+.btn-sniffer-voice-toggle.muted .voice-status-icon {
+    filter: grayscale(1);
+}
+
+/* Animated Soundwave Bars */
+.voice-soundwave-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 2.5px;
+    height: 14px;
+}
+
+.soundwave-bar {
+    width: 2.5px;
+    height: 5px;
+    background: #001E50;
+    border-radius: 2px;
+    transition: all 0.2s ease;
+}
+
+.btn-sniffer-voice-toggle.active.is-speaking .soundwave-bar {
+    background: #2563EB;
+    animation: soundwave-bounce 0.8s ease-in-out infinite alternate;
+}
+
+.btn-sniffer-voice-toggle.active.is-speaking .bar-1 { animation-delay: 0.1s; }
+.btn-sniffer-voice-toggle.active.is-speaking .bar-2 { animation-delay: 0.3s; }
+.btn-sniffer-voice-toggle.active.is-speaking .bar-3 { animation-delay: 0.2s; }
+
+.btn-sniffer-voice-toggle.muted .soundwave-bar {
+    background: #CBD5E1;
+    height: 3px;
+    animation: none;
+}
+
+@keyframes soundwave-bounce {
+    0% { height: 4px; }
+    50% { height: 14px; }
+    100% { height: 6px; }
+}
+
+/* Sniffer Avatar Rig Kinematics & Animations */
+.sniffer-avatar-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    user-select: none;
+}
+
+.sniffer-avatar-svg {
+    overflow: visible;
+}
+
+.snf-photo-root,
+.snf-root-group {
+    transition: transform 0.15s ease-out;
+    transform-origin: center bottom;
+}
+
+.snf-photo-brow-left,
+.snf-eyebrow-wrap {
+    transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.4, 1);
+    transform-origin: 445px 185px;
+}
+
+.snf-photo-brow-right {
+    transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.4, 1);
+    transform-origin: 595px 185px;
+}
+
+.snf-photo-jaw,
+.snf-mouth-group {
+    transition: transform 0.1s cubic-bezier(0.2, 0.8, 0.4, 1);
+    transform-origin: 512px 740px;
+}
+
+.snf-photo-mouth-cavity,
+.snf-mouth-interior {
+    transition: transform 0.1s cubic-bezier(0.2, 0.8, 0.4, 1), opacity 0.1s ease;
+    transform-origin: 512px 715px;
+}
+
+.snf-photo-muzzle,
+.snf-nose-group {
+    transition: transform 0.2s ease;
+    transform-origin: 512px 500px;
+}
+
+.snf-photo-muzzle.snf-sniff-anim,
+.snf-nose-group.snf-sniff-anim {
+    animation: sniffer-photo-sniff-twitch 0.6s ease-in-out;
+}
+
+@keyframes sniffer-photo-sniff-twitch {
+    0% { transform: scale(1); }
+    25% { transform: scale(1.03, 0.97) translateY(-2px); }
+    50% { transform: scale(0.98, 1.02) translateY(2px); }
+    75% { transform: scale(1.02, 0.98) translateY(-1px); }
+    100% { transform: scale(1); }
+}
+
+@keyframes sniffer-sniff-twitch {
+    0% { transform: translate(100px, 116px) scale(1); }
+    25% { transform: translate(100px, 114px) scale(1.08, 0.94); }
+    50% { transform: translate(100px, 117px) scale(0.96, 1.05); }
+    75% { transform: translate(100px, 115px) scale(1.04, 0.98); }
+    100% { transform: translate(100px, 116px) scale(1); }
+}
+
+/* Message Header Play/Listen Button */
+.message-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-message-speak {
+    background: #F1F5F9;
+    color: #001E50;
+    border: 1px solid #CBD5E1;
+    border-radius: 12px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.btn-message-speak:hover {
+    background: #001E50;
+    color: #FFFFFF;
+    border-color: #001E50;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 30, 80, 0.15);
+}
+
+.btn-message-speak.is-playing {
+    background: #2563EB;
+    color: #FFFFFF;
+    border-color: #1D4ED8;
+    box-shadow: 0 0 8px rgba(37, 99, 235, 0.4);
+    animation: btn-speak-glow 1.5s infinite alternate;
+}
+
+@keyframes btn-speak-glow {
+    0% { box-shadow: 0 0 4px rgba(37, 99, 235, 0.3); }
+    100% { box-shadow: 0 0 10px rgba(37, 99, 235, 0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .soundwave-bar,
+    .sniffer-speech-widget.is-speaking .sniffer-widget-avatar-box,
+    .btn-message-speak.is-playing {
+        animation: none !important;
+    }
+}
+
 
 
 

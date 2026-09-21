@@ -23,6 +23,7 @@ from tools.location_service import (
     format_location_for_prompt,
 )
 from tools.sniffer_mascot import get_mascot_assets, get_mascot_greeting
+from tools.tts_service import clean_text_for_speech, get_speech_config, generate_speech_audio
 from tools.generate_summary import generate_summary
 from tools.audio_generator import generate_all_soundtracks, GENERATORS
 from navigation.dispatcher import dispatch
@@ -31,6 +32,10 @@ from tools.attractions_cache import (
     save_cached_attractions,
     get_trip_attractions_cache,
     save_trip_attractions_cache,
+)
+from tools.mock_trip_photos import (
+    generate_poznan_warszawa_mock_photos,
+    get_poznan_warszawa_photos_metadata,
 )
 
 
@@ -253,6 +258,49 @@ def example_sniffer_mascot():
     print(f"    EN: {get_mascot_greeting('Mateusz', 'en')}")
 
 
+def example_sniffer_speech():
+    """
+    Demonstrate Volkswagen Sniffer Speech (TTS) & Facial Animation Configuration.
+
+    Showcases text sanitization (stripping markdown, emojis, slot state),
+    campervan unit expansion, and voice parameters for PL, DE, and EN.
+    """
+    print("\n🐶 Volkswagen Sniffer — Speech Synthesis & Facial Animation")
+    print("=" * 55)
+
+    sample_raw_chat = (
+        "**Cześć!** 🚐 Przygotowałem dla Ciebie wspaniałą trasę z Poznania do Karkonoszy na 3 dni. "
+        "Dziennie przejedziesz ok. 120 km (ok. 2.5 h jazdy). Kemping kosztuje 25 EUR za noc.\n\n"
+        "- Postój przy wodospadzie Kamieńczyka 📍\n"
+        "- Podłączenie prądu 230V w kamperze VW California ✨\n"
+        "<slot_state>{\"duration\": 3, \"destination\": \"Karkonosze\"}</slot_state>"
+    )
+
+    print("  [1] Oryginalny tekst z czatu:")
+    print(f"      {sample_raw_chat[:120]}...\n")
+
+    cleaned_pl = clean_text_for_speech(sample_raw_chat, lang="pl")
+    print("  [2] Tekst oczyszczony do syntezy mowy (PL):")
+    print(f"      \"{cleaned_pl}\"\n")
+
+    cfg_pl = get_speech_config("pl")
+    cfg_de = get_speech_config("de")
+    cfg_en = get_speech_config("en")
+
+    print("  [3] Parametry mowy Sniffera:")
+    print(f"      - PL: kod={cfg_pl['lang_code']}, pitch={cfg_pl['pitch']}, rate={cfg_pl['rate']}, głosy={cfg_pl['recommended_voices'][:3]}")
+    print(f"      - DE: kod={cfg_de['lang_code']}, pitch={cfg_de['pitch']}, rate={cfg_de['rate']}, głosy={cfg_de['recommended_voices'][:3]}")
+    print(f"      - EN: kod={cfg_en['lang_code']}, pitch={cfg_en['pitch']}, rate={cfg_en['rate']}, głosy={cfg_en['recommended_voices'][:3]}")
+
+    print("\n  [4] Generowanie hiperrealistycznej mowy (ElevenLabs Neural TTS — Brian):")
+    try:
+        audio_mp3 = generate_speech_audio(cleaned_pl, lang="pl")
+        print(f"      ✅ Pomyślnie wygenerowano plik MP3 ({len(audio_mp3)} bajtów).")
+        print(f"      ✅ Głos: Brian (Deep, Resonant and Comforting) | Model: eleven_multilingual_v2")
+    except Exception as e:
+        print(f"      ⚠️ Generowanie audio pominięte: {e}")
+
+
 def example_cinematic_recap():
     """
     Demonstrates Cinematic California Recap video generation.
@@ -437,6 +485,9 @@ def main():
     # Volkswagen Sniffer Mascot demonstration
     example_sniffer_mascot()
 
+    # Volkswagen Sniffer Speech & Talking Avatar demonstration
+    example_sniffer_speech()
+
     # Cinematic California Recap (Video & Memories) demonstration
     example_cinematic_recap()
 
@@ -457,6 +508,9 @@ def main():
 
     # Interactive Campervan Photo Stops & Pop-Up Zoom demonstration
     example_photo_stop_animation()
+
+    # Poznań -> Warszawa Mock Photos with EXIF demonstration
+    example_mock_trip_photos()
 
     # Phase 3: Interactive chat
     example_chat()
@@ -505,6 +559,18 @@ def example_photo_stop_animation():
     popup = _render_photo_popup_frame(canvas, None, (300, 200), 0.8, day_number=1, caption="Wspomnienie z trasy", reverse=False)
     ret = _render_photo_popup_frame(canvas, None, (300, 200), 0.8, day_number=1, caption="Wspomnienie z trasy", reverse=True)
     print(f"  ✅ Rendered pin pulse ({pulse.size}), pop-up zoom ({popup.size}), and return frame ({ret.size}) successfully")
+
+
+def example_mock_trip_photos():
+    """
+    Demonstrate generating and verifying curated mock photos with EXIF metadata
+    for the Poznań -> Warszawa route (11.09.2026 - 14.09.2026).
+    """
+    print("\n📸 Demonstrating Poznań -> Warszawa Mock Trip Photos with EXIF...")
+    photos = generate_poznan_warszawa_mock_photos(also_copy_to_root=True, verbose=False)
+    print(f"  ✅ Successfully generated and verified {len(photos)} photos with EXIF GPS & timestamps.")
+    for p in photos:
+        print(f"     • Dzień {p['day_number']}: {p['filename']} | {p['date']} | ({p['lat']:.4f}, {p['lng']:.4f})")
 
 
 if __name__ == "__main__":

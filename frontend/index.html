@@ -106,6 +106,20 @@
                         <p class="chat-header-sub" data-i18n="chat_sub">Dokąd chcesz pojechać swoim VW California?</p>
                     </div>
                     <div class="chat-header-actions">
+                        <!-- Sniffer Talking Avatar & Voice Toggle Widget -->
+                        <div class="sniffer-speech-widget" id="sniffer-speech-widget">
+                            <div class="sniffer-widget-avatar-box" id="sniffer-header-avatar-box" title="Volkswagen Sniffer">
+                                <!-- Dynamic SnifferAvatar mounted here -->
+                            </div>
+                            <button class="btn-sniffer-voice-toggle active" id="btn-toggle-sniffer-voice" role="switch" aria-checked="true" title="Głos Sniffera: Włączony" aria-label="Przełącznik głosu Sniffera" data-i18n-title="sniffer_voice_tooltip_on">
+                                <span class="voice-soundwave-wrap" id="voice-soundwave-wrap">
+                                    <span class="soundwave-bar bar-1"></span>
+                                    <span class="soundwave-bar bar-2"></span>
+                                    <span class="soundwave-bar bar-3"></span>
+                                </span>
+                                <span class="voice-status-icon" id="voice-status-icon">🔊</span>
+                            </button>
+                        </div>
                         <button class="btn-location-toggle active" id="btn-toggle-location" role="switch" aria-checked="true" title="Automatyczna geolokalizacja (włączona)" aria-label="Przełącznik lokalizacji" data-i18n-title="location_tooltip_on">
                             <span class="location-pulse-dot" id="location-pulse-dot"></span>
                             <span class="location-icon" id="location-icon">📍</span>
@@ -922,6 +936,8 @@
 
 <!-- Internationalization & Application Logic -->
 <script src="/static/i18n.js"></script>
+<script src="/static/components/sniffer_avatar.js"></script>
+<script src="/static/components/sniffer_voice.js"></script>
 <script src="/static/app.js"></script>
 
 <!-- Google Maps JavaScript SDK -->

@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response
+from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response, Response
 from flask_cors import CORS
 from sqlalchemy import text
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -1640,6 +1640,39 @@ def api_transcribe():
                 os.remove(temp_path)
             except Exception:
                 pass
+
+
+@app.route("/api/tts/speak", methods=["POST"])
+def api_tts_speak():
+    """
+    Generate natural human neural speech audio for Volkswagen Sniffer using ElevenLabs / OpenAI TTS.
+    Returns audio/mpeg with caching.
+    """
+    try:
+        from tools.tts_service import generate_speech_audio
+
+        data = request.get_json(silent=True) or {}
+        text = data.get("text", "")
+        lang = data.get("lang", "pl")
+        voice = data.get("voice", "onyx")
+        eleven_voice_id = data.get("eleven_voice_id")
+
+        if not text:
+            return jsonify({"status": "error", "message": "Text is required"}), 400
+
+        audio_bytes = generate_speech_audio(
+            text=text,
+            lang=lang,
+            voice=voice,
+            eleven_voice_id=eleven_voice_id,
+        )
+        if not audio_bytes:
+            return jsonify({"status": "error", "message": "Failed to generate speech"}), 500
+
+        return Response(audio_bytes, mimetype="audio/mpeg")
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/assets/audio/<path:filename>")
