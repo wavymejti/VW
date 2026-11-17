@@ -32,6 +32,7 @@ from tools.generate_summary import generate_summary
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client
 from tools.openai_client import get_client
+from tools.sniffer_line import make_sniffer_line
 from tools.suggest_attractions import suggest_attractions
 from tools.attractions_cache import (
     get_trip_attractions_cache,
@@ -748,6 +749,10 @@ def api_chat():
         if chat.get("active_trip_id"):
             _CHAT_SESSIONS[uid]["active_trip_id"] = chat["active_trip_id"]
             session["active_trip_id"] = chat["active_trip_id"]
+
+    # Short English line for the 3D Sniffer (spoken + mood); None if it fails.
+    if result.get("text") and result.get("status") in ("success", "partial"):
+        result["sniffer"] = make_sniffer_line(user_message, result["text"])
 
     return jsonify(result)
 
@@ -1673,6 +1678,36 @@ def api_tts_speak():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ── 3D Sniffer voice: proxy to the local HeadTTS server ────────
+# The AVW Sniffer module calls POST /tts/v1/synthesize on this origin (no CORS); HeadTTS
+# (Kokoro, English) runs next to Flask, see README "3D Sniffer".
+HEADTTS_URL = os.getenv("HEADTTS_URL", "http://127.0.0.1:8882").rstrip("/")
+
+
+@app.route("/tts/v1/synthesize", methods=["POST"])
+def tts_proxy():
+    """Forward a synthesis request to HeadTTS and return its JSON (audio + word/viseme timings)."""
+    import urllib.error
+    import urllib.request
+
+    body = request.get_data()
+    if len(body) > 20_000:
+        return jsonify({"error": "Request too large."}), 413
+    req = urllib.request.Request(
+        f"{HEADTTS_URL}/v1/synthesize",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as upstream:
+            return Response(upstream.read(), status=upstream.status, mimetype="application/json")
+    except urllib.error.HTTPError as e:
+        return Response(e.read(), status=e.code, mimetype="application/json")
+    except (urllib.error.URLError, TimeoutError) as e:
+        return jsonify({"error": f"HeadTTS is not reachable at {HEADTTS_URL}: {e}"}), 502
 
 
 @app.route("/assets/audio/<path:filename>")

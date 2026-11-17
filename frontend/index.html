@@ -106,20 +106,6 @@
                         <p class="chat-header-sub" data-i18n="chat_sub">Dokąd chcesz pojechać swoim VW California?</p>
                     </div>
                     <div class="chat-header-actions">
-                        <!-- Sniffer Talking Avatar & Voice Toggle Widget -->
-                        <div class="sniffer-speech-widget" id="sniffer-speech-widget">
-                            <div class="sniffer-widget-avatar-box" id="sniffer-header-avatar-box" title="Volkswagen Sniffer">
-                                <!-- Dynamic SnifferAvatar mounted here -->
-                            </div>
-                            <button class="btn-sniffer-voice-toggle active" id="btn-toggle-sniffer-voice" role="switch" aria-checked="true" title="Głos Sniffera: Włączony" aria-label="Przełącznik głosu Sniffera" data-i18n-title="sniffer_voice_tooltip_on">
-                                <span class="voice-soundwave-wrap" id="voice-soundwave-wrap">
-                                    <span class="soundwave-bar bar-1"></span>
-                                    <span class="soundwave-bar bar-2"></span>
-                                    <span class="soundwave-bar bar-3"></span>
-                                </span>
-                                <span class="voice-status-icon" id="voice-status-icon">🔊</span>
-                            </button>
-                        </div>
                         <button class="btn-location-toggle active" id="btn-toggle-location" role="switch" aria-checked="true" title="Automatyczna geolokalizacja (włączona)" aria-label="Przełącznik lokalizacji" data-i18n-title="location_tooltip_on">
                             <span class="location-pulse-dot" id="location-pulse-dot"></span>
                             <span class="location-icon" id="location-icon">📍</span>
@@ -936,9 +922,19 @@
 
 <!-- Internationalization & Application Logic -->
 <script src="/static/i18n.js"></script>
-<script src="/static/components/sniffer_avatar.js"></script>
-<script src="/static/components/sniffer_voice.js"></script>
 <script src="/static/app.js"></script>
+<!-- 3D Sniffer: built in the AVW repo (npm run export:vw), see architecture/sniffer_speech_sop.md -->
+<script type="module">
+    import { mountSnifferWidget } from '/static/sniffer-avw/sniffer-avw.js';
+    window.snifferAVW = mountSnifferWidget({
+        modelUrl: '/static/sniffer-avw/models/sniffer_avatar_v15_lite.glb',
+        lidsUrl: '/static/sniffer-avw/models/sniffer_lids_v3.json',
+        ttsUrl: '/tts',
+        fallbackImage: '/static/sniffer-avw/sniffer_fallback.webp',
+        title: 'Sniffer · VW California',
+        greeting: "Hi, I'm Sniffer, your camper co-pilot! Where shall we drive?",
+    });
+</script>
 
 <!-- Google Maps JavaScript SDK -->
 <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>

@@ -1,0 +1,3 @@
+Built from AVW cbda58f on 2026-11-17T14:32Z
+model=sniffer_avatar_v15_lite.glb lids=sniffer_lids_v3.json
+Do not edit here: change the AVW repo and run 'npm run export:vw'.

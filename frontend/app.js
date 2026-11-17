@@ -1665,9 +1665,7 @@ function addMessage(role, text) {
 
         if (role === 'assistant') {
             const rolePillText = (window.t ? window.t('sniffer_role_tag') : 'Przewodnik VW') || 'Przewodnik VW';
-            const speakBtnLabel = window.t ? window.t('sniffer_speak_msg') : 'Odsłuchaj';
             msgDiv.innerHTML = `
-                <div class="message-avatar-sniffer" id="avatar-${msgId}" title="Volkswagen Sniffer"></div>
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
@@ -1675,10 +1673,6 @@ function addMessage(role, text) {
                             <span class="sniffer-badge-pill">${rolePillText}</span>
                         </div>
                         <div class="message-actions-right">
-                            <button class="btn-message-speak" data-msg-id="${msgId}" title="${speakBtnLabel}" aria-label="${speakBtnLabel}">
-                                <span class="speak-icon">🔊</span>
-                                <span class="speak-label">${speakBtnLabel}</span>
-                            </button>
                             <div class="message-meta">${timeStr}</div>
                         </div>
                     </div>
@@ -1700,36 +1694,6 @@ function addMessage(role, text) {
             messagesEl.appendChild(msgDiv);
         }
         messagesEl.scrollTop = messagesEl.scrollHeight;
-
-        // Mount animated photographic SnifferAvatar in message avatar container
-        if (role === 'assistant') {
-            const avatarContainer = msgDiv.querySelector('.message-avatar-sniffer');
-            if (avatarContainer) {
-                if (window.SnifferAvatar) {
-                    const msgAvatar = new window.SnifferAvatar(avatarContainer, {
-                        size: 96,
-                        interactive: true,
-                        autoBlink: true,
-                        className: 'message-sniffer-avatar-instance'
-                    });
-                    msgDiv._snifferAvatar = msgAvatar;
-                    if (window.snifferVoice) {
-                        window.snifferVoice.registerMessageAvatar(msgId, msgAvatar);
-                    }
-                } else {
-                    avatarContainer.innerHTML = '<img src="/static/assets/sniffer-avatar.png" alt="Sniffer">';
-                }
-            }
-        }
-    }
-
-    // Auto-speak new assistant messages if voice enabled
-    if (role === 'assistant' && window.snifferVoice && window.snifferVoice.isVoiceEnabled()) {
-        const currentLang = typeof getAppLanguage === 'function' ? getAppLanguage() : 'pl';
-        window.snifferVoice.speak(text, {
-            messageId: msgId,
-            lang: currentLang
-        });
     }
 
     // 2. Map Mini Chat Window
@@ -1739,7 +1703,6 @@ function addMessage(role, text) {
         mapMsgDiv.className = `message ${role} map-message`;
         if (role === 'assistant') {
             mapMsgDiv.innerHTML = `
-                <div class="message-avatar-sniffer" id="map-avatar-${msgId}"></div>
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
@@ -1765,26 +1728,6 @@ function addMessage(role, text) {
             mapMessagesEl.appendChild(mapMsgDiv);
         }
         mapMessagesEl.scrollTop = mapMessagesEl.scrollHeight;
-
-        // Mount animated SnifferAvatar for map mini-chat
-        if (role === 'assistant') {
-            const mapAvatarContainer = mapMsgDiv.querySelector('.message-avatar-sniffer');
-            if (mapAvatarContainer) {
-                if (window.SnifferAvatar) {
-                    const mapMsgAvatar = new window.SnifferAvatar(mapAvatarContainer, {
-                        size: 48,
-                        interactive: true,
-                        autoBlink: true,
-                    });
-                    mapMsgDiv._snifferAvatar = mapMsgAvatar;
-                    if (window.snifferVoice) {
-                        window.snifferVoice.registerMessageAvatar(`${msgId}-map`, mapMsgAvatar);
-                    }
-                } else {
-                    mapAvatarContainer.innerHTML = '<img src="/static/assets/sniffer-avatar.png" alt="Sniffer">';
-                }
-            }
-        }
     }
 
     state.chatHistory.push({ role, text });
@@ -1793,9 +1736,9 @@ function addMessage(role, text) {
 function showTyping(show, isPlanning = false) {
     state.isTyping = show;
 
-    // Animate header Sniffer avatar thinking/sniffing
-    if (window.headerSnifferAvatar) {
-        window.headerSnifferAvatar.setThinking(show);
+    // 3D Sniffer (AVW module): thinking face while the reply is pending
+    if (window.snifferAVW) {
+        window.snifferAVW.thinking(show);
     }
     
     const typingEl = document.getElementById('typing-indicator');
@@ -1826,9 +1769,9 @@ function showTyping(show, isPlanning = false) {
 async function sendMessage(text) {
     if (!text || !text.trim() || state.isTyping) return;
 
-    // Interrupt any ongoing speech synthesis immediately
-    if (window.snifferVoice) {
-        window.snifferVoice.stop();
+    // Interrupt Sniffer if he is still talking
+    if (window.snifferAVW) {
+        window.snifferAVW.stop();
     }
 
     addMessage('user', text);
@@ -1867,6 +1810,7 @@ async function sendMessage(text) {
 
     if (result.status === 'success' || result.status === 'partial') {
         addMessage('assistant', result.text);
+        speakSnifferLine(result.sniffer);
         
         // Update slot progress
         if (result.slot_state) {
@@ -2736,108 +2680,23 @@ async function handlePhotoUpload(files) {
     }
 }
 
-// ── Sniffer Speech & Talking Avatar Initialization ───────────
-function initSnifferSpeechModule() {
-    const avatarBox = document.getElementById('sniffer-header-avatar-box');
-    const voiceBtn = document.getElementById('btn-toggle-sniffer-voice');
-    const speechWidget = document.getElementById('sniffer-speech-widget');
-    const statusIcon = document.getElementById('voice-status-icon');
+// ── 3D Sniffer (AVW module) ──────────────────────────────────
+// The floating 3D Sniffer is mounted by the module script in index.html as window.snifferAVW
+// (see architecture/sniffer_speech_sop.md). It always speaks English: the backend adds a short
+// English line for him (result.sniffer = {spoken, mood, reaction}) next to the chat reply.
+function speakSnifferLine(line) {
+    if (!window.snifferAVW || !line || !line.spoken) return;
+    window.snifferAVW.say(line.spoken, { mood: line.mood, reaction: line.reaction });
+}
 
-    // 1. Initialize Animated Sniffer Avatar in Header
-    if (avatarBox && window.SnifferAvatar) {
-        window.headerSnifferAvatar = new window.SnifferAvatar(avatarBox, {
-            size: 44,
-            interactive: true,
-            autoBlink: true,
-        });
-
-        if (window.snifferVoice) {
-            window.snifferVoice.registerAvatar(window.headerSnifferAvatar);
-        }
-    }
-
-    // 2. Setup Voice Toggle Button in Header
-    if (voiceBtn && window.snifferVoice) {
-        const updateBtnUi = (enabled) => {
-            voiceBtn.classList.toggle('active', enabled);
-            voiceBtn.classList.toggle('muted', !enabled);
-            voiceBtn.setAttribute('aria-checked', String(enabled));
-            if (statusIcon) statusIcon.textContent = enabled ? '🔊' : '🔇';
-            const tooltipKey = enabled ? 'sniffer_voice_tooltip_on' : 'sniffer_voice_tooltip_off';
-            const tooltipText = window.t ? window.t(tooltipKey) : (enabled ? 'Głos Sniffera: Włączony' : 'Głos Sniffera: Wyciszony');
-            voiceBtn.setAttribute('title', tooltipText);
-        };
-
-        updateBtnUi(window.snifferVoice.isVoiceEnabled());
-
-        voiceBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const newEnabled = window.snifferVoice.toggleVoice();
-            updateBtnUi(newEnabled);
-        });
-
-        // Listen for speech state changes to update animations & message buttons
-        window.addEventListener('sniffer-voice-state-change', (e) => {
-            const { enabled, isSpeaking, activeMessageId } = e.detail;
-            if (speechWidget) speechWidget.classList.toggle('is-speaking', isSpeaking);
-            if (voiceBtn) voiceBtn.classList.toggle('is-speaking', isSpeaking);
-
-            // Toggle .is-speaking on assistant message elements
-            document.querySelectorAll('.message.assistant').forEach(msg => {
-                const isThisActive = isSpeaking && msg.id === activeMessageId;
-                msg.classList.toggle('is-speaking', isThisActive);
-            });
-
-            // Update all message speak buttons
-            document.querySelectorAll('.btn-message-speak').forEach(btn => {
-                const btnMsgId = btn.dataset.msgId;
-                const isThisPlaying = isSpeaking && btnMsgId === activeMessageId;
-                btn.classList.toggle('is-playing', isThisPlaying);
-                const icon = btn.querySelector('.speak-icon');
-                const label = btn.querySelector('.speak-label');
-                if (isThisPlaying) {
-                    if (icon) icon.textContent = '⏹️';
-                    if (label) label.textContent = window.t ? window.t('sniffer_stop_msg') : 'Zatrzymaj';
-                } else {
-                    if (icon) icon.textContent = '🔊';
-                    if (label) label.textContent = window.t ? window.t('sniffer_speak_msg') : 'Odsłuchaj';
-                }
-            });
-        });
-    }
-
-    // 3. Delegate message speech buttons
-    const messagesContainer = document.getElementById('chat-messages');
-    if (messagesContainer) {
-        messagesContainer.addEventListener('click', (e) => {
-            const speakBtn = e.target.closest('.btn-message-speak');
-            if (!speakBtn) return;
-            e.stopPropagation();
-
-            const msgId = speakBtn.dataset.msgId;
-            const messageEl = document.getElementById(msgId);
-            const rawText = messageEl ? decodeURIComponent(messageEl.dataset.rawText || '') : '';
-
-            if (window.snifferVoice) {
-                if (window.snifferVoice.isSpeaking && window.snifferVoice.activeMessageId === msgId) {
-                    window.snifferVoice.stop();
-                } else if (rawText) {
-                    const currentLang = typeof getAppLanguage === 'function' ? getAppLanguage() : 'pl';
-                    window.snifferVoice.speak(rawText, {
-                        messageId: msgId,
-                        lang: currentLang
-                    });
-                }
-            }
-        });
+function notifySnifferTyping(inputEl) {
+    if (window.snifferAVW && inputEl && inputEl.value.trim()) {
+        window.snifferAVW.listening();
     }
 }
 
 // ── Event Listeners ──────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize Sniffer Speech & Talking Avatar
-    initSnifferSpeechModule();
-    
     // Language Switcher setup
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -2979,6 +2838,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const charCounter = document.getElementById('char-counter');
 
     chatInput.addEventListener('input', () => {
+        notifySnifferTyping(chatInput);
         chatInput.style.height = 'auto';
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
         const len = chatInput.value.length;

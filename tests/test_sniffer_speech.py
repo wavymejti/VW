@@ -97,67 +97,6 @@ def test_get_speech_config():
         assert cfg["lang_code"].startswith(lang)
 
 
-def test_frontend_components_exist():
-    """Verify new frontend files for Sniffer avatar and voice manager exist."""
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    avatar_js = os.path.join(base_dir, "frontend", "components", "sniffer_avatar.js")
-    voice_js = os.path.join(base_dir, "frontend", "components", "sniffer_voice.js")
-    sop_file = os.path.join(base_dir, "architecture", "sniffer_speech_sop.md")
-
-    assert os.path.isfile(avatar_js), "sniffer_avatar.js must exist"
-    assert os.path.isfile(voice_js), "sniffer_voice.js must exist"
-    assert os.path.isfile(sop_file), "sniffer_speech_sop.md must exist"
-
-    # Check contents of avatar.js
-    with open(avatar_js, "r", encoding="utf-8") as f:
-        avatar_content = f.read()
-    assert "class SnifferAvatar" in avatar_content
-    assert "setSpeaking" in avatar_content
-    assert "pulseSpeech" in avatar_content
-    assert "sniffer-avatar.png" in avatar_content
-    assert "snf-photo-brow-left" in avatar_content
-    assert "snf-photo-jaw" in avatar_content
-
-    # Check contents of voice.js
-    with open(voice_js, "r", encoding="utf-8") as f:
-        voice_content = f.read()
-    assert "class SnifferVoiceManager" in voice_content
-    assert "cleanText" in voice_content
-    assert "speak(" in voice_content
-    assert "stop(" in voice_content
-    assert "toggleVoice" in voice_content
-
-
-def test_frontend_html_and_css_integration():
-    """Verify frontend/index.html, styles.css, and i18n.js include Sniffer speech components."""
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    index_html = os.path.join(base_dir, "frontend", "index.html")
-    styles_css = os.path.join(base_dir, "frontend", "styles.css")
-    i18n_js = os.path.join(base_dir, "frontend", "i18n.js")
-
-    with open(index_html, "r", encoding="utf-8") as f:
-        html_content = f.read()
-    assert "sniffer-speech-widget" in html_content
-    assert "sniffer-header-avatar-box" in html_content
-    assert "btn-toggle-sniffer-voice" in html_content
-    assert "sniffer_avatar.js" in html_content
-    assert "sniffer_voice.js" in html_content
-
-    with open(styles_css, "r", encoding="utf-8") as f:
-        css_content = f.read()
-    assert ".sniffer-speech-widget" in css_content
-    assert ".btn-sniffer-voice-toggle" in css_content
-    assert ".btn-message-speak" in css_content
-    assert ".snf-eyebrow-wrap" in css_content
-
-    with open(i18n_js, "r", encoding="utf-8") as f:
-        i18n_content = f.read()
-    assert "sniffer_voice_toggle_on" in i18n_content
-    assert "sniffer_voice_toggle_off" in i18n_content
-    assert "sniffer_speak_msg" in i18n_content
-    assert "sniffer_stop_msg" in i18n_content
-
-
 def test_generate_speech_audio_and_caching():
     """Verify generate_speech_audio generates MP3 audio bytes and caches them."""
     from tools.tts_service import generate_speech_audio
@@ -187,24 +126,3 @@ def test_api_tts_speak_endpoint():
         assert res_ok.status_code == 200
         assert res_ok.content_type == "audio/mpeg"
         assert len(res_ok.data) > 500
-
-
-def test_video_avatar_lip_sync_integration():
-    """Verify video avatar assets and lip-sync aperture table integration."""
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    avatar_js = os.path.join(base_dir, "frontend", "components", "sniffer_avatar.js")
-    poster_jpg = os.path.join(base_dir, "frontend", "assets", "video", "sniffer_idle_poster.jpg")
-    video_mp4 = os.path.join(base_dir, "frontend", "assets", "video", "sniffer_talking.mp4")
-
-    assert os.path.isfile(poster_jpg), "sniffer_idle_poster.jpg must exist"
-    assert os.path.isfile(video_mp4), "sniffer_talking.mp4 must exist"
-
-    with open(avatar_js, "r", encoding="utf-8") as f:
-        avatar_content = f.read()
-
-    # Verify 240-frame aperture table
-    assert "FRAME_APERTURES" in avatar_content
-    assert "2.083" in avatar_content  # Frame 50 closed-mouth resting timestamp
-    assert "this.elVideo.playbackRate" in avatar_content
-
-
