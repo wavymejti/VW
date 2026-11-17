@@ -18,6 +18,31 @@ load_dotenv()
 # Google Maps API key from environment
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
+# Cost switch (Nov 2026): which Google Maps features may be called.
+#   lite (default) — only Geocoding and Directions, so the planner can still build routes;
+#                    no interactive map, Places search/details/photos or Static Maps.
+#   full           — everything (interactive map, Places, photos, Static Maps).
+#   off            — no Google Maps calls at all (route planning fails gracefully).
+GOOGLE_MAPS_MODE = os.getenv("GOOGLE_MAPS_MODE", "lite").strip().lower()
+_ALLOWED = {
+    "full": {"routing", "map", "places", "photos", "static"},
+    "lite": {"routing"},
+    "off": set(),
+}
+MAPS_DISABLED_MESSAGE = (
+    "This Google Maps feature is switched off to save costs (GOOGLE_MAPS_MODE={mode}). "
+    "Set GOOGLE_MAPS_MODE=full in .env to enable it."
+)
+
+
+def maps_allows(feature):
+    """True if a Google Maps feature ('routing', 'map', 'places', 'photos', 'static') may be used."""
+    return feature in _ALLOWED.get(GOOGLE_MAPS_MODE, _ALLOWED["lite"])
+
+
+def disabled_message():
+    return MAPS_DISABLED_MESSAGE.format(mode=GOOGLE_MAPS_MODE)
+
 
 def get_client():
     """
@@ -34,6 +59,8 @@ def get_client():
             "GOOGLE_MAPS_API_KEY is not set. "
             "Please configure it in your .env file."
         )
+    if not maps_allows("routing"):
+        raise ValueError(disabled_message())
     return googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
 
 

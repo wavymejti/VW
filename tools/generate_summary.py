@@ -437,7 +437,8 @@ def _fetch_static_map(center_lat, center_lng, zoom, width=640, height=360, scale
         except Exception:
             pass
 
-    key = os.getenv("GOOGLE_MAPS_API_KEY")
+    from tools.maps_client import maps_allows
+    key = os.getenv("GOOGLE_MAPS_API_KEY") if maps_allows("static") else None
     if key:
         try:
             url = (

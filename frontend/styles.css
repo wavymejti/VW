@@ -4430,3 +4430,11 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
 
 
 
+
+/* Google Maps switched off (GOOGLE_MAPS_MODE != full) */
+.maps-off-note {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; gap: 6px; max-width: 360px; padding: 18px 22px;
+    background: #fff; color: #001e50; border-radius: 14px; text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 30, 80, 0.15); font-size: 14px; line-height: 1.4; z-index: 5;
+}

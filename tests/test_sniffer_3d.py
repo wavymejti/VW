@@ -89,3 +89,15 @@ def test_exported_module_and_model_are_present():
     root = os.path.join(BASE_DIR, "frontend", "sniffer-avw")
     for rel in ("sniffer-avw.js", "VERSION", "models/sniffer_avatar_v15_lite.glb", "models/sniffer_lids_v3.json"):
         assert os.path.isfile(os.path.join(root, rel)), f"missing {rel} — run 'npm run export:vw' in AVW"
+
+
+def test_google_maps_cost_switch(monkeypatch):
+    import tools.maps_client as mc
+
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "lite")
+    assert mc.maps_allows("routing")
+    assert not any(mc.maps_allows(f) for f in ("map", "places", "photos", "static"))
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "off")
+    assert not mc.maps_allows("routing")
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "full")
+    assert all(mc.maps_allows(f) for f in ("routing", "map", "places", "photos", "static"))

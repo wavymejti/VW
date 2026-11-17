@@ -1869,7 +1869,8 @@ async function sendMessage(text) {
         // Auto-redirect to map if a route was just planned AND trigger Camping Selection Modal
         if (routePlanned) {
             setTimeout(() => {
-                if (state.currentView === 'chat') {
+                // Without the interactive map (GOOGLE_MAPS_MODE != full) stay in the chat.
+                if (state.currentView === 'chat' && window.google && window.google.maps) {
                     switchView('map');
                 }
                 if (state.currentTrip) {

@@ -13,7 +13,7 @@ import sys
 from sqlalchemy import text
 
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message
 
 
 def search_campings(
@@ -190,6 +190,9 @@ def _search_google_maps(lat, lng, radius_km):
     Returns:
         list: List of camping dictionaries from Google Maps.
     """
+    if not maps_allows("places"):
+        print(f"[search_campings] Google Places skipped: {disabled_message()}")
+        return []
     try:
         client = get_maps_client()
         # Use Places API nearby search for campgrounds

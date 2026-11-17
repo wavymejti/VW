@@ -30,7 +30,7 @@ from tools.plan_route import plan_route
 from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
 from tools.generate_summary import generate_summary
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message
 from tools.openai_client import get_client
 from tools.sniffer_line import make_sniffer_line
 from tools.suggest_attractions import suggest_attractions
@@ -599,7 +599,8 @@ def index():
     """Serve the main dashboard."""
     return render_template(
         "index.html",
-        google_maps_key=os.getenv("GOOGLE_MAPS_API_KEY", ""),
+        # The interactive map (Maps JS) loads only when GOOGLE_MAPS_MODE=full.
+        google_maps_key=os.getenv("GOOGLE_MAPS_API_KEY", "") if maps_allows("map") else "",
     )
 
 
@@ -1101,6 +1102,8 @@ def api_get_attractions(trip_id):
 @app.route("/api/place_details/<place_id>", methods=["GET"])
 def api_place_details(place_id):
     """Fetch details from Google Places API."""
+    if not maps_allows("places"):
+        return jsonify({"status": "error", "message": maps_disabled_message()}), 503
     try:
         client = get_maps_client()
         details = client.place(

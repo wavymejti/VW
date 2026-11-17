@@ -103,6 +103,9 @@ def suggest_attractions(
             }
         }
     """
+    from tools.maps_client import maps_allows, disabled_message
+    if not maps_allows("places"):
+        return {"status": "error", "message": disabled_message()}
     gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not gmaps_key:
         return {"status": "error", "message": "GOOGLE_MAPS_API_KEY not configured."}

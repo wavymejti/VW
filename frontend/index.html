@@ -251,6 +251,12 @@
 
             <!-- Map -->
             <div id="map"></div>
+            {% if not google_maps_key %}
+            <div class="maps-off-note" role="status">
+                <strong>🗺️ Map is switched off</strong>
+                <span>Google Maps is disabled to save costs (GOOGLE_MAPS_MODE). Routes are still planned in the chat.</span>
+            </div>
+            {% endif %}
 
             <!-- Map Overlay Controls -->
             <div class="map-overlay" id="map-overlay">
@@ -937,7 +943,9 @@
 </script>
 
 <!-- Google Maps JavaScript SDK -->
+{% if google_maps_key %}
 <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>
+{% endif %}
 
 </body>
 </html>

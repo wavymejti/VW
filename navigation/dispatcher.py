@@ -374,6 +374,9 @@ def _handle_add_attraction(arguments):
         from sqlalchemy import text
         import uuid
 
+        from tools.maps_client import maps_allows, disabled_message
+        if not maps_allows("places"):
+            return {"status": "error", "message": disabled_message()}
         gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
         if not gmaps_key:
             return {
