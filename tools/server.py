@@ -30,7 +30,7 @@ from tools.plan_route import plan_route
 from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
 from tools.generate_summary import generate_summary
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message, place_details_basic
 from tools.openai_client import get_client
 from tools.sniffer_line import make_sniffer_line
 from tools.suggest_attractions import suggest_attractions
@@ -1104,6 +1104,14 @@ def api_place_details(place_id):
     """Fetch details from Google Places API."""
     if not maps_allows("places"):
         return jsonify({"status": "error", "message": maps_disabled_message()}), 503
+    if not maps_allows("places_rich"):
+        # Basic fields only: no photos, rating, reviews, phone or website (cost switch)
+        try:
+            result = place_details_basic(place_id)
+            result["photo_urls"] = []
+            return jsonify({"status": "success", "details": result})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
     try:
         client = get_maps_client()
         details = client.place(

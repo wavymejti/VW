@@ -94,10 +94,45 @@ def test_exported_module_and_model_are_present():
 def test_google_maps_cost_switch(monkeypatch):
     import tools.maps_client as mc
 
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "basic")
+    assert all(mc.maps_allows(f) for f in ("routing", "map", "static", "places"))
+    assert not mc.maps_allows("places_rich")
     monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "lite")
-    assert mc.maps_allows("routing")
-    assert not any(mc.maps_allows(f) for f in ("map", "places", "photos", "static"))
+    assert mc.maps_allows("routing") and not mc.maps_allows("places")
     monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "off")
     assert not mc.maps_allows("routing")
     monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "full")
-    assert all(mc.maps_allows(f) for f in ("routing", "map", "places", "photos", "static"))
+    assert mc.maps_allows("places_rich")
+
+
+def test_places_basic_requests_no_paid_fields(monkeypatch):
+    import requests
+    import tools.maps_client as mc
+
+    sent = {}
+
+    class _Resp:
+        status_code = 200
+        content = b"x"
+
+        def json(self):
+            return {"places": [{
+                "id": "abc", "displayName": {"text": "Lake Malta"},
+                "location": {"latitude": 52.4, "longitude": 16.97},
+                "types": ["tourist_attraction"], "shortFormattedAddress": "Poznan",
+            }]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.update(url=url, body=json, mask=headers["X-Goog-FieldMask"])
+        return _Resp()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    res = mc.places_nearby_basic(52.4, 16.9, 30000, "viewpoint")
+    assert res["results"][0] == {
+        "place_id": "abc", "name": "Lake Malta",
+        "geometry": {"location": {"lat": 52.4, "lng": 16.97}},
+        "types": ["tourist_attraction"], "vicinity": "Poznan", "formatted_address": "", "url": None,
+    }
+    for paid in ("photos", "rating", "userRatingCount", "PhoneNumber", "websiteUri", "OpeningHours", "reviews"):
+        assert paid not in sent["mask"]
+    assert sent["body"]["includedTypes"] == ["tourist_attraction"]  # legacy-only type mapped

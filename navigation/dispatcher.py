@@ -405,7 +405,12 @@ def _handle_add_attraction(arguments):
             search_kwargs["location"] = (lat, lng)
             search_kwargs["radius"] = 80000  # 80 km bias radius
 
-        places_result = gmaps.places(**search_kwargs)
+        from tools.maps_client import places_text_basic
+        if maps_allows("places_rich"):
+            places_result = gmaps.places(**search_kwargs)
+        else:
+            # Basic fields only (no photos, ratings or contact data — cost switch)
+            places_result = places_text_basic(query, lat, lng)
 
         if not places_result.get("results"):
             return {

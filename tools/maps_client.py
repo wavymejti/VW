@@ -18,14 +18,18 @@ load_dotenv()
 # Google Maps API key from environment
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
-# Cost switch (Nov 2026): which Google Maps features may be called.
-#   lite (default) — only Geocoding and Directions, so the planner can still build routes;
-#                    no interactive map, Places search/details/photos or Static Maps.
-#   full           — everything (interactive map, Places, photos, Static Maps).
-#   off            — no Google Maps calls at all (route planning fails gracefully).
-GOOGLE_MAPS_MODE = os.getenv("GOOGLE_MAPS_MODE", "lite").strip().lower()
+# Cost switch (Nov 2026). Billing showed 76% of the cost in Places Photo and the rest in the
+# Atmosphere/Contact data that legacy Places searches always add; everything else stayed free.
+#   basic (default) — everything except those: interactive map, Directions, Geocoding, Static Maps
+#                     and Places search/details through Places API (New) with a field mask of
+#                     basic fields only (no photos, ratings, reviews, phone, website, hours).
+#   full            — also photos, ratings and contact data (legacy Places API, as before).
+#   lite            — only Geocoding and Directions; no map, Places or Static Maps.
+#   off             — no Google Maps calls at all.
+GOOGLE_MAPS_MODE = os.getenv("GOOGLE_MAPS_MODE", "basic").strip().lower()
 _ALLOWED = {
-    "full": {"routing", "map", "places", "photos", "static"},
+    "full": {"routing", "map", "static", "places", "places_rich"},
+    "basic": {"routing", "map", "static", "places"},
     "lite": {"routing"},
     "off": set(),
 }
@@ -36,12 +40,117 @@ MAPS_DISABLED_MESSAGE = (
 
 
 def maps_allows(feature):
-    """True if a Google Maps feature ('routing', 'map', 'places', 'photos', 'static') may be used."""
-    return feature in _ALLOWED.get(GOOGLE_MAPS_MODE, _ALLOWED["lite"])
+    """True if a Google Maps feature may be used:
+    'routing', 'map', 'static', 'places' (basic fields) or 'places_rich' (photos, ratings, contact)."""
+    return feature in _ALLOWED.get(GOOGLE_MAPS_MODE, _ALLOWED["basic"])
 
 
 def disabled_message():
     return MAPS_DISABLED_MESSAGE.format(mode=GOOGLE_MAPS_MODE)
+
+
+# ── Places API (New), basic fields only ─────────────────────────────────────
+# Only "Pro" fields: no photos, rating, userRatingCount, phone, website or opening hours, which
+# are billed as Enterprise / Atmosphere / Contact. Results are returned in the legacy shape
+# ({place_id, name, geometry.location, types, vicinity, formatted_address}) so callers that
+# were written for the legacy client keep working; ratings and photos are simply absent.
+PLACES_NEW_URL = "https://places.googleapis.com/v1"
+_BASIC_PLACE_FIELDS = ["id", "displayName", "location", "types", "primaryType",
+                       "formattedAddress", "shortFormattedAddress", "googleMapsUri"]
+# Legacy type names that Nearby Search (New) does not accept as includedTypes.
+_NEW_TYPE_FALLBACK = {
+    "natural_feature": "tourist_attraction", "viewpoint": "tourist_attraction",
+    "castle": "historical_landmark", "ruins": "historical_landmark",
+    "landmark": "historical_landmark", "waterfall": "tourist_attraction",
+    "point_of_interest": "tourist_attraction",
+}
+
+
+def _places_new_post(path, body, fields, timeout=15):
+    import requests
+
+    resp = requests.post(
+        f"{PLACES_NEW_URL}/{path}",
+        json=body,
+        headers={
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY or "",
+            "X-Goog-FieldMask": ",".join(f"places.{f}" for f in fields),
+        },
+        timeout=timeout,
+    )
+    data = resp.json() if resp.content else {}
+    if resp.status_code != 200:
+        msg = (data.get("error") or {}).get("message") or resp.text[:300]
+        if resp.status_code == 403:
+            msg += " (enable 'Places API (New)' for this key in Google Cloud)"
+        raise RuntimeError(f"Places API (New) {resp.status_code}: {msg}")
+    return data.get("places", [])
+
+
+def _to_legacy(place):
+    loc = place.get("location") or {}
+    return {
+        "place_id": place.get("id"),
+        "name": (place.get("displayName") or {}).get("text", ""),
+        "geometry": {"location": {"lat": loc.get("latitude"), "lng": loc.get("longitude")}},
+        "types": place.get("types") or ([place["primaryType"]] if place.get("primaryType") else []),
+        "vicinity": place.get("shortFormattedAddress") or place.get("formattedAddress", ""),
+        "formatted_address": place.get("formattedAddress", ""),
+        "url": place.get("googleMapsUri"),
+    }
+
+
+def places_nearby_basic(lat, lng, radius_m, place_type, max_results=20):
+    """Nearby Search (New), basic fields, ranked by popularity. Returns {"results": [...]}."""
+    place_type = _NEW_TYPE_FALLBACK.get(place_type, place_type)
+    body = {
+        "includedTypes": [place_type],
+        "maxResultCount": max(1, min(int(max_results), 20)),
+        "rankPreference": "POPULARITY",
+        "locationRestriction": {"circle": {
+            "center": {"latitude": lat, "longitude": lng},
+            "radius": float(min(max(radius_m, 1), 50000)),
+        }},
+    }
+    try:
+        places = _places_new_post("places:searchNearby", body, _BASIC_PLACE_FIELDS)
+    except RuntimeError as e:
+        # An unsupported type gives 400; fall back to the generic attraction type once.
+        if "400" in str(e) and place_type != "tourist_attraction":
+            body["includedTypes"] = ["tourist_attraction"]
+            places = _places_new_post("places:searchNearby", body, _BASIC_PLACE_FIELDS)
+        else:
+            raise
+    return {"results": [_to_legacy(p) for p in places]}
+
+
+def places_text_basic(query, lat=None, lng=None, radius_m=80000, max_results=5):
+    """Text Search (New), basic fields. Returns {"results": [...]}."""
+    body = {"textQuery": query, "pageSize": max(1, min(int(max_results), 20))}
+    if lat is not None and lng is not None:
+        body["locationBias"] = {"circle": {
+            "center": {"latitude": lat, "longitude": lng},
+            "radius": float(min(radius_m, 50000)),
+        }}
+    places = _places_new_post("places:searchText", body, _BASIC_PLACE_FIELDS)
+    return {"results": [_to_legacy(p) for p in places]}
+
+
+def place_details_basic(place_id):
+    """Place Details (New), basic fields. Returns a legacy-shaped dict (no photos/ratings)."""
+    import requests
+
+    resp = requests.get(
+        f"{PLACES_NEW_URL}/places/{place_id}",
+        headers={
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY or "",
+            "X-Goog-FieldMask": ",".join(_BASIC_PLACE_FIELDS),
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Places API (New) {resp.status_code}: {resp.text[:300]}")
+    return _to_legacy(resp.json())
 
 
 def get_client():

@@ -15,6 +15,8 @@ import os
 import math
 
 import googlemaps
+
+from tools.maps_client import maps_allows, places_nearby_basic
 from tools.db import get_engine
 from sqlalchemy import text
 from tools.attractions_cache import (
@@ -103,7 +105,7 @@ def suggest_attractions(
             }
         }
     """
-    from tools.maps_client import maps_allows, disabled_message
+    from tools.maps_client import disabled_message
     if not maps_allows("places"):
         return {"status": "error", "message": disabled_message()}
     gmaps_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -413,6 +415,8 @@ def _fetch_candidates(gmaps, sample_points, types_to_search,
         if db_pois and len(db_pois) >= 5:
             # We already have sufficient high-quality cached attractions near this point
             for p in db_pois:
+                if not maps_allows("places_rich") and p.get("photo_url"):
+                    p = {**p, "photo_url": None}  # a stored Place Photo URL is billed per view
                 pid = p.get("place_id")
                 if not pid or pid in local_seen:
                     continue
@@ -429,18 +433,22 @@ def _fetch_candidates(gmaps, sample_points, types_to_search,
         newly_fetched = []
         for place_type in query_types:
             try:
-                result = gmaps.places_nearby(
-                    location=(lat, lng),
-                    radius=search_radius_m,
-                    type=place_type,
-                    rank_by="prominence",
-                )
+                if maps_allows("places_rich"):
+                    result = gmaps.places_nearby(
+                        location=(lat, lng),
+                        radius=search_radius_m,
+                        type=place_type,
+                        rank_by="prominence",
+                    )
+                else:
+                    # Basic fields only: no photos, ratings or contact data (cost switch)
+                    result = places_nearby_basic(lat, lng, search_radius_m, place_type)
                 for place in result.get("results", []):
                     pid = place.get("place_id")
                     if not pid or pid in local_seen:
                         continue
                     local_seen.add(pid)
-                    mapped = _map_place(place, gmaps_key)
+                    mapped = _map_place(place, gmaps_key if maps_allows("places_rich") else None)
                     candidates.append(mapped)
                     newly_fetched.append(mapped)
 

@@ -13,7 +13,7 @@ import sys
 from sqlalchemy import text
 
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message, places_nearby_basic
 
 
 def search_campings(
@@ -194,15 +194,19 @@ def _search_google_maps(lat, lng, radius_km):
         print(f"[search_campings] Google Places skipped: {disabled_message()}")
         return []
     try:
-        client = get_maps_client()
-        # Use Places API nearby search for campgrounds
-        result = client.places_nearby(
-            location=(lat, lng),
-            radius=min(radius_km * 1000, 50000),  # Max 50km
-            type="campground",
-        )
+        if maps_allows("places_rich"):
+            client = get_maps_client()
+            # Legacy Places nearby search (adds photos, ratings, contact data — paid extras)
+            result = client.places_nearby(
+                location=(lat, lng),
+                radius=min(radius_km * 1000, 50000),  # Max 50km
+                type="campground",
+            )
+        else:
+            # Places API (New) with basic fields only (no photos/ratings/contact)
+            result = places_nearby_basic(lat, lng, radius_km * 1000, "campground")
 
-        key = os.getenv("GOOGLE_MAPS_API_KEY")
+        key = os.getenv("GOOGLE_MAPS_API_KEY") if maps_allows("places_rich") else None
         campings = []
         for place in result.get("results", []):
             location = place.get("geometry", {}).get("location", {})
