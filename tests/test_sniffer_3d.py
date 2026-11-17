@@ -28,24 +28,37 @@ class _FakeClient:
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self._content))])
 
 
-def test_sniffer_line_returns_spoken_mood_reaction():
-    client = _FakeClient(json.dumps({"spoken": "  Bavaria it is!  Four days of  mountain passes.", "mood": "happy", "reaction": "surprise"}))
-    line = make_sniffer_line("Plan 4 days in Bavaria", "**Trasa** do Bawarii...", client=client)
-    assert line == {"spoken": "Bavaria it is! Four days of mountain passes.", "mood": "happy", "reaction": "surprise"}
-    sent = client.calls[0]
-    assert sent["response_format"]["json_schema"]["strict"] is True
-    assert "English" in sent["messages"][0]["content"]
+def test_english_reply_is_read_word_for_word():
+    client = _FakeClient(json.dumps({"mood": "happy", "reaction": "ears_up", "english": ""}))
+    reply = "Great idea! Tell me:\n\n1. **Where** do you start?\n2. How many days"
+    line = make_sniffer_line("Plan a trip", reply, lang="en", client=client)
+    assert line == {
+        "spoken": "Great idea! Tell me: Where do you start? How many days.",
+        "mood": "happy",
+        "reaction": "ears_up",
+    }
+    assert client.calls[0]["response_format"]["json_schema"]["strict"] is True
+
+
+def test_polish_reply_is_read_as_full_english_translation():
+    client = _FakeClient(json.dumps({"mood": "neutral", "reaction": "none", "english": "Where do we start? About 420 km."}))
+    line = make_sniffer_line("Zaplanuj trasę", "Skąd startujemy? Około 420 km.", lang="pl", client=client)
+    assert line["spoken"] == "Where do we start? About 420 kilometers."
+    assert "do not summarize" in client.calls[0]["messages"][0]["content"]
 
 
 def test_sniffer_line_never_raises():
-    assert make_sniffer_line("hi", "reply", client=_FakeClient(error=RuntimeError("down"))) is None
-    assert make_sniffer_line("hi", "reply", client=_FakeClient("not json")) is None
+    # English: the text is still read, with a neutral face.
+    line = make_sniffer_line("hi", "Hello there.", lang="en", client=_FakeClient(error=RuntimeError("down")))
+    assert line == {"spoken": "Hello there.", "mood": "neutral", "reaction": "none"}
+    # Other languages need the translation, so Sniffer stays quiet.
+    assert make_sniffer_line("cześć", "Cześć.", lang="pl", client=_FakeClient(error=RuntimeError("down"))) is None
     assert make_sniffer_line("hi", "", client=_FakeClient("{}")) is None
 
 
 def test_sniffer_line_sanitizes_unknown_values():
-    client = _FakeClient(json.dumps({"spoken": "Woof.", "mood": "ecstatic", "reaction": "wag"}))
-    line = make_sniffer_line("hi", "reply", client=client)
+    client = _FakeClient(json.dumps({"mood": "ecstatic", "reaction": "wag", "english": ""}))
+    line = make_sniffer_line("hi", "Woof.", lang="en", client=client)
     assert line["mood"] == "neutral" and line["reaction"] == "none"
 
 

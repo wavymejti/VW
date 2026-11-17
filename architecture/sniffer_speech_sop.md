@@ -18,7 +18,7 @@ to every chat reply. (Replaces the 2D photo/video avatar and the ElevenLabs/Open
 
 ```
 user message ─► POST /api/chat ─► chat_handler (planner, tools, slot_state)
-                                    └─► tools/sniffer_line.py ─► {spoken, mood, reaction} (English)
+                                    └─► tools/sniffer_line.py ─► {spoken = reply read aloud in English, mood, reaction}
 response {text, ..., sniffer} ─► app.js: chat bubble (text) + window.snifferAVW.say(spoken, mood, reaction)
 window.snifferAVW (AVW module) ─► POST /tts/v1/synthesize (Flask proxy) ─► HeadTTS :8882 (Kokoro am_echo)
                                ─► audio + word/viseme timings ─► TalkingHead lip-sync in the browser
@@ -44,22 +44,27 @@ window.snifferAVW (AVW module) ─► POST /tts/v1/synthesize (Flask proxy) ─�
 - **Thinking**: from sending a message until the reply arrives (`snifferAVW.thinking(true/false)`).
 - **Speaking**: `snifferAVW.say(spoken, {mood, reaction})` after each successful reply. A new
   message interrupts him (`snifferAVW.stop()`).
-- **Language**: Sniffer always speaks **English**, also when the UI is Polish or German. The chat
-  text stays in the UI language.
+- **Language**: Sniffer always speaks **English**, also when the UI is Polish or German (then he
+  reads an English translation of the reply). The chat text stays in the UI language.
 - **No WebGL / model fails to load**: a still image (`sniffer_fallback.webp`) is shown instead.
 - **TTS down**: the chat still works; Sniffer only moves (warning in the console).
 
-## 4. Spoken line rules (`tools/sniffer_line.py`)
+## 4. What Sniffer says (`tools/sniffer_line.py`)
 
-- One or two sentences, under 45 words, English, plain spoken text (no markdown/emoji/URLs,
-  numbers written as said). Sums up the reply or asks its main question; details stay on screen.
-- Vanlife persona: friendly VW California co-pilot dog, playful but not silly.
-- `mood` ∈ neutral, happy, angry, sad, fear, disgust, love, sleep (mostly neutral/happy).
-- `reaction` ∈ none, surprise, ears_up, ears_back, petted.
-- Strict JSON schema; any failure returns `None` and the chat reply is sent without `sniffer`.
-- Model: `SNIFFER_LINE_MODEL` (default: the planner's `MODEL_NAME`). Adds one short LLM call per
-  reply (~1 s). Open question for the POC: try other ways (e.g. the planner writing the line
-  itself) on real scenarios and keep what works best.
+Decision 2026-11-17: Sniffer **reads the chat reply word for word**, so what he says matches
+what is on screen.
+
+- **English UI**: `spoken` is the reply itself made speakable by `speakable()` — markdown, emoji,
+  links and list markers removed, list items turned into sentences, units spelled out
+  (`clean_text_for_speech`). No LLM involved in the words.
+- **Polish/German UI**: Sniffer still speaks English, so `spoken` is a faithful English
+  translation of the whole reply (no summary), from the same small LLM call.
+- The LLM call (strict JSON schema) also returns `mood` ∈ neutral, happy, angry, sad, fear,
+  disgust, love, sleep and `reaction` ∈ none, surprise, ears_up, ears_back, petted.
+- Failure: English reply → read anyway with a neutral face; other languages → no speech.
+- Because every reply is read aloud, the planner prompt (`tools/openai_client.py`, section 1a)
+  asks for short replies: 2–4 sentences, lists only when needed (max 5 items).
+- Model: `SNIFFER_LINE_MODEL` (default: the planner's `MODEL_NAME`).
 
 ## 5. Updating the avatar
 

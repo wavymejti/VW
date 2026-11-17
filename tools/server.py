@@ -750,9 +750,9 @@ def api_chat():
             _CHAT_SESSIONS[uid]["active_trip_id"] = chat["active_trip_id"]
             session["active_trip_id"] = chat["active_trip_id"]
 
-    # Short English line for the 3D Sniffer (spoken + mood); None if it fails.
+    # What the 3D Sniffer reads aloud: the reply itself in English (+ mood); None if unavailable.
     if result.get("text") and result.get("status") in ("success", "partial"):
-        result["sniffer"] = make_sniffer_line(user_message, result["text"])
+        result["sniffer"] = make_sniffer_line(user_message, result["text"], lang=lang)
 
     return jsonify(result)
 
