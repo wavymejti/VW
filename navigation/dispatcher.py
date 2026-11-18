@@ -135,6 +135,10 @@ def _handle_modify_route(arguments):
         preferred_overnight = arguments.get("preferred_overnight")
         overnight_stops = arguments.get("overnight_stops")
         max_daily_km = arguments.get("max_daily_km")
+        overnight_preferences = arguments.get("overnight_preferences")
+        if not overnight_preferences and preferred_overnight:
+            # Older calls describe the surroundings only in free text: apply it to every night.
+            overnight_preferences = [{"setting": preferred_overnight}]
         max_daily_drive_hours = arguments.get("max_daily_drive_hours")
         notes = arguments.get("notes", "")
 
@@ -144,15 +148,17 @@ def _handle_modify_route(arguments):
             "waypoints", "via_places", "include_places", "exclude_places", "round_trip",
             "overnight_stops", "origin", "destination", "num_days", "start_date",
             "max_daily_km", "max_daily_drive_hours", "preferred_amenities",
+            "overnight_preferences", "preferred_overnight",
         )
         if not any(arguments.get(k) not in (None, "", []) for k in change_keys):
             return {
                 "status": "error",
                 "message": (
-                    "Nothing to change: the planner does not read `notes` or "
-                    "`preferred_overnight`. Pass the change as parameters — e.g. "
-                    "max_daily_km for a daily distance limit, num_days for more/fewer "
-                    "days, overnight_stops for where to sleep, waypoints / exclude_places."
+                    "Nothing to change: the planner does not read `notes`. Pass the change "
+                    "as parameters — e.g. max_daily_km for a daily distance limit, num_days "
+                    "for more/fewer days, overnight_stops for a town to sleep in, "
+                    "overnight_preferences for surroundings (lake, forest...), "
+                    "waypoints / exclude_places."
                 ),
             }
 
@@ -331,6 +337,7 @@ def _handle_modify_route(arguments):
             waypoints=all_waypoints,
             overnight_stops=overnight_stops,
             max_daily_km=max_daily_km,
+            overnight_preferences=overnight_preferences,
             **({"max_daily_drive_hours": max_daily_drive_hours} if max_daily_drive_hours else {}),
         )
 
@@ -914,6 +921,22 @@ OPENAI_TOOL_DEFINITIONS = [
                         "items": {"type": "string"},
                         "description": "Preferred camping amenities.",
                     },
+                    "overnight_preferences": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "setting": {"type": "string", "description": "Wanted surroundings, e.g. 'by a lake', 'in a forest', 'by the sea', 'in the mountains'."},
+                                "day_number": {"type": "integer", "description": "Night after this travel day (1 = first night). Omit for every night."},
+                            },
+                            "required": ["setting"],
+                        },
+                        "description": (
+                            "Where the user wants to sleep in terms of surroundings, without naming a town "
+                            "(e.g. 'on day 2 I want to sleep by a lake' -> [{'day_number': 2, 'setting': 'by a lake'}]). "
+                            "The planner picks a matching campsite near that night's stop."
+                        ),
+                    },
                     "max_daily_km": {
                         "type": "number",
                         "description": (
@@ -983,11 +1006,8 @@ OPENAI_TOOL_DEFINITIONS = [
                     "preferred_overnight": {
                         "type": "string",
                         "description": (
-                            "Preferred overnight environment description "
-                            "(e.g. 'forest without mosquitoes', 'lakeside', "
-                            "'mountain with views'). Only a note — to sleep in a "
-                            "specific place use overnight_stops; to add nights "
-                            "raise num_days."
+                            "Deprecated free-text surroundings for every night; prefer "
+                            "overnight_preferences (it can target one day)."
                         ),
                     },
                     "overnight_stops": {
@@ -1029,6 +1049,22 @@ OPENAI_TOOL_DEFINITIONS = [
                             "lng": {"type": "number"},
                         },
                         "description": "Override destination (optional).",
+                    },
+                    "overnight_preferences": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "setting": {"type": "string", "description": "Wanted surroundings, e.g. 'by a lake', 'in a forest', 'by the sea', 'in the mountains'."},
+                                "day_number": {"type": "integer", "description": "Night after this travel day (1 = first night). Omit for every night."},
+                            },
+                            "required": ["setting"],
+                        },
+                        "description": (
+                            "Where the user wants to sleep in terms of surroundings, without naming a town "
+                            "(e.g. 'on day 2 I want to sleep by a lake' -> [{'day_number': 2, 'setting': 'by a lake'}]). "
+                            "The planner picks a matching campsite near that night's stop."
+                        ),
                     },
                     "max_daily_km": {
                         "type": "number",

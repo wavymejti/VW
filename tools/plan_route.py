@@ -175,6 +175,89 @@ def _apply_overnight_stops(points, stops):
     return points
 
 
+def _overnight_setting_for_day(preferences, day_num):
+    """
+    The requested surroundings for the night after `day_num` ("by a lake", "forest"...).
+
+    preferences: list of {"setting": str, "day_number": int|None} or plain strings
+    (a plain string / missing day_number applies to every night). A day-specific
+    entry wins over a general one.
+    """
+    if not preferences:
+        return None
+    if isinstance(preferences, (str, dict)):
+        preferences = [preferences]
+    general = None
+    for pref in preferences:
+        if isinstance(pref, str):
+            general = general or pref.strip() or None
+            continue
+        if not isinstance(pref, dict):
+            continue
+        setting = (pref.get("setting") or pref.get("near") or "").strip()
+        if not setting:
+            continue
+        day = pref.get("day_number")
+        if day is None:
+            general = general or setting
+        else:
+            try:
+                if int(day) == day_num:
+                    return setting
+            except (TypeError, ValueError):
+                continue
+    return general
+
+
+def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
+    """
+    Campsites matching the requested surroundings (e.g. "by a lake") near a point,
+    via a Places text search; nearest first, only campsites / RV parks within radius_km.
+    """
+    from tools.maps_client import maps_allows, places_text_basic, get_client as maps_client
+
+    if not maps_allows("places"):
+        return []
+    query = f"campsite {setting}"
+    try:
+        if maps_allows("places_rich"):
+            res = maps_client().places(query=query, location=(lat, lng), radius=radius_km * 1000)
+        else:
+            res = places_text_basic(query, lat=lat, lng=lng,
+                                    radius_m=radius_km * 1000, max_results=10)
+    except Exception as e:
+        print(f"[plan_route] themed campsite search failed ({query!r}): {e}")
+        return []
+
+    found = []
+    for place in res.get("results", []):
+        loc = (place.get("geometry") or {}).get("location") or {}
+        if loc.get("lat") is None or loc.get("lng") is None:
+            continue
+        name = place.get("name") or ""
+        types = place.get("types") or []
+        if not ({"campground", "rv_park"} & set(types) or "camp" in name.lower()):
+            continue
+        dist = _haversine_distance(lat, lng, loc["lat"], loc["lng"])
+        if dist > radius_km:
+            continue
+        found.append({
+            "id": None,
+            "name": name,
+            "lat": loc["lat"],
+            "lng": loc["lng"],
+            "place_id": place.get("place_id"),
+            "address": place.get("vicinity") or place.get("formatted_address"),
+            "rating": place.get("rating"),
+            "photos": [],
+            "source": "google_maps",
+            "distance_km": round(dist, 1),
+            "setting": setting,
+        })
+    found.sort(key=lambda c: c["distance_km"])
+    return found
+
+
 def plan_route(
     origin,
     destination,
@@ -190,6 +273,7 @@ def plan_route(
     waypoints=None,
     overnight_stops=None,
     max_daily_km=None,
+    overnight_preferences=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -211,6 +295,8 @@ def plan_route(
             (dicts with label and optional lat/lng, or plain names).
         max_daily_km (float): Optional daily distance limit; days are added when
             the route doesn't fit and days are split by distance instead of time.
+        overnight_preferences (list): Surroundings wanted for the nights, e.g.
+            [{"day_number": 2, "setting": "by a lake"}] (no day_number = every night).
 
     Returns:
         dict: Complete trip plan with daily schedules, plus `warnings`
@@ -353,7 +439,18 @@ def plan_route(
         overnight_camping = None
         overnight_options = []
         if day_num < num_days:
-            for radius_km in (30, 50):
+            setting = _overnight_setting_for_day(overnight_preferences, day_num)
+            if setting:
+                themed = _find_overnight_by_setting(day_end["lat"], day_end["lng"], setting)
+                if themed:
+                    overnight_options = themed[:6]
+                    overnight_camping = themed[0]
+                else:
+                    warnings.append(
+                        f"Day {day_num}: no campsite '{setting}' found within 50 km of "
+                        f"{day_end.get('label', 'the day end')}; a regular campsite is used."
+                    )
+            for radius_km in (() if overnight_camping else (30, 50)):
                 camping_results = search_campings(
                     lat=day_end["lat"],
                     lng=day_end["lng"],
