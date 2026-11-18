@@ -1183,7 +1183,11 @@ OPENAI_TOOL_DEFINITIONS = [
                             "lat": {"type": "number"},
                             "lng": {"type": "number"},
                         },
-                        "description": "Override destination (optional).",
+                        "description": (
+                            "Override destination (optional). To END the trip in another city "
+                            "(e.g. 'return to Warsaw instead of Poznań'): destination = that city, "
+                            "round_trip = false, and the old turnaround (e.g. Lausanne) goes into stays."
+                        ),
                     },
                     "overnight_preferences": {
                         "type": "array",

@@ -190,3 +190,22 @@ def test_raw_reply_goes_to_the_log(monkeypatch):
                "history": [{"role": "system", "content": "P"}], "lang": "en", "active_trip_id": None}
     chat_handler.send_message(session, "hi")
     assert logged["raw_reply"] == raw
+
+
+def test_trip_ending_in_another_city_keeps_castles_near_the_stay(planner):
+    """Poznań -> Lausanne (2 days) -> Warsaw: castles on the way to Lausanne are on the route."""
+    warsaw = {"label": "Warszawa", "lat": 52.2297, "lng": 21.0122}
+    r = pr.plan_route(POZNAN, warsaw, num_days=10, start_date="2027-07-01",
+                      max_daily_drive_hours=10,
+                      stays=[{"label": "Lausanne", "lat": LAUSANNE["lat"], "lng": LAUSANNE["lng"], "days": 2}],
+                      waypoints=[{"label": "Schloss Heidelberg", "lat": 49.4106, "lng": 8.7153},
+                                 {"label": "Kaiserburg Nürnberg", "lat": 49.458, "lng": 11.0757}])
+    assert not any("Skipped" in w for w in r["warnings"]), r["warnings"]
+    kinds = ["stay" if d.get("stay") else "drive" for d in r["daily_schedules"]]
+    assert kinds.count("stay") == 2 and r["daily_schedules"][-1]["waypoints"][-1]["label"] == "Warszawa"
+
+
+def test_skip_warning_explains_how_to_end_in_a_city(planner):
+    r = pr.plan_route(POZNAN, LAUSANNE, num_days=4, start_date="2027-07-01", max_daily_drive_hours=10,
+                      waypoints=[{"label": "Warszawa", "lat": 52.2297, "lng": 21.0122}])
+    assert any("make it the destination" in w for w in r["warnings"])

@@ -494,20 +494,31 @@ def plan_route(
     normalized_waypoints = _normalize_waypoints(waypoints, client)
 
     # Skip places far off the route (a vague name geocoded to another country, or a
-    # castle on the other side of Poland): they would wreck the day split.
-    direct_km = _haversine_distance(origin["lat"], origin["lng"],
-                                    destination["lat"], destination["lng"])
-    max_detour_km = max(150.0, 0.35 * direct_km)
+    # castle on the other side of Poland): they would wreck the day split. The route
+    # runs through the stay places and overnight stops, so detours are measured
+    # against the nearest leg of origin -> stops/stays -> destination.
+    anchors = sorted(list(requested_stops) + list(stay_places),
+                     key=lambda a: _haversine_distance(origin["lat"], origin["lng"], a["lat"], a["lng"]))
+    if round_trip:
+        anchors = anchors + [destination]
+    path = [origin] + anchors + [origin if round_trip else destination]
+    legs_km = [(a, b, _haversine_distance(a["lat"], a["lng"], b["lat"], b["lng"]))
+               for a, b in zip(path, path[1:])]
+    max_detour_km = max(150.0, 0.35 * max(l[2] for l in legs_km))
     kept_waypoints = []
     for wp in normalized_waypoints:
-        detour = (_haversine_distance(origin["lat"], origin["lng"], wp["lat"], wp["lng"])
-                  + _haversine_distance(wp["lat"], wp["lng"], destination["lat"], destination["lng"])
-                  - direct_km)
+        detour = min(
+            _haversine_distance(a["lat"], a["lng"], wp["lat"], wp["lng"])
+            + _haversine_distance(wp["lat"], wp["lng"], b["lat"], b["lng"]) - d
+            for a, b, d in legs_km
+        )
         if detour > max_detour_km and not allow_far_waypoints:
             warnings.append(
                 f"Skipped '{wp['label']}': about {detour:.0f} km off the route "
-                f"(limit {max_detour_km:.0f} km). Use a more specific place, or confirm with "
-                "the user and pass allow_far_waypoints=true."
+                f"(limit {max_detour_km:.0f} km). If the trip should END there, make it the "
+                "destination (one-way) and put the turnaround city in stays; otherwise use a "
+                "more specific place, or confirm the detour with the user and pass "
+                "allow_far_waypoints=true."
             )
         else:
             kept_waypoints.append(wp)
