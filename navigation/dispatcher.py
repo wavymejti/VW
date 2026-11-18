@@ -133,6 +133,7 @@ def _handle_modify_route(arguments):
         trip_id = arguments.get("trip_id")
         exclude_places = arguments.get("exclude_places", []) or []
         preferred_overnight = arguments.get("preferred_overnight")
+        overnight_stops = arguments.get("overnight_stops")
         notes = arguments.get("notes", "")
 
         # Fetch original trip parameters from DB if trip_id provided
@@ -235,9 +236,13 @@ def _handle_modify_route(arguments):
             try:
                 engine = get_engine()
                 with engine.connect() as conn:
-                    row = conn.execute(
-                        text("SELECT origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng, start_date, end_date, user_id, id FROM trips ORDER BY created_at DESC LIMIT 1")
-                    ).fetchone()
+                    # Only the same user's latest trip — never another user's.
+                    row = None
+                    if user_id:
+                        row = conn.execute(
+                            text("SELECT origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng, start_date, end_date, user_id, id FROM trips WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+                            {"uid": user_id},
+                        ).fetchone()
                     if row:
                         origin = origin or {"label": row[0], "lat": float(row[1]), "lng": float(row[2])}
                         destination = destination or {"label": row[3], "lat": float(row[4]), "lng": float(row[5])}
@@ -304,6 +309,7 @@ def _handle_modify_route(arguments):
             notes=" | ".join(extra_notes) if extra_notes else None,
             round_trip=bool(round_trip),
             waypoints=all_waypoints,
+            overnight_stops=overnight_stops,
         )
 
         # Tag result as a route modification
@@ -799,7 +805,10 @@ OPENAI_TOOL_DEFINITIONS = [
         "function": {
             "name": "plan_route",
             "description": (
-                "Plan a multi-day driving route with campground stops. "
+                "Plan a NEW multi-day driving route with campground stops "
+                "(also when a trip already exists but the user wants a different "
+                "origin or destination). Each travel day except the last ends at a "
+                "campsite, so the number of nights = num_days - 1. "
                 "Generates daily schedules with waypoints, driving time "
                 "estimates, and weather forecasts."
             ),
@@ -841,7 +850,30 @@ OPENAI_TOOL_DEFINITIONS = [
                     },
                     "num_days": {
                         "type": "integer",
-                        "description": "Number of travel days.",
+                        "description": (
+                            "Number of trip days = number of nights + 1. "
+                            "One night on the way (e.g. 'Poznań to Berlin with a stop "
+                            "overnight in between') = 2. num_days = 1 means driving "
+                            "straight through with NO overnight stop."
+                        ),
+                    },
+                    "overnight_stops": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Town/area where the user wants to sleep."},
+                                "lat": {"type": "number"},
+                                "lng": {"type": "number"},
+                            },
+                            "required": ["label"],
+                        },
+                        "description": (
+                            "Specific places where the user wants to spend a night, in travel order "
+                            "(e.g. [{'label': 'Frankfurt (Oder)'}]). Each one ends a travel day and the "
+                            "planner looks for a campsite near it. Leave empty if the user only said "
+                            "'one night on the way' without a place — then just set num_days."
+                        ),
                     },
                     "start_date": {
                         "type": "string",
@@ -885,7 +917,9 @@ OPENAI_TOOL_DEFINITIONS = [
                 "add a town/city/place to drive through or visit (e.g. 'Gardelegen'), "
                 "remove or replace an overnight stop, avoid a specific town, "
                 "or significantly restructure any day. Re-plans the full "
-                "route with updated constraints."
+                "route with updated constraints. Do NOT use it for a trip to a "
+                "different destination or from a different origin — that is a new "
+                "trip: confirm with the user, then call plan_route."
             ),
             "parameters": {
                 "type": "object",
@@ -921,7 +955,27 @@ OPENAI_TOOL_DEFINITIONS = [
                         "description": (
                             "Preferred overnight environment description "
                             "(e.g. 'forest without mosquitoes', 'lakeside', "
-                            "'mountain with views')."
+                            "'mountain with views'). Only a note — to sleep in a "
+                            "specific place use overnight_stops; to add nights "
+                            "raise num_days."
+                        ),
+                    },
+                    "overnight_stops": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Town/area where the user wants to sleep."},
+                                "lat": {"type": "number"},
+                                "lng": {"type": "number"},
+                            },
+                            "required": ["label"],
+                        },
+                        "description": (
+                            "Specific places where the user wants to spend a night, in travel order "
+                            "(e.g. [{'label': 'Frankfurt (Oder)'}]). Each one ends a travel day and the "
+                            "planner looks for a campsite near it. Leave empty if the user only said "
+                            "'one night on the way' without a place — then just set num_days."
                         ),
                     },
                     "notes": {
@@ -948,7 +1002,7 @@ OPENAI_TOOL_DEFINITIONS = [
                     },
                     "num_days": {
                         "type": "integer",
-                        "description": "Override number of days (optional).",
+                        "description": "Override number of trip days = nights + 1 (optional).",
                     },
                     "start_date": {
                         "type": "string",
