@@ -264,3 +264,19 @@ def test_modify_route_gets_the_conversation_trip_parameters(monkeypatch):
     assert args["destination"]["label"] == "Paris" and args["num_days"] == 4
     assert args["start_date"] == "2026-11-19" and args["round_trip"] is False
     assert args["overnight_preferences"] == [{"day_number": 2, "setting": "near a lake"}]
+
+
+def test_anonymous_chat_is_not_stored_with_an_unsaved_trip(monkeypatch):
+    """Anonymous trips aren't in `trips`: storing their messages hit the trip_id foreign key."""
+    stored = []
+    final = MagicMock(tool_calls=None, content="Hello!")
+    client = MagicMock()
+    client.chat.completions.create.return_value = _fake_completion(final)
+    monkeypatch.setattr(chat_handler, "_store_message", lambda *a, **k: stored.append(a))
+    monkeypatch.setattr(chat_handler, "log_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(chat_handler, "log_chat_turn", lambda *a, **k: None)
+    session = {"client": client, "tools": [], "user_id": "anon", "trip_id": None,
+               "history": [{"role": "system", "content": "P"}], "lang": "en",
+               "active_trip_id": "unsaved-anon-trip"}
+    chat_handler.send_message(session, "hi")
+    assert stored == []

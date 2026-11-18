@@ -109,7 +109,7 @@ def send_message(session, user_message, trip_id=None, user_location=None):
     user_id = _real_user_id(session)
 
     # Store user message in DB
-    if user_id or effective_trip_id:
+    if user_id or _stored_trip(effective_trip_id):
         _store_message(user_id, effective_trip_id, "user", user_message)
 
     # Append user message to history
@@ -440,7 +440,7 @@ def _process_response(session, response, trip_id):
 
         user_id = _real_user_id(session)
         effective_trip_id = trip_id or session.get("trip_id") or session.get("active_trip_id")
-        if user_id or effective_trip_id:
+        if user_id or _stored_trip(effective_trip_id):
             _store_message(user_id, effective_trip_id, "assistant", response_text)
         # Persist running slot_state on the session for the next turn.
         session["slot_state"] = slot_state
@@ -574,7 +574,7 @@ def _process_response(session, response, trip_id):
         # Store assistant response with tool calls
         user_id = _real_user_id(session)
         effective_trip_id = trip_id or session.get("trip_id") or session.get("active_trip_id")
-        if user_id or effective_trip_id:
+        if user_id or _stored_trip(effective_trip_id):
             _store_message(
                 user_id, effective_trip_id, "assistant", final_text,
                 tool_calls=tool_calls,
@@ -663,6 +663,20 @@ def load_chat_history(user_id=None, trip_id=None):
     except Exception as e:
         print(f"  ⚠️  Failed to load chat history: {e}")
         return []
+
+
+def _stored_trip(trip_id):
+    """True if the trip is saved in `trips` (anonymous trips are not, and storing a
+    chat message that points at one breaks the trip_id foreign key)."""
+    if not trip_id:
+        return False
+    try:
+        with get_engine().connect() as conn:
+            return conn.execute(
+                text("SELECT 1 FROM trips WHERE id = :id"), {"id": trip_id}
+            ).first() is not None
+    except Exception:
+        return False
 
 
 def _store_message(arg1, arg2, arg3, arg4=None, tool_calls=None):

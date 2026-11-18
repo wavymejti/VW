@@ -5,7 +5,8 @@ from navigation.chat_handler import send_message, _process_response, _store_mess
 
 class TestChatHandlerExtended:
     @patch("navigation.chat_handler._store_message")
-    def test_send_message_api_down(self, mock_store):
+    @patch("navigation.chat_handler._stored_trip", return_value=True)
+    def test_send_message_api_down(self, mock_stored_trip, mock_store):
         session = create_chat_session(trip_id="test-trip")
         
         mock_client = MagicMock()
