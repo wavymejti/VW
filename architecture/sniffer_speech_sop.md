@@ -47,6 +47,8 @@ window.snifferAVW (AVW module) ─► POST /tts/v1/synthesize (Flask proxy) ─�
 - **Language**: Sniffer always speaks **English**, also when the UI is Polish or German (then he
   reads an English translation of the reply). The chat text stays in the UI language.
 - **No WebGL / model fails to load**: a still image (`sniffer_fallback.webp`) is shown instead.
+- **Captions**: under Sniffer the window shows the whole line he is saying; the sentence being
+  spoken is highlighted and scrolled into view (follows the audio via speech markers).
 - **TTS down**: the chat still works; Sniffer only moves (warning in the console).
 
 ## 4. What Sniffer says (`tools/sniffer_line.py`)
