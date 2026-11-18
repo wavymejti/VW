@@ -31,6 +31,8 @@ from navigation.dispatcher import (
     OPENAI_TOOL_DEFINITIONS,
 )
 from tools.interaction_logger import log_interaction
+from tools.chat_log import log_chat_turn
+import time
 from tools.user_memory import (
     get_relevant_user_memories,
     format_memories_for_prompt,
@@ -41,6 +43,12 @@ from tools.location_service import (
     sanitize_coordinates,
 )
 
+
+
+def _real_user_id(session):
+    """The logged-in user's id, or None for anonymous sessions (stored as "anon")."""
+    uid = (session or {}).get("user_id")
+    return None if not uid or uid == "anon" else uid
 
 
 def create_chat_session(user_id=None, trip_id=None, lang="pl"):
@@ -96,8 +104,9 @@ def send_message(session, user_message, trip_id=None, user_location=None):
     Returns:
         dict: Response with assistant text and any tool results.
     """
+    started = time.monotonic()
     effective_trip_id = trip_id or session.get("trip_id") or session.get("active_trip_id")
-    user_id = session.get("user_id")
+    user_id = _real_user_id(session)
 
     # Store user message in DB
     if user_id or effective_trip_id:
@@ -154,12 +163,15 @@ def send_message(session, user_message, trip_id=None, user_location=None):
             # Insert a system reminder right after the main system prompt
             trip_context = (
                 f"[SYSTEM NOTE] Active trip ID: {active_trip_id}. "
-                "A route is already planned. The user may now request modifications. "
-                "Use modify_route or add_attraction tools — do NOT re-ask for trip parameters."
+                "A route is already planned. Changes to THIS trip (via places, exclusions, "
+                "more or fewer days, overnight stops) → modify_route / add_waypoint / "
+                "add_attraction, without re-asking known parameters. A trip with a different "
+                "origin or destination is a NEW trip → briefly confirm, then call plan_route "
+                "with all its parameters (overnight_stops / num_days as the user said)."
             )
             system_injections.append({"role": "system", "content": trip_context})
 
-        user_id = session.get("user_id")
+        user_id = _real_user_id(session)
         if user_id:
             try:
                 engine = get_engine()
@@ -195,6 +207,9 @@ def send_message(session, user_message, trip_id=None, user_location=None):
                 loc_note = format_location_for_prompt(normalized_loc, lang=lang)
                 system_injections.append({"role": "system", "content": loc_note})
 
+        # The follow-up call after tool use needs the same notes (language etc.).
+        session["system_injections"] = system_injections
+
         if system_injections:
             messages_to_send = [
                 messages_to_send[0],
@@ -221,6 +236,11 @@ def send_message(session, user_message, trip_id=None, user_location=None):
         )
 
         log_interaction(user_message, result.get("text", ""))
+        log_chat_turn(
+            session.get("user_id"), session.get("lang"), MODEL_NAME, user_message,
+            result, time.monotonic() - started,
+            active_trip_id=session.get("active_trip_id"),
+        )
 
         # Non-blocking extraction of newly stated durable preferences
         if user_id:
@@ -246,6 +266,12 @@ def send_message(session, user_message, trip_id=None, user_location=None):
             error_msg = "Przepraszam, wystąpił chwilowy problem z połączeniem lub przetworzeniem trasy. Spróbuj powtórzyć zapytanie."
 
         log_interaction(user_message, error_msg)
+        log_chat_turn(
+            (session or {}).get("user_id"), lang, MODEL_NAME, user_message,
+            {"status": "error", "text": error_msg}, time.monotonic() - started,
+            active_trip_id=(session or {}).get("active_trip_id"),
+            error=f"{type(e).__name__}: {e}",
+        )
 
         return {
             "status": "error",
@@ -402,12 +428,12 @@ def _process_response(session, response, trip_id):
     if not message.tool_calls:
         # Text-only response — parse and strip slot_state block
         raw_text = message.content
-        response_text, slot_state = _parse_slot_state(raw_text)
+        response_text, slot_state = _parse_slot_state(raw_text, session)
 
         # Store clean text (without slot_state block) in history
         session["history"].append({"role": "assistant", "content": response_text})
 
-        user_id = session.get("user_id")
+        user_id = _real_user_id(session)
         effective_trip_id = trip_id or session.get("trip_id") or session.get("active_trip_id")
         if user_id or effective_trip_id:
             _store_message(user_id, effective_trip_id, "assistant", response_text)
@@ -451,8 +477,8 @@ def _process_response(session, response, trip_id):
         # Inject user_id into plan_route / modify_route so the trip
         # gets persisted in the DB (AI doesn't know the logged-in user).
         if fn_name in ("plan_route", "modify_route", "add_waypoint"):
-            if "user_id" not in fn_args and session.get("user_id"):
-                fn_args["user_id"] = session["user_id"]
+            if "user_id" not in fn_args and _real_user_id(session):
+                fn_args["user_id"] = _real_user_id(session)
 
         # Dispatch to the appropriate tool
         tool_result = dispatch(fn_name, fn_args)
@@ -482,12 +508,22 @@ def _process_response(session, response, trip_id):
         if fn_name == "plan_route" and tool_result.get("status") == "success":
             session["history"].append({
                 "role": "system",
-                "content": "[SYSTEM NOTE] Route planned successfully. Krótko zapytaj użytkownika czy chce, żebym wyszukał mu 3-5 atrakcji po drodze, pytając najpierw o jego preferencje (np. zamki, muzea, natura)."
+                "content": (
+                    "[SYSTEM NOTE] Route planned successfully. Describe it only from the tool result "
+                    "(days, overnight campsites). If the result has `warnings`, tell the user about "
+                    "them plainly. Then briefly ask whether to find 3-5 attractions on the way, "
+                    "asking first about their interests (e.g. castles, museums, nature). "
+                    "Reply in the user's interface language."
+                )
             })
 
     # Get final text response from OpenAI
     try:
-        sanitized_history = _sanitize_messages_for_openai(session["history"])
+        history = session["history"]
+        injections = session.get("system_injections") or []
+        if injections and history:
+            history = [history[0], *injections, *history[1:]]
+        sanitized_history = _sanitize_messages_for_openai(history)
         final_kwargs = dict(
             model=MODEL_NAME,
             messages=sanitized_history,
@@ -502,13 +538,15 @@ def _process_response(session, response, trip_id):
         if not final_text:
             if lang == 'de':
                 final_text = "Hier ist deine geplante Route! Alle Wegpunkte und empfohlenen Campingplätze wurden auf der Karte hinzugefügt. Du kannst die Details auf der Karte einsehen."
+            elif lang == 'en':
+                final_text = "Here's your planned route! All stops and recommended campsites are on the map — check the day cards for details."
             else:
                 final_text = "Oto Twoja zaplanowana trasa! Wszystkie punkty trasy oraz rekomendowane kempingi zostały pomyślnie wyznaczone. Przejdź do zakładki Mapa lub sprawdź kartę podsumowania poniżej."
 
         session["history"].append({"role": "assistant", "content": final_text})
 
         # Store assistant response with tool calls
-        user_id = session.get("user_id")
+        user_id = _real_user_id(session)
         effective_trip_id = trip_id or session.get("trip_id") or session.get("active_trip_id")
         if user_id or effective_trip_id:
             _store_message(
