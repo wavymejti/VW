@@ -189,6 +189,7 @@ def plan_route(
     round_trip=False,
     waypoints=None,
     overnight_stops=None,
+    max_daily_km=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -208,6 +209,8 @@ def plan_route(
         title (str): Trip title.
         overnight_stops (list): Optional places to sleep, in travel order
             (dicts with label and optional lat/lng, or plain names).
+        max_daily_km (float): Optional daily distance limit; days are added when
+            the route doesn't fit and days are split by distance instead of time.
 
     Returns:
         dict: Complete trip plan with daily schedules, plus `warnings`
@@ -258,7 +261,20 @@ def plan_route(
     total_distance_km = total_route["distance_km"]
     legs = total_route.get("legs", [])
 
-    # Validate feasibility
+    try:
+        max_daily_km = float(max_daily_km) if max_daily_km else None
+    except (TypeError, ValueError):
+        max_daily_km = None
+    if max_daily_km and max_daily_km > 0:
+        needed = math.ceil(total_distance_km / max_daily_km)
+        if needed > num_days:
+            warnings.append(
+                f"num_days raised from {num_days} to {needed} to keep days under "
+                f"{max_daily_km:.0f} km ({total_distance_km:.0f} km in total)."
+            )
+            num_days = needed
+
+    # Validate feasibility (after any day-count adjustment)
     if total_duration_hours > num_days * max_daily_drive_hours:
         return {
             "status": "error",
@@ -270,11 +286,12 @@ def plan_route(
             ),
         }
 
-    # Step 2: Divide route into daily segments using actual steps
+    # Step 2: Divide route into equal daily segments (time, or km with a km limit)
     total_duration_s = total_duration_hours * 3600
     route_end = origin if round_trip else destination
     intermediate_points = _interpolate_stops_along_route(
-        legs, total_duration_s, num_days, origin, route_end
+        legs, total_duration_s, num_days, origin, route_end,
+        metric="distance" if max_daily_km else "duration",
     )
     intermediate_points = _apply_overnight_stops(intermediate_points, requested_stops)
 
@@ -480,6 +497,14 @@ def plan_route(
 
         daily_schedules.append(schedule)
 
+    if max_daily_km:
+        for d in daily_schedules:
+            if d["driving_km"] > max_daily_km * 1.1:
+                warnings.append(
+                    f"Day {d['day_number']}: {d['driving_km']:.0f} km, above the "
+                    f"{max_daily_km:.0f} km limit (campsite detour or a long stretch)."
+                )
+
     # Step 4: Build trip object
     trip = {
         "id": str(uuid.uuid4()),
@@ -593,61 +618,113 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
         }
 
 
-def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, destination):
+def _point_along_polyline(points, fraction):
+    """Point at `fraction` (0..1) of a polyline's length (points: [{lat, lng}, ...])."""
+    if not points:
+        return None
+    if len(points) == 1 or fraction <= 0:
+        return dict(points[0])
+    seg_lengths = [
+        _haversine_distance(a["lat"], a["lng"], b["lat"], b["lng"])
+        for a, b in zip(points, points[1:])
+    ]
+    total = sum(seg_lengths)
+    if total <= 0 or fraction >= 1:
+        return dict(points[-1])
+    target = total * fraction
+    walked = 0.0
+    for (a, b), seg in zip(zip(points, points[1:]), seg_lengths):
+        if walked + seg >= target and seg > 0:
+            f = (target - walked) / seg
+            return {
+                "lat": a["lat"] + (b["lat"] - a["lat"]) * f,
+                "lng": a["lng"] + (b["lng"] - a["lng"]) * f,
+            }
+        walked += seg
+    return dict(points[-1])
+
+
+def _step_geometry(step, fallback_start):
+    """Decoded polyline of a Directions step, or a straight start→end line."""
+    encoded = (step.get("polyline") or {}).get("points")
+    if encoded:
+        try:
+            from googlemaps.convert import decode_polyline
+            pts = decode_polyline(encoded)
+            if pts:
+                return pts
+        except Exception:
+            pass
+    start = step.get("start_location") or fallback_start
+    end = step["end_location"]
+    return [{"lat": start["lat"], "lng": start["lng"]}, {"lat": end["lat"], "lng": end["lng"]}]
+
+
+def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, destination,
+                                   metric="duration"):
     """
-    Find intermediate stopping points by accumulating driving time 
-    along actual route steps.
+    Find the num_days - 1 day-end points by cutting the route into equal parts.
+
+    A cut can fall inside a long Directions step (a motorway step can last hours):
+    the point is then placed along that step's polyline, so one step can hold
+    several cuts and days come out even.
 
     Args:
         legs (list): Route legs from Google Maps Directions API.
-        total_duration_s (int): Total route duration in seconds.
+        total_duration_s (float): Total route duration in seconds (metric="duration").
         num_days (int): Number of travel days.
         origin (dict): Origin coordinates.
         destination (dict): Destination coordinates.
+        metric (str): "duration" (equal driving time) or "distance" (equal km).
 
     Returns:
-        list: List of intermediate point dicts (num_days - 1 points).
+        list: Intermediate point dicts (num_days - 1 points).
     """
     if num_days <= 1:
         return []
 
-    target_interval = total_duration_s / num_days
+    steps = [step for leg in legs for step in leg.get("steps", [])]
+    key = "distance" if metric == "distance" else "duration"
+    total = sum(st.get(key, {}).get("value", 0) for st in steps)
+    if metric != "distance" and not total:
+        total = total_duration_s
+    interval = total / num_days if total else 0
+
     points = []
-    current_time = 0
-    current_target = target_interval
-    
-    for leg in legs:
-        for step in leg.get("steps", []):
-            step_duration = step["duration"]["value"]
-            current_time += step_duration
-            
-            if current_time >= current_target:
-                # We reached or passed the target time for this day.
+    elapsed = 0.0
+    prev_end = origin
+    if interval > 0:
+        for step in steps:
+            value = step.get(key, {}).get("value", 0)
+            geometry = None
+            while len(points) < num_days - 1:
+                target = interval * (len(points) + 1)
+                if value <= 0 or target > elapsed + value + 1e-6:
+                    break
+                if geometry is None:
+                    geometry = _step_geometry(step, prev_end)
+                pt = _point_along_polyline(geometry, (target - elapsed) / value)
                 points.append({
                     "label": f"Waypoint {len(points) + 1}",
-                    "lat": step["end_location"]["lat"],
-                    "lng": step["end_location"]["lng"],
+                    "lat": pt["lat"],
+                    "lng": pt["lng"],
                 })
-                current_target += target_interval
-                
-                if len(points) == num_days - 1:
-                    return points
-                    
-    # Fallback if we didn't get enough points
+            elapsed += value
+            prev_end = step.get("end_location", prev_end)
+            if len(points) == num_days - 1:
+                return points
+
+    # Fallback if the steps were missing: straight-line interpolation
     lat1, lng1 = origin["lat"], origin["lng"]
     lat2, lng2 = destination["lat"], destination["lng"]
-    
     while len(points) < num_days - 1:
         idx = len(points) + 1
         fraction = idx / num_days
-        interp_lat = lat1 + (lat2 - lat1) * fraction
-        interp_lng = lng1 + (lng2 - lng1) * fraction
         points.append({
             "label": f"Fallback Waypoint {idx}",
-            "lat": interp_lat,
-            "lng": interp_lng
+            "lat": lat1 + (lat2 - lat1) * fraction,
+            "lng": lng1 + (lng2 - lng1) * fraction,
         })
-        
     return points
 
 

@@ -134,7 +134,27 @@ def _handle_modify_route(arguments):
         exclude_places = arguments.get("exclude_places", []) or []
         preferred_overnight = arguments.get("preferred_overnight")
         overnight_stops = arguments.get("overnight_stops")
+        max_daily_km = arguments.get("max_daily_km")
+        max_daily_drive_hours = arguments.get("max_daily_drive_hours")
         notes = arguments.get("notes", "")
+
+        # The planner can't read free-text notes: without a concrete change it would
+        # re-plan the same route and store a duplicate trip.
+        change_keys = (
+            "waypoints", "via_places", "include_places", "exclude_places", "round_trip",
+            "overnight_stops", "origin", "destination", "num_days", "start_date",
+            "max_daily_km", "max_daily_drive_hours", "preferred_amenities",
+        )
+        if not any(arguments.get(k) not in (None, "", []) for k in change_keys):
+            return {
+                "status": "error",
+                "message": (
+                    "Nothing to change: the planner does not read `notes` or "
+                    "`preferred_overnight`. Pass the change as parameters — e.g. "
+                    "max_daily_km for a daily distance limit, num_days for more/fewer "
+                    "days, overnight_stops for where to sleep, waypoints / exclude_places."
+                ),
+            }
 
         # Fetch original trip parameters from DB if trip_id provided
         origin = arguments.get("origin")
@@ -310,6 +330,8 @@ def _handle_modify_route(arguments):
             round_trip=bool(round_trip),
             waypoints=all_waypoints,
             overnight_stops=overnight_stops,
+            max_daily_km=max_daily_km,
+            **({"max_daily_drive_hours": max_daily_drive_hours} if max_daily_drive_hours else {}),
         )
 
         # Tag result as a route modification
@@ -892,6 +914,14 @@ OPENAI_TOOL_DEFINITIONS = [
                         "items": {"type": "string"},
                         "description": "Preferred camping amenities.",
                     },
+                    "max_daily_km": {
+                        "type": "number",
+                        "description": (
+                            "Maximum driving distance per day in km, when the user gives one "
+                            "(e.g. 'max 500 km a day', 'about 400 km per day'). The planner adds "
+                            "days if needed and splits the route into equal-distance days."
+                        ),
+                    },
                     "budget_per_night_eur": {
                         "type": "number",
                         "description": "Maximum nightly budget in EUR.",
@@ -999,6 +1029,14 @@ OPENAI_TOOL_DEFINITIONS = [
                             "lng": {"type": "number"},
                         },
                         "description": "Override destination (optional).",
+                    },
+                    "max_daily_km": {
+                        "type": "number",
+                        "description": (
+                            "Maximum driving distance per day in km, when the user gives one "
+                            "(e.g. 'max 500 km a day', 'about 400 km per day'). The planner adds "
+                            "days if needed and splits the route into equal-distance days."
+                        ),
                     },
                     "num_days": {
                         "type": "integer",

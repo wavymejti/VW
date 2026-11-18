@@ -13,7 +13,10 @@ import os
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+# VW_CHAT_LOG_DIR overrides the folder (tests point it at a temp dir).
+LOG_DIR = os.getenv("VW_CHAT_LOG_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+)
 LOG_PATH = os.path.join(LOG_DIR, "chat.jsonl")
 
 _logger = None
