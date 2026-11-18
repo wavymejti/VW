@@ -578,37 +578,62 @@ def api_get_trip(trip_id):
     return jsonify({"status": "success", "trip_data": trip_data})
 
 
-def get_chat_session(user_id=None, trip_id=None, lang="pl"):
+_MAX_CHAT_SESSIONS = 200
+
+
+def get_chat_session(user_id=None, trip_id=None, lang="pl", conversation_id=None):
     """
-    Get or create a per-user chat session held in SERVER memory
-    (`_CHAT_SESSIONS`). The conversation history + slot_state live here
-    (never in the Flask cookie), so multi-turn chat works reliably.
+    Get or create a chat session held in SERVER memory (`_CHAT_SESSIONS`).
+    The conversation history + slot_state live here (never in the Flask cookie).
+
+    With `conversation_id` (the frontend makes a new one on every page load) each
+    page load is its own fresh chat: no history from the DB and no active trip
+    carried over from the cookie. Without it (older clients) one session per user
+    is kept, as before.
 
     Returns:
         dict: Active chat session (with live client/tools attached).
     """
-    if not user_id:
-        # Anonymous/MVP usage: fall back to a single transient key.
-        user_id = "anon"
-
-    print(f"[get_chat_session] user_id={user_id!r} lang={lang!r} known={user_id in _CHAT_SESSIONS} keys={list(_CHAT_SESSIONS.keys())}", flush=True)
-
-    if user_id not in _CHAT_SESSIONS:
-        sess = create_chat_session(trip_id=trip_id, lang=lang)
-        sess["user_id"] = user_id
-        sess["slot_state"] = None
-        sess["active_trip_id"] = session.get("active_trip_id")
-        _CHAT_SESSIONS[user_id] = sess
+    uid = user_id or "anon"
+    if conversation_id:
+        key = f"{uid}:{conversation_id}"
+    elif user_id:
+        key = uid
     else:
-        sess = _CHAT_SESSIONS[user_id]
-        sess["user_id"] = user_id
-        sess["lang"] = lang or sess.get("lang", "pl")
-        if trip_id:
-            sess["trip_id"] = trip_id
-        # Re-sync the active_trip_id from the Flask session if present.
-        if session.get("active_trip_id"):
-            sess["active_trip_id"] = session["active_trip_id"]
+        # Anonymous client without a conversation id (older frontend): one shared
+        # session, as before. The current frontend always sends a conversation id.
+        key = "anon"
 
+    known = key in _CHAT_SESSIONS
+    print(f"[get_chat_session] key={key!r} lang={lang!r} known={known} sessions={len(_CHAT_SESSIONS)}", flush=True)
+
+    if not known:
+        fresh = bool(conversation_id)
+        sess = create_chat_session(
+            user_id=user_id,
+            trip_id=None if fresh else trip_id,
+            lang=lang,
+            load_history=not fresh,
+        )
+        sess["user_id"] = uid
+        sess["slot_state"] = None
+        sess["active_trip_id"] = None if fresh else session.get("active_trip_id")
+        sess["conversation_id"] = conversation_id
+        _CHAT_SESSIONS[key] = sess
+        # Drop the oldest sessions so page reloads don't grow memory forever.
+        while len(_CHAT_SESSIONS) > _MAX_CHAT_SESSIONS:
+            _CHAT_SESSIONS.pop(next(iter(_CHAT_SESSIONS)))
+    else:
+        sess = _CHAT_SESSIONS[key]
+        sess["lang"] = lang or sess.get("lang", "pl")
+        if not conversation_id:
+            if trip_id:
+                sess["trip_id"] = trip_id
+            # Re-sync the active_trip_id from the Flask session if present.
+            if session.get("active_trip_id"):
+                sess["active_trip_id"] = session["active_trip_id"]
+
+    sess["_key"] = key
     return sess
 
 
@@ -748,9 +773,14 @@ def api_chat():
     # Pass the logged-in user_id (and active trip, if known) into a
     # per-user chat session so messages persist and trips are linked.
     user_id = session.get("user_id")
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
     active_trip_id = session.get("active_trip_id")
-    print(f"[api_chat] user_id={user_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r} loc={user_location!r}")
-    chat = get_chat_session(user_id=user_id, trip_id=active_trip_id, lang=lang)
+    chat = get_chat_session(user_id=user_id, trip_id=active_trip_id, lang=lang,
+                            conversation_id=conversation_id)
+    if conversation_id:
+        # A fresh conversation only knows the trips planned in it.
+        active_trip_id = chat.get("active_trip_id")
+    print(f"[api_chat] user_id={user_id!r} conv={conversation_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r} loc={user_location!r}")
     chat["lang"] = lang
     result = send_message(
         chat,
@@ -763,11 +793,11 @@ def api_chat():
     # (never the cookie) so the next request can merge with it and the
     # route stays in context. Also mirror active_trip_id into the Flask
     # session for cross-endpoint use (e.g. /api/trip lookups).
-    uid = user_id or "anon"
-    if uid in _CHAT_SESSIONS:
-        _CHAT_SESSIONS[uid]["slot_state"] = result.get("slot_state")
+    key = chat.get("_key")
+    if key in _CHAT_SESSIONS:
+        _CHAT_SESSIONS[key]["slot_state"] = result.get("slot_state")
         if chat.get("active_trip_id"):
-            _CHAT_SESSIONS[uid]["active_trip_id"] = chat["active_trip_id"]
+            _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
             session["active_trip_id"] = chat["active_trip_id"]
 
     # What the 3D Sniffer reads aloud: the reply itself in English (+ mood); None if unavailable.

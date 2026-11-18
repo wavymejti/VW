@@ -45,6 +45,12 @@ function openSingleInfoWindow(infoWindow, marker) {
 }
 
 const API_BASE = '';
+
+// A new chat on every page load: the server keeps a separate session per id,
+// so a reload starts from scratch (no old history, no active trip).
+const CHAT_CONVERSATION_ID = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const CAMPING_PLACEHOLDER_URL = '/static/assets/camping_placeholder.svg';
 const ATTRACTION_PLACEHOLDER_URL = '/static/assets/attraction_placeholder.svg';
 window.CAMPING_PLACEHOLDER_URL = CAMPING_PLACEHOLDER_URL;
@@ -1797,7 +1803,7 @@ async function sendMessage(text) {
     if (mapSendBtn) mapSendBtn.disabled = true;
 
     showTyping(true);
-    const chatPayload = { message: text };
+    const chatPayload = { message: text, conversation_id: CHAT_CONVERSATION_ID };
     if (state.locationEnabled && state.userLocation) {
         chatPayload.user_location = state.userLocation;
     }

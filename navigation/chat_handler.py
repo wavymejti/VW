@@ -51,7 +51,7 @@ def _real_user_id(session):
     return None if not uid or uid == "anon" else uid
 
 
-def create_chat_session(user_id=None, trip_id=None, lang="pl"):
+def create_chat_session(user_id=None, trip_id=None, lang="pl", load_history=True):
     """
     Create a new chat session with OpenAI, configured with
     VW trip planning tools and restored chat history.
@@ -73,7 +73,7 @@ def create_chat_session(user_id=None, trip_id=None, lang="pl"):
     ]
 
     # Restore saved chat messages from DB if available
-    saved_history = load_chat_history(user_id=user_id, trip_id=trip_id)
+    saved_history = load_chat_history(user_id=user_id, trip_id=trip_id) if load_history else []
     if saved_history:
         history.extend(saved_history)
 
