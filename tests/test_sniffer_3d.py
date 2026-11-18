@@ -136,3 +136,20 @@ def test_places_basic_requests_no_paid_fields(monkeypatch):
     for paid in ("photos", "rating", "userRatingCount", "PhoneNumber", "websiteUri", "OpeningHours", "reviews"):
         assert paid not in sent["mask"]
     assert sent["body"]["includedTypes"] == ["tourist_attraction"]  # legacy-only type mapped
+
+
+def test_paid_photo_urls_are_stripped_from_json_unless_full(monkeypatch):
+    import tools.maps_client as mc
+    import tools.server as server
+
+    photo = "https://maps.googleapis.com/maps/api/place/photo?maxwidth=600&photoreference=X&key=K"
+    payload = {"a": {"photo_url": photo, "name": "Park"}, "photos": [photo, "/static/x.png"]}
+
+    def run():
+        with server.app.test_request_context("/api/attractions/t1"):
+            return server._strip_paid_google_photos(server.jsonify(payload)).get_json()
+
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "basic")
+    assert run() == {"a": {"photo_url": None, "name": "Park"}, "photos": ["/static/x.png"]}
+    monkeypatch.setattr(mc, "GOOGLE_MAPS_MODE", "full")
+    assert run()["a"]["photo_url"] == photo

@@ -2146,6 +2146,9 @@ def _download_image(url):
     """Download an image from a URL and save it to a temporary file."""
     if not url or not url.startswith("http"):
         return None
+    from tools.maps_client import maps_allows, is_paid_photo_url
+    if is_paid_photo_url(url) and not maps_allows("places_rich"):
+        return None  # billed Google Place Photo; off unless GOOGLE_MAPS_MODE=full
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:

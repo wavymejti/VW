@@ -30,7 +30,7 @@ from tools.plan_route import plan_route
 from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
 from tools.generate_summary import generate_summary
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message, place_details_basic
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message, place_details_basic, strip_paid_photos
 from tools.openai_client import get_client
 from tools.sniffer_line import make_sniffer_line
 from tools.suggest_attractions import suggest_attractions
@@ -67,6 +67,25 @@ app = Flask(
     static_url_path="/static",
 )
 CORS(app)
+
+
+@app.after_request
+def _strip_paid_google_photos(response):
+    """Unless GOOGLE_MAPS_MODE=full, remove billed Place Photo URLs from every JSON response
+    (they may come from caches filled while photos were on). See tools/maps_client.py."""
+    if maps_allows("places_rich") or not response.is_json or response.direct_passthrough:
+        return response
+    raw = response.get_data(as_text=True)
+    if "/place/photo" not in raw and "/photos/" not in raw:
+        return response
+    try:
+        data, removed = strip_paid_photos(json.loads(raw))
+    except ValueError:
+        return response
+    if removed:
+        response.set_data(json.dumps(data, ensure_ascii=False))
+        print(f"[maps] stripped {removed} paid Google photo URL(s) from {request.path}")
+    return response
 
 # In-memory per-user chat sessions, keyed by user_id.
 # We deliberately keep the full conversation history HERE (server memory)

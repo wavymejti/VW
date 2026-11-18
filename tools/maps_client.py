@@ -49,6 +49,49 @@ def disabled_message():
     return MAPS_DISABLED_MESSAGE.format(mode=GOOGLE_MAPS_MODE)
 
 
+# ── Paid Google photo URLs ───────────────────────────────────────────────────
+# A Place Photo URL is billed every time a browser loads it. Data cached while photos were on
+# (trip attraction caches, saved waypoints, chat tool results) still contains such URLs, so in
+# every mode except "full" the server strips them from all JSON it sends.
+import re as _re
+
+_PAID_PHOTO_URL = _re.compile(
+    r"maps\.googleapis\.com/maps/api/place/photo|places\.googleapis\.com/v1/places/[^\s\"']+/photos/"
+)
+
+
+def is_paid_photo_url(value):
+    return isinstance(value, str) and bool(_PAID_PHOTO_URL.search(value))
+
+
+def strip_paid_photos(obj):
+    """Returns (clean_obj, removed_count): paid photo URLs -> None, dropped from lists."""
+    removed = 0
+
+    def walk(o):
+        nonlocal removed
+        if isinstance(o, dict):
+            out = {}
+            for k, v in o.items():
+                if is_paid_photo_url(v):
+                    removed += 1
+                    out[k] = None
+                else:
+                    out[k] = walk(v)
+            return out
+        if isinstance(o, list):
+            out = []
+            for v in o:
+                if is_paid_photo_url(v):
+                    removed += 1
+                    continue
+                out.append(walk(v))
+            return out
+        return o
+
+    return walk(obj), removed
+
+
 # ── Places API (New), basic fields only ─────────────────────────────────────
 # Only "Pro" fields: no photos, rating, userRatingCount, phone, website or opening hours, which
 # are billed as Enterprise / Atmosphere / Contact. Results are returned in the legacy shape
