@@ -10,6 +10,7 @@ See: architecture/camping_search_sop.md
 
 import os
 import sys
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import text
 
@@ -189,6 +190,11 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
                 camping = dict(zip(columns, row))
                 # Convert UUID to string for JSON
                 camping["id"] = str(camping["id"])
+                # NUMERIC columns come back as Decimal, which json.dumps can't write
+                # (it broke saving every trip that used a campsite from the DB).
+                for key, value in camping.items():
+                    if isinstance(value, Decimal):
+                        camping[key] = float(value)
                 # Round distance for readability
                 camping["distance_km"] = round(
                     camping["distance_m"] / 1000, 1

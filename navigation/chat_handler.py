@@ -552,7 +552,8 @@ def _process_response(session, response, trip_id):
         print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
 
         # Inject active_trip_id into mutation tool calls if not provided
-        if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint"):
+        if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint",
+                       "set_overnight", "get_trip_summary"):
             if "trip_id" not in fn_args and session.get("active_trip_id"):
                 fn_args["trip_id"] = session["active_trip_id"]
 
@@ -609,8 +610,8 @@ def _process_response(session, response, trip_id):
             }
 
         # Remember a compact view of the trip for get_trip_summary.
-        if fn_name in ("plan_route", "modify_route", "add_waypoint") and tool_result.get("status") == "success" \
-                and tool_result.get("daily_schedules"):
+        if fn_name in ("plan_route", "modify_route", "add_waypoint", "set_overnight") \
+                and tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
             session["last_trip_summary"] = _compact_trip(tool_result)
             session["last_trip_rows"] = [
                 (d.get("day_number"), d.get("waypoints") or [], d.get("route_polyline"))

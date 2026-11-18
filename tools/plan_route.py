@@ -1157,6 +1157,14 @@ def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, des
     return points
 
 
+def _json_default(value):
+    """json.dumps fallback: Decimal (NUMERIC columns) -> float, anything else -> str."""
+    from decimal import Decimal
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
+
+
 def _persist_trip(trip, daily_schedules):
     """
     Save trip and daily schedules to the database.
@@ -1231,7 +1239,7 @@ def _persist_trip(trip, daily_schedules):
                         "schedule_date": schedule["date"],
                         "driving_hours": schedule["driving_hours"],
                         "driving_km": schedule["driving_km"],
-                        "waypoints": json.dumps(schedule["waypoints"]),
+                        "waypoints": json.dumps(schedule["waypoints"], default=_json_default),
                         "camping_id": camping_id,
                         "route_polyline": schedule.get("route_polyline"),
                     },

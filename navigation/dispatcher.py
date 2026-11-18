@@ -93,6 +93,8 @@ def dispatch(function_name, arguments):
         return _handle_add_attraction(arguments)
     if function_name == "add_waypoint":
         return _handle_add_waypoint(arguments)
+    if function_name == "set_overnight":
+        return _handle_set_overnight(arguments)
     if function_name == "edit_waypoint":
         return _handle_edit_waypoint(arguments)
 
@@ -184,6 +186,155 @@ MODIFY_CHANGE_KEYS = (
 
 def has_concrete_change(arguments):
     return any((arguments or {}).get(k) not in (None, "", []) for k in MODIFY_CHANGE_KEYS)
+
+
+def _handle_set_overnight(arguments):
+    """Chat tool: change the campsite of one night, leaving the rest of the trip as it is."""
+    from tools.trip_store import get_trip_data
+
+    trip_id = arguments.get("trip_id")
+    day_number = arguments.get("day_number")
+    camp = arguments.get("campsite") or {
+        k: arguments.get(k) for k in ("name", "lat", "lng", "place_id")}
+    try:
+        camp = {"name": camp.get("name") or camp.get("label") or "Campsite",
+                "lat": float(camp["lat"]), "lng": float(camp["lng"]),
+                "place_id": camp.get("place_id"), "id": camp.get("id")}
+        day_number = int(day_number)
+    except (TypeError, ValueError, KeyError):
+        return {"status": "error",
+                "message": "set_overnight needs trip_id, day_number and a campsite with name, lat and lng "
+                           "(take them from search_campings results or the day's overnight options)."}
+    if not trip_id or get_trip_data(trip_id) is None:
+        return {"status": "error",
+                "message": "This trip is not saved (the user may not be logged in). Use modify_route with "
+                           f"overnight_stops [{{'label': '{camp['name']}', 'lat': {camp['lat']}, "
+                           f"'lng': {camp['lng']}}}] instead."}
+    result = apply_campsite_change(trip_id, day_number, camp)
+    if result.get("status") != "success":
+        result.pop("http_status", None)
+        return result
+    data = get_trip_data(trip_id) or {}
+    return {
+        "status": "success",
+        "message": f"Night after day {result['day_number']} is now at {camp['name']}; the other nights are unchanged.",
+        "trip_id": trip_id,
+        "trip": data.get("trip"),
+        "daily_schedules": data.get("daily_schedules"),
+        "total_driving_km": data.get("total_driving_km"),
+        "total_driving_hours": data.get("total_driving_hours"),
+    }
+
+
+def apply_campsite_change(trip_id, day_number, camping):
+    """
+    Put a chosen campsite on one night of a stored trip, without re-planning it.
+
+    A stay day sleeps where the previous driving day ended, so that day is changed;
+    the stay days after it move with it and the next driving day starts there.
+    Shared by POST /api/select_camping (campsite modal) and the set_overnight chat tool.
+
+    Returns:
+        dict: {"status": "success", "day_number": n} or an error with "http_status".
+    """
+    from sqlalchemy import text
+    from tools.db import get_engine
+
+    def _is_stay(wps):
+        if isinstance(wps, str):
+            wps = json.loads(wps)
+        return bool(wps) and all(w.get("type") == "stay" for w in wps)
+
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            schedule_row = conn.execute(
+                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                {"tid": trip_id, "day": day_number}
+            ).fetchone()
+
+            if not schedule_row:
+                return {"status": "error", "message": "Day schedule not found (is the trip saved?)", "http_status": 404}
+
+            # A stay day sleeps where the previous driving day ended: change that day.
+            while _is_stay(schedule_row[1]) and int(day_number) > 1:
+                day_number = int(day_number) - 1
+                schedule_row = conn.execute(
+                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                    {"tid": trip_id, "day": day_number}
+                ).fetchone()
+                if not schedule_row:
+                    return {"status": "error", "message": "Day schedule not found (is the trip saved?)", "http_status": 404}
+
+            schedule_id = schedule_row[0]
+            waypoints = schedule_row[1] or []
+
+            if not waypoints:
+                return {"status": "error", "message": "No waypoints found for this day", "http_status": 400}
+
+            # Replace the last waypoint (which is the overnight camping or destination)
+            new_wp = {
+                "order": len(waypoints) - 1,
+                "type": "camping",
+                "label": camping.get("name", "Camping"),
+                "lat": camping.get("lat"),
+                "lng": camping.get("lng"),
+                "place_id": camping.get("place_id"),
+                "notes": "User selected camping"
+            }
+            waypoints[-1] = new_wp
+
+            # Update db and recalculate
+            update_done = _recalculate_day_route(conn, schedule_id, waypoints)
+            if not update_done:
+                conn.execute(
+                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
+                    {"wps": json.dumps(waypoints), "cid": camping.get("id"), "sid": str(schedule_id)}
+                )
+
+            # Stay days right after this day move to the new campsite too.
+            next_number = int(day_number) + 1
+            while True:
+                stay_row = conn.execute(
+                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                    {"tid": trip_id, "day": next_number}
+                ).fetchone()
+                if not stay_row or not _is_stay(stay_row[1]):
+                    break
+                stay_wps = stay_row[1] if not isinstance(stay_row[1], str) else json.loads(stay_row[1])
+                stay_wps = [{**stay_wps[0],
+                             "label": camping.get("name", "Camping"),
+                             "lat": camping.get("lat"), "lng": camping.get("lng"),
+                             "place_id": camping.get("place_id")}]
+                conn.execute(
+                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
+                    {"wps": json.dumps(stay_wps), "cid": camping.get("id"), "sid": str(stay_row[0])}
+                )
+                next_number += 1
+
+            # Update start location of the next driving day if it exists
+            next_day_row = conn.execute(
+                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                {"tid": trip_id, "day": next_number}
+            ).fetchone()
+            if next_day_row:
+                next_sid = next_day_row[0]
+                next_wps = next_day_row[1] or []
+                if isinstance(next_wps, str):
+                    next_wps = json.loads(next_wps)
+                if next_wps:
+                    next_wps[0] = {
+                        "order": 0,
+                        "type": "start",
+                        "label": camping.get("name", "Start"),
+                        "lat": camping.get("lat"),
+                        "lng": camping.get("lng")
+                    }
+                    _recalculate_day_route(conn, next_sid, next_wps)
+
+        return {"status": "success", "day_number": int(day_number)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "http_status": 500}
 
 
 def _handle_modify_route(arguments):
@@ -1090,6 +1241,42 @@ OPENAI_TOOL_DEFINITIONS = [
                 "required": ["origin", "destination", "num_days", "start_date"],
             },
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_overnight",
+            "description": (
+                "Change the campsite of ONE night without re-planning the trip — the other nights, "
+                "days and stops stay exactly as they are. Use it when the user wants to sleep "
+                "somewhere else on a given night (a free spot, a campsite they picked, one from "
+                "search_campings results or the day's overnight options). For a stay of several days "
+                "the whole stay moves to the new campsite. Prefer this over modify_route for "
+                "changing a night."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string", "description": "UUID of the active trip."},
+                    "day_number": {
+                        "type": "integer",
+                        "description": "The travel day whose night changes (1 = the night after day 1).",
+                    },
+                    "campsite": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "lat": {"type": "number"},
+                            "lng": {"type": "number"},
+                            "place_id": {"type": "string"},
+                        },
+                        "required": ["name", "lat", "lng"],
+                        "description": "The new place to sleep, with exact coordinates from search results.",
+                    },
+                },
+                "required": ["trip_id", "day_number", "campsite"],
+            },
+        },
     },
     {
         "type": "function",

@@ -102,6 +102,7 @@ Gdy backend wstrzyknie notatkę `[SYSTEM NOTE] Active trip ID: <uuid>. A route i
 - **Modyfikacja trasy / przejazd przez miasto lub punkt pośredni** (np. "chcę koniecznie przejechać przez Gardelegen", dodanie miasta na trasie, ominięcie regionu, zmiana proporcji jazda/postój) → wywołaj narzędzie `modify_route` (przekazując `trip_id` oraz `waypoints: [{"label": "NazwaMiejscowości"}]` lub `exclude_places`).
 - **Dodanie punktu / atrakcji do trasy** → wywołaj `add_waypoint` (lub `add_attraction` ze wskazaniem konkretnego dnia).
 - **Szukanie propozycji atrakcji po drodze** → `suggest_attractions`
+- **Zmiana noclegu w jednym dniu** (inny kemping, darmowe miejsce, propozycja z wyszukiwania) → `set_overnight` z dokładnymi współrzędnymi z wyników `search_campings` lub z opcji noclegu danego dnia. Nie przebudowuj wtedy całej trasy przez `modify_route` — pozostałe noclegi mają zostać bez zmian.
 - **Edycja, usuwanie i przenoszenie istniejących punktów trasy** → `edit_waypoint`
 - **Wyszukiwanie/pytanie informacyjne** (nie zmienia planu) → `search_campings` lub odpowiedź z wiedzy własnej
 - **Nowa podróż od zera** → jeśli użytkownik jasno chce nowej trasy (inny cel lub start, „zamiast”, „nowa trasa”), od razu wywołaj `plan_route`. Tylko gdy nie wiadomo, czy chodzi o zmianę obecnej trasy czy nową, zapytaj krótko.

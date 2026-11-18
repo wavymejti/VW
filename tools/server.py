@@ -15,6 +15,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response, Response
 from flask_cors import CORS
@@ -48,7 +49,7 @@ from tools.location_service import (
     reverse_geocode_coordinates,
     sanitize_coordinates,
 )
-from navigation.dispatcher import _recalculate_day_route
+from navigation.dispatcher import _recalculate_day_route, apply_campsite_change
 
 # Load environment variables
 load_dotenv()
@@ -441,127 +442,7 @@ def api_select_travel_suggestion():
 
 
 
-def _sanitize_for_json(obj):
-    import decimal
-    if isinstance(obj, decimal.Decimal):
-        return float(obj)
-    if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_for_json(item) for item in obj]
-    return obj
-
-
-def _get_trip_data(trip_id):
-    """Fetch trip and schedules from DB to return to frontend."""
-    import json
-    engine = get_engine()
-    with engine.connect() as conn:
-        trip_row = conn.execute(
-            text("SELECT id, user_id, title, origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng, start_date, end_date, status FROM trips WHERE id = :tid"),
-            {"tid": trip_id}
-        ).fetchone()
-
-        if not trip_row:
-            return None
-
-        trip = {
-            "id": str(trip_row[0]),
-            "user_id": str(trip_row[1]) if trip_row[1] else None,
-            "title": trip_row[2],
-            "origin": {"label": trip_row[3], "lat": float(trip_row[4]) if trip_row[4] is not None else 0.0, "lng": float(trip_row[5]) if trip_row[5] is not None else 0.0},
-            "destination": {"label": trip_row[6], "lat": float(trip_row[7]) if trip_row[7] is not None else 0.0, "lng": float(trip_row[8]) if trip_row[8] is not None else 0.0},
-            "start_date": str(trip_row[9]) if trip_row[9] else "",
-            "end_date": str(trip_row[10]) if trip_row[10] else "",
-            "status": trip_row[11]
-        }
-
-        schedules_rows = conn.execute(
-            text("SELECT id, day_number, schedule_date, driving_hours, driving_km, waypoints, route_polyline FROM daily_schedules WHERE trip_id = :tid ORDER BY day_number ASC"),
-            {"tid": trip_id}
-        ).fetchall()
-
-        is_round_trip = (
-            (trip.get("origin", {}).get("label") and trip.get("destination", {}).get("label") and trip["origin"]["label"] == trip["destination"]["label"]) or
-            (trip.get("origin", {}).get("lat") == trip.get("destination", {}).get("lat") and trip.get("origin", {}).get("lng") == trip.get("destination", {}).get("lng"))
-        )
-
-        schedules = []
-        num_schedules = len(schedules_rows)
-        for r in schedules_rows:
-            wps = r[5] if isinstance(r[5], list) else json.loads(r[5] or "[]")
-            overnight = next((w for w in reversed(wps) if w.get("type") == "camping"), None)
-            day_num = r[1]
-            is_return = is_round_trip and num_schedules > 1 and (day_num > (num_schedules / 2))
-            
-            overnight_opts = []
-            if day_num < num_schedules:
-                target_point = overnight or (wps[-1] if wps else None)
-                if target_point and target_point.get("lat") and target_point.get("lng"):
-                    c_res = search_campings(
-                        lat=target_point["lat"],
-                        lng=target_point["lng"],
-                        radius_km=30,
-                        limit=3
-                    )
-                    if c_res.get("results"):
-                        overnight_opts = c_res["results"]
-
-            schedules.append({
-                "id": str(r[0]),
-                "day_number": day_num,
-                "date": str(r[2]) if r[2] else "",
-                "driving_hours": float(r[3]) if r[3] is not None else 0.0,
-                "driving_km": float(r[4]) if r[4] is not None else 0.0,
-                "waypoints": wps,
-                "overnight_camping": overnight,
-                "overnight_options": overnight_opts,
-                "route_polyline": r[6],
-                "is_return": is_return
-            })
-
-        # Fetch photos associated with this trip
-        photo_rows = conn.execute(
-            text("""
-                SELECT id, file_url, thumbnail_url, lat, lng,
-                       caption, original_filename, tagged_day_schedule_id, created_at
-                FROM photos
-                WHERE trip_id = :trip_id
-                ORDER BY created_at ASC
-            """),
-            {"trip_id": trip_id}
-        ).fetchall()
-
-        photos = []
-        seen_keys = set()
-        for pr in photo_rows:
-            p_url = pr[1]
-            p_fname = pr[6]
-            dedup_key = p_url or p_fname or str(pr[0])
-            if dedup_key in seen_keys:
-                continue
-            seen_keys.add(dedup_key)
-            photos.append({
-                "id": str(pr[0]),
-                "file_url": pr[1],
-                "thumbnail_url": pr[2],
-                "lat": float(pr[3]) if pr[3] is not None else None,
-                "lng": float(pr[4]) if pr[4] is not None else None,
-                "caption": pr[5],
-                "original_filename": pr[6],
-                "tagged_day_schedule_id": str(pr[7]) if pr[7] else None,
-                "created_at": str(pr[8]) if pr[8] else None,
-            })
-
-        result_payload = {
-            "trip": trip,
-            "daily_schedules": schedules,
-            "photos": photos,
-            "total_driving_hours": sum(float(s["driving_hours"] or 0) for s in schedules),
-            "total_driving_km": sum(float(s["driving_km"] or 0) for s in schedules)
-        }
-
-        return _sanitize_for_json(result_payload)
+from tools.trip_store import _sanitize_for_json, _get_trip_data  # noqa: E402
 
 
 @app.route("/api/trip/<trip_id>", methods=["GET"])
@@ -932,102 +813,11 @@ def api_select_camping():
     if not all([trip_id, day_number, camping]):
         return jsonify({"status": "error", "message": "trip_id, day_number, and camping are required"}), 400
 
-    def _is_stay(wps):
-        if isinstance(wps, str):
-            wps = json.loads(wps)
-        return bool(wps) and all(w.get("type") == "stay" for w in wps)
-
-    try:
-        engine = get_engine()
-        with engine.begin() as conn:
-            schedule_row = conn.execute(
-                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                {"tid": trip_id, "day": day_number}
-            ).fetchone()
-
-            if not schedule_row:
-                return jsonify({"status": "error", "message": "Day schedule not found"}), 404
-
-            # A stay day sleeps where the previous driving day ended: change that day.
-            while _is_stay(schedule_row[1]) and int(day_number) > 1:
-                day_number = int(day_number) - 1
-                schedule_row = conn.execute(
-                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                    {"tid": trip_id, "day": day_number}
-                ).fetchone()
-                if not schedule_row:
-                    return jsonify({"status": "error", "message": "Day schedule not found"}), 404
-
-            schedule_id = schedule_row[0]
-            waypoints = schedule_row[1] or []
-
-            if not waypoints:
-                return jsonify({"status": "error", "message": "No waypoints found for this day"}), 400
-
-            # Replace the last waypoint (which is the overnight camping or destination)
-            new_wp = {
-                "order": len(waypoints) - 1,
-                "type": "camping",
-                "label": camping.get("name", "Camping"),
-                "lat": camping.get("lat"),
-                "lng": camping.get("lng"),
-                "place_id": camping.get("place_id"),
-                "notes": "User selected camping"
-            }
-            waypoints[-1] = new_wp
-
-            # Update db and recalculate
-            update_done = _recalculate_day_route(conn, schedule_id, waypoints)
-            if not update_done:
-                conn.execute(
-                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
-                    {"wps": json.dumps(waypoints), "cid": camping.get("id"), "sid": str(schedule_id)}
-                )
-
-            # Stay days right after this day move to the new campsite too.
-            next_number = int(day_number) + 1
-            while True:
-                stay_row = conn.execute(
-                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                    {"tid": trip_id, "day": next_number}
-                ).fetchone()
-                if not stay_row or not _is_stay(stay_row[1]):
-                    break
-                stay_wps = stay_row[1] if not isinstance(stay_row[1], str) else json.loads(stay_row[1])
-                stay_wps = [{**stay_wps[0],
-                             "label": camping.get("name", "Camping"),
-                             "lat": camping.get("lat"), "lng": camping.get("lng"),
-                             "place_id": camping.get("place_id")}]
-                conn.execute(
-                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
-                    {"wps": json.dumps(stay_wps), "cid": camping.get("id"), "sid": str(stay_row[0])}
-                )
-                next_number += 1
-
-            # Update start location of the next driving day if it exists
-            next_day_row = conn.execute(
-                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                {"tid": trip_id, "day": next_number}
-            ).fetchone()
-            if next_day_row:
-                next_sid = next_day_row[0]
-                next_wps = next_day_row[1] or []
-                if isinstance(next_wps, str):
-                    next_wps = json.loads(next_wps)
-                if next_wps:
-                    next_wps[0] = {
-                        "order": 0,
-                        "type": "start",
-                        "label": camping.get("name", "Start"),
-                        "lat": camping.get("lat"),
-                        "lng": camping.get("lng")
-                    }
-                    _recalculate_day_route(conn, next_sid, next_wps)
-
-        trip_data = _get_trip_data(trip_id)
-        return jsonify({"status": "success", "message": "Camping selected and route updated.", "trip_data": trip_data})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    result = apply_campsite_change(trip_id, day_number, camping)
+    if result.get("status") != "success":
+        return jsonify(result), result.pop("http_status", 400)
+    trip_data = _get_trip_data(trip_id)
+    return jsonify({"status": "success", "message": "Camping selected and route updated.", "trip_data": trip_data})
 
 
 @app.route("/api/add_attraction", methods=["POST"])
