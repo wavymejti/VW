@@ -29,28 +29,35 @@ TOOL_REGISTRY = {
 
 def _sanitize_trip_start_date(raw_date):
     """
-    Ensure start_date is in current year or later. If year is in past (< current year),
-    bump it to current year (2026) so outdated model priors don't corrupt trips.
+    Make sure a trip starts today or later.
+
+    A date in the past means the next occurrence of that day ("1 July" asked in
+    November -> 1 July next year), unless it is only a few days back (a model
+    slip for "today"), which becomes today. Older years (model priors such as
+    2023) are moved forward the same way.
     """
-    today = datetime.now()
-    today_str = today.strftime("%Y-%m-%d")
+    today = datetime.now().date()
     if not raw_date:
-        return today_str
+        return today.strftime("%Y-%m-%d")
     try:
-        dt = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
-        if dt.year < today.year:
-            try:
-                candidate = dt.replace(year=today.year)
-                if candidate.date() < today.date():
-                    return today_str
-                return candidate.strftime("%Y-%m-%d")
-            except ValueError:
-                return today_str
-        elif dt.date() < today.date():
-            return today_str
-        return dt.strftime("%Y-%m-%d")
+        dt = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
     except Exception:
-        return today_str
+        return today.strftime("%Y-%m-%d")
+    if dt >= today:
+        return dt.strftime("%Y-%m-%d")
+
+    def _with_year(year):
+        try:
+            return dt.replace(year=year)
+        except ValueError:  # 29 February
+            return dt.replace(year=year, day=28)
+
+    candidate = _with_year(today.year)
+    if candidate < today:
+        if (today - candidate).days <= 14:
+            return today.strftime("%Y-%m-%d")
+        candidate = _with_year(today.year + 1)
+    return candidate.strftime("%Y-%m-%d")
 
 
 def dispatch(function_name, arguments):

@@ -151,10 +151,10 @@ def send_message(session, user_message, trip_id=None, user_location=None):
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d (%A)")
         date_context = (
-            f"[SYSTEM NOTE] Dzisiejsza data systemowa: {today_str} (rok {today.year}). "
-            f"Wszystkie daty względne ('jutro', 'w weekend', 'za tydzień') oraz wyjazdy bez podanej daty "
-            f"muszą rozpoczynać się od {today.strftime('%Y-%m-%d')} lub później w roku {today.year}. "
-            "Kategorycznie NIGDY nie używaj dat z przeszłości ani roku 2023!"
+            f"[SYSTEM NOTE] Today is {today_str}. Trips start today or later, never in the past. "
+            "Relative dates ('tomorrow', 'next weekend') count from today. A day or month "
+            "without a year means its NEXT occurrence: if it has already passed this year, "
+            f"use {today.year + 1} (e.g. '1 July' asked now -> {today.year + 1}-07-01)."
         )
         system_injections.append({"role": "system", "content": date_context})
 

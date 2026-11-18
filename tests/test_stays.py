@@ -152,3 +152,48 @@ def test_schema_documents_stays():
         props = tools[name]["parameters"]["properties"]
         assert "stays" in props and "rest_day_every" in props
         assert "INTO num_days" in props["stays"]["description"]
+
+
+def test_rest_days_never_shorten_the_requested_trip(planner):
+    """Dubrovnik live case: 14 days, a week there, model adds rest_day_every=3 -> still 14."""
+    r = pr.plan_route(POZNAN, DUBROVNIK, num_days=14, start_date="2027-07-01",
+                      round_trip=True, stays=[{"days": 7}], rest_day_every=3,
+                      max_daily_drive_hours=10)
+    assert r["num_days"] == 14, r["warnings"]
+    assert _kinds(r).count("stay") == 7
+    assert not any("instead of" in w for w in r["warnings"])
+
+
+def test_rest_days_fit_into_the_requested_days(planner):
+    r = pr.plan_route(POZNAN, DUBROVNIK, num_days=8, start_date="2027-07-01",
+                      rest_day_every=3, max_daily_drive_hours=12)
+    assert _kinds(r) == ["drive", "drive", "drive", "rest", "drive", "drive", "drive", "drive"]
+
+
+def test_pick_campsite_skips_offices_and_prefers_campsites_for_stays():
+    office = {"name": "Vacances André Trigano - siège social", "source": "google_maps"}
+    street = {"name": "Dubrovnik, 21 Vukovarska ulica", "source": "park4night", "spot_code": "P"}
+    camp = {"name": "Camping Solitudo", "source": "park4night", "spot_code": "C"}
+    google_camp = {"name": "Camping Kate", "source": "google_maps"}
+    assert pr._pick_campsite([office, google_camp])[0] is google_camp
+    assert pr._pick_campsite([street, camp], long_stay=True) == (camp, False)
+    assert pr._pick_campsite([street, camp], long_stay=False)[0] is street
+    assert pr._pick_campsite([street], long_stay=True) == (street, True)
+
+
+def test_past_dates_move_to_their_next_occurrence(monkeypatch):
+    import datetime as real_dt
+    from navigation import dispatcher
+
+    class FakeDT(real_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 18, 10, 0)
+
+    monkeypatch.setattr(dispatcher, "datetime", FakeDT)
+    f = dispatcher._sanitize_trip_start_date
+    assert f("2026-07-01") == "2027-07-01"      # "1 July" asked in November
+    assert f("2026-11-16") == "2026-11-18"      # a slip for "today"
+    assert f("2023-12-24") == "2026-12-24"      # old model prior
+    assert f("2027-03-10") == "2027-03-10"
+    assert f(None) == "2026-11-18"

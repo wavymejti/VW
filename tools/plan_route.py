@@ -235,6 +235,34 @@ def _route_position(legs, lat, lng):
     return best_i
 
 
+_OFFICE_WORDS = ("siège", "siege social", "head office", "headquarters", "hauptsitz",
+                 "zentrale", "verwaltung", "biuro", "bureau", "office")
+_STAY_SPOT_CODES = {"C", "ACC_P", "ACC_PR"}  # park4night: campsite, paid / private motorhome area
+
+
+def _pick_campsite(options, long_stay=False):
+    """
+    Choose the night's campsite from search results (nearest first).
+
+    Company offices tagged as campgrounds are skipped. For a stay of one or more
+    days a real campsite / paid motorhome area beats a street parking spot.
+
+    Returns:
+        tuple: (campsite or None, True if a stay had to use a non-campsite spot)
+    """
+    if not options:
+        return None, False
+    good = [o for o in options
+            if not any(w in (o.get("name") or "").lower() for w in _OFFICE_WORDS)] or options
+    if long_stay:
+        proper = [o for o in good
+                  if o.get("source") != "park4night" or o.get("spot_code") in _STAY_SPOT_CODES]
+        if proper:
+            return proper[0], False
+        return good[0], True
+    return good[0], False
+
+
 def _stay_day(anchor, kind, date_str, weather, is_return):
     """A day spent at one place: no driving, one 'stay' waypoint at that night's campsite."""
     camp = anchor.get("overnight_camping")
@@ -447,10 +475,6 @@ def plan_route(
     min_driving = len(requested_stops) + len(stay_places) + (
         2 if (round_trip and dest_stay_days) else 1)
     driving_days = num_days - stay_days_total
-    if rest_day_every:
-        while driving_days > min_driving and \
-                driving_days + (driving_days - 1) // rest_day_every > num_days - stay_days_total:
-            driving_days -= 1
     if driving_days < min_driving:
         driving_days = min_driving
     num_days = driving_days  # from here until the stay days are added: driving days only
@@ -471,8 +495,10 @@ def plan_route(
         max_daily_km = float(max_daily_km) if max_daily_km else None
     except (TypeError, ValueError):
         max_daily_km = None
+    km_needed = 0
     if max_daily_km and max_daily_km > 0:
         needed = math.ceil(total_distance_km / max_daily_km)
+        km_needed = needed
         if needed > num_days:
             warnings.append(
                 f"num_days raised from {num_days} to {needed} to keep days under "
@@ -495,10 +521,6 @@ def plan_route(
     # Step 2: Divide route into equal daily segments (time, or km with a km limit)
     total_duration_s = total_duration_hours * 3600
     route_end = origin if round_trip else destination
-    intermediate_points = _interpolate_stops_along_route(
-        legs, total_duration_s, num_days, origin, route_end,
-        metric="distance" if max_daily_km else "duration",
-    )
     forced_stops = list(requested_stops) + list(stay_places)
     if round_trip and dest_stay_days:
         forced_stops.append({"label": destination["label"], "lat": destination["lat"],
@@ -506,25 +528,54 @@ def plan_route(
                              "turnaround": True})
     if stay_places or (round_trip and dest_stay_days):
         forced_stops.sort(key=lambda st: _route_position(legs, st["lat"], st["lng"]))
-    intermediate_points = _apply_overnight_stops(intermediate_points, forced_stops)
-    if round_trip and dest_stay_days:
-        for pt in intermediate_points:
-            if pt.get("stay_days") and _haversine_distance(
-                    pt["lat"], pt["lng"], destination["lat"], destination["lng"]) < 1:
-                pt["turnaround"] = True
-
-    # Days off after each driving day (stays, rest days) and the calendar offsets.
     one_way_dest_stay = bool(dest_stay_days) and not round_trip
-    extra_after = {}
-    for d in range(1, num_days + 1):
-        if d < num_days:
-            k = intermediate_points[d - 1].get("stay_days", 0)
-            kind = "stay" if k else None
-            if not k and rest_day_every and d % rest_day_every == 0:
-                k, kind = 1, "rest"
-        else:
-            k, kind = (dest_stay_days, "stay") if one_way_dest_stay else (0, None)
-        extra_after[d] = (k, kind)
+    metric = "distance" if max_daily_km else "duration"
+
+    def _layout(n_driving):
+        """Day ends for n driving days + what follows each day (stay / rest days)."""
+        pts = _interpolate_stops_along_route(
+            legs, total_duration_s, n_driving, origin, route_end, metric=metric)
+        pts = _apply_overnight_stops(pts, forced_stops)
+        if round_trip and dest_stay_days:
+            for pt in pts:
+                if pt.get("stay_days") and _haversine_distance(
+                        pt["lat"], pt["lng"], destination["lat"], destination["lng"]) < 1:
+                    pt["turnaround"] = True
+        room = total_days_requested - n_driving - stay_days_total
+        extra, streak, rests = {}, 0, 0
+        for d in range(1, n_driving + 1):
+            streak += 1
+            if d < n_driving:
+                k = pts[d - 1].get("stay_days", 0)
+            else:
+                k = dest_stay_days if one_way_dest_stay else 0
+            if k:
+                extra[d] = (k, "stay")
+                streak = 0
+            elif (rest_day_every and d < n_driving and streak >= rest_day_every
+                  and rests < room):
+                extra[d] = (1, "rest")
+                rests += 1
+                streak = 0
+            else:
+                extra[d] = (0, None)
+        return pts, extra, n_driving + stay_days_total + rests, rests
+
+    # Without rest days: as many driving days as the request allows. With rest days:
+    # fewer driving days so rests fit, preferring the requested day count, then
+    # more rests, then more driving days (shorter legs).
+    lower = max(min_driving, km_needed,
+                math.ceil(total_duration_hours / max_daily_drive_hours - 1e-9))
+    candidates = range(num_days, max(lower, 1) - 1, -1) if rest_day_every else [num_days]
+    best = None
+    for n in candidates:
+        lay = _layout(n)
+        score = (lay[2] == total_days_requested, lay[3], n)
+        if best is None or score > best[0]:
+            best = (score, n, lay)
+    num_days = best[1]
+    intermediate_points, extra_after = best[2][0], best[2][1]
+
     day_offset, offset = {}, 0
     for d in range(1, num_days + 1):
         day_offset[d] = offset
@@ -593,7 +644,8 @@ def plan_route(
                 themed = _find_overnight_by_setting(day_end["lat"], day_end["lng"], setting)
                 if themed:
                     overnight_options = themed[:6]
-                    overnight_camping = themed[0]
+                    overnight_camping, _ = _pick_campsite(
+                        themed, long_stay=extra_after[day_num][1] == "stay")
                 else:
                     warnings.append(
                         f"Day {day_num}: no campsite '{setting}' found within 50 km of "
@@ -611,7 +663,15 @@ def plan_route(
                 )
                 if camping_results.get("results"):
                     overnight_options = camping_results["results"]
-                    overnight_camping = overnight_options[0]
+                    long_stay = extra_after[day_num][1] == "stay"
+                    overnight_camping, makeshift = _pick_campsite(overnight_options, long_stay)
+                    if makeshift:
+                        warnings.append(
+                            f"Day {day_num}: no proper campsite found near "
+                            f"{day_end.get('label', 'the stay place')} for the "
+                            f"{extra_after[day_num][0]}-day stay; using "
+                            f"{overnight_camping.get('name')} — worth choosing another."
+                        )
                     break
             if not overnight_camping:
                 warnings.append(
