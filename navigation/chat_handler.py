@@ -134,8 +134,8 @@ def send_message(session, user_message, trip_id=None, user_location=None):
                 "Respond in German. Maintain the VW California vanlife companion tone: "
                 "address the user with informal 'Du', use proper German vanlife terminology "
                 "(Landstrom / CEE-Anschluss, Aufstelldach, Wohnmobilstellplatz / Campingplatz, Freistehen). "
-                "When completing slots, summarize the trip parameters in German and end with the explicit confirmation question: "
-                "'Soll ich die Route jetzt für dich planen?'. Never comment on <slot_state>."
+                "Plan the route as soon as start, destination and dates are known or can be inferred — "
+                "no summary or confirmation question before planning. Never comment on <slot_state>."
             )
             system_injections.append({"role": "system", "content": lang_context})
         elif lang == "en":
@@ -144,8 +144,8 @@ def send_message(session, user_message, trip_id=None, user_location=None):
                 "Respond in English. Maintain the VW California vanlife companion tone: "
                 "knowledgeable road-trip buddy, conversational, warm, enthusiastic about camper life. "
                 "Use appropriate campervan terminology (shore power / hookup, pop-up roof, campsite / RV pitch, wild camping / boondocking). "
-                "When completing slots, summarize the trip parameters in English and end with the explicit confirmation question: "
-                "'Shall I plan the route for you now?'. Never comment on <slot_state>."
+                "Plan the route as soon as start, destination and dates are known or can be inferred — "
+                "no summary or confirmation question before planning. Never comment on <slot_state>."
             )
             system_injections.append({"role": "system", "content": lang_context})
 
@@ -158,6 +158,18 @@ def send_message(session, user_message, trip_id=None, user_location=None):
             f"use {today.year + 1} (e.g. '1 July' asked now -> {today.year + 1}-07-01)."
         )
         system_injections.append({"role": "system", "content": date_context})
+
+        # The first route must come by the user's 3rd message at the latest.
+        if not session.get("active_trip_id"):
+            session["turns_without_plan"] = session.get("turns_without_plan", 0) + 1
+            if session["turns_without_plan"] >= 3:
+                system_injections.append({"role": "system", "content": (
+                    f"[SYSTEM NOTE] This is the user's message no. {session['turns_without_plan']} "
+                    "and there is no route yet. Call plan_route in THIS turn: assume anything "
+                    "missing (start from the user's location or the city mentioned, leave "
+                    "tomorrow, a sensible number of days for the distance) and say what you "
+                    "assumed. Only ask instead if the destination is completely unknown."
+                )})
 
         active_trip_id = session.get("active_trip_id")
         if active_trip_id:

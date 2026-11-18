@@ -209,3 +209,49 @@ def test_skip_warning_explains_how_to_end_in_a_city(planner):
     r = pr.plan_route(POZNAN, LAUSANNE, num_days=4, start_date="2027-07-01", max_daily_drive_hours=10,
                       waypoints=[{"label": "Warszawa", "lat": 52.2297, "lng": 21.0122}])
     assert any("make it the destination" in w for w in r["warnings"])
+
+
+# ── fewer questions before the first route ─────────────────────────────────
+
+def test_prompt_never_asks_soft_slots_or_for_confirmation():
+    from tools.openai_client import SYSTEM_PROMPT
+    assert "NIGDY nie pytaj" in SYSTEM_PROMPT
+    assert "najpóźniej po 3. wiadomości" in SYSTEM_PROMPT
+    assert "Zaczynam planować trasę?" not in SYSTEM_PROMPT
+    assert "2 rundy" not in SYSTEM_PROMPT
+    assert "ZAWSZE w bieżącym roku" not in SYSTEM_PROMPT
+
+
+def test_third_message_without_a_route_forces_planning(monkeypatch):
+    for fn in ("_store_message", "log_interaction", "log_chat_turn"):
+        monkeypatch.setattr(chat_handler, fn, lambda *a, **k: None)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _completion(MagicMock(tool_calls=None, content="Where from?"))
+    session = {"client": client, "tools": [], "user_id": "anon", "trip_id": None,
+               "history": [{"role": "system", "content": "P"}], "lang": "en", "active_trip_id": None}
+
+    def nudged():
+        msgs = client.chat.completions.create.call_args.kwargs["messages"]
+        return any("Call plan_route in THIS turn" in (m.get("content") or "")
+                   for m in msgs if isinstance(m, dict))
+
+    chat_handler.send_message(session, "I want to go to Lausanne")
+    assert not nudged()
+    chat_handler.send_message(session, "soon")
+    assert not nudged()
+    chat_handler.send_message(session, "with my dog")
+    assert nudged()
+
+
+def test_language_notes_no_longer_ask_for_confirmation(monkeypatch):
+    for fn in ("_store_message", "log_interaction", "log_chat_turn"):
+        monkeypatch.setattr(chat_handler, fn, lambda *a, **k: None)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _completion(MagicMock(tool_calls=None, content="ok"))
+    for lang in ("en", "de"):
+        session = {"client": client, "tools": [], "user_id": "anon", "trip_id": None,
+                   "history": [{"role": "system", "content": "P"}], "lang": lang, "active_trip_id": None}
+        chat_handler.send_message(session, "hi")
+        text = " ".join(m.get("content") or "" for m in client.chat.completions.create.call_args.kwargs["messages"]
+                        if isinstance(m, dict))
+        assert "Shall I plan the route" not in text and "Soll ich die Route" not in text
