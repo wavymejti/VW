@@ -15,6 +15,7 @@ from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo
 from tools.suggest_attractions import suggest_attractions
+from tools.generate_summary import get_trip_summary
 
 
 # Registry of tool functions callable by the AI
@@ -23,6 +24,7 @@ TOOL_REGISTRY = {
     "plan_route": plan_route,
     "upload_photos": store_photo,
     "suggest_attractions": suggest_attractions,
+    "get_trip_summary": get_trip_summary,
     # modify_route, add_attraction, edit_waypoint are handled inline below
 }
 
@@ -74,6 +76,15 @@ def dispatch(function_name, arguments):
     # Sanitize dates for trip planning tools to ensure year 2026
     if function_name == "plan_route" and isinstance(arguments, dict):
         arguments["start_date"] = _sanitize_trip_start_date(arguments.get("start_date"))
+
+    if function_name == "search_campings" and isinstance(arguments, dict):
+        try:
+            lat, lng = float(arguments.get("lat")), float(arguments.get("lng"))
+        except (TypeError, ValueError):
+            lat = lng = 0.0
+        if abs(lat) < 0.01 and abs(lng) < 0.01:
+            return {"status": "error",
+                    "message": "No location given (0, 0). Ask the user where to search."}
 
     # Inline handlers for mutation tools
     if function_name == "modify_route":
@@ -162,6 +173,19 @@ def _existing_stays(sched_rows, destination=None):
     return out, (first_rest_after or None)
 
 
+# Parameters of modify_route that actually change a trip (notes alone don't).
+MODIFY_CHANGE_KEYS = (
+    "waypoints", "via_places", "include_places", "exclude_places", "round_trip",
+    "overnight_stops", "origin", "destination", "num_days", "start_date",
+    "max_daily_km", "max_daily_drive_hours", "preferred_amenities",
+    "overnight_preferences", "preferred_overnight", "stays", "rest_day_every",
+)
+
+
+def has_concrete_change(arguments):
+    return any((arguments or {}).get(k) not in (None, "", []) for k in MODIFY_CHANGE_KEYS)
+
+
 def _handle_modify_route(arguments):
     """
     Handle route modification by re-planning with amended parameters.
@@ -199,13 +223,7 @@ def _handle_modify_route(arguments):
 
         # The planner can't read free-text notes: without a concrete change it would
         # re-plan the same route and store a duplicate trip.
-        change_keys = (
-            "waypoints", "via_places", "include_places", "exclude_places", "round_trip",
-            "overnight_stops", "origin", "destination", "num_days", "start_date",
-            "max_daily_km", "max_daily_drive_hours", "preferred_amenities",
-            "overnight_preferences", "preferred_overnight", "stays", "rest_day_every",
-        )
-        if not any(arguments.get(k) not in (None, "", []) for k in change_keys):
+        if not has_concrete_change(arguments):
             return {
                 "status": "error",
                 "message": (
@@ -370,6 +388,14 @@ def _handle_modify_route(arguments):
             all_waypoints.append(wp)
             seen_keys.add(lbl.lower())
 
+        # Attractions of the trip planned in this conversation (anonymous trips and
+        # trips that failed to save are not in the DB).
+        if not existing_attractions:
+            for wp in arguments.get("_conversation_waypoints") or []:
+                lbl = (wp.get("label") or "")
+                if not any(ex.lower() in lbl.lower() for ex in exclude_places if ex):
+                    existing_attractions.append(wp)
+
         for wp in existing_attractions:
             lbl = wp.get("label", "").strip()
             if lbl.lower() not in seen_keys and not any(ex.lower() in lbl.lower() for ex in exclude_places if ex):
@@ -402,6 +428,7 @@ def _handle_modify_route(arguments):
             overnight_preferences=overnight_preferences,
             stays=stays,
             rest_day_every=rest_day_every,
+            allow_far_waypoints=bool(arguments.get("allow_far_waypoints")),
             **({"max_daily_drive_hours": max_daily_drive_hours} if max_daily_drive_hours else {}),
         )
 
@@ -901,7 +928,10 @@ OPENAI_TOOL_DEFINITIONS = [
                 "Plan a NEW multi-day driving route with campground stops "
                 "(also when a trip already exists but the user wants a different "
                 "origin or destination). Each travel day except the last ends at a "
-                "campsite, so the number of nights = num_days - 1. "
+                "campsite, so the number of nights = num_days - 1. A trip that ends in a "
+                "DIFFERENT city than it starts (Poznań -> Lausanne -> Warsaw) is one-way to the "
+                "final city with the turnaround as a stay ({'label': 'Lausanne', 'days': N}) "
+                "or an overnight stop — not a round trip. "
                 "Generates daily schedules with waypoints, driving time "
                 "estimates, and weather forecasts."
             ),
@@ -939,7 +969,13 @@ OPENAI_TOOL_DEFINITIONS = [
                             },
                             "required": ["label", "lat", "lng"],
                         },
-                        "description": "Optional list of intermediate places to visit along the route (e.g., Medjugorje, Romania).",
+                        "description": (
+                            "Optional list of intermediate places to visit along the route. Each one a "
+                            "CONCRETE named place (e.g. 'Neuschwanstein Castle', 'Medjugorje') — never a "
+                            "category or area ('largest castles', 'wooden churches in Saxony'). For a "
+                            "category, plan the route first, then call suggest_attractions and add the "
+                            "places the user picks. Places far off the route are skipped with a warning."
+                        ),
                     },
                     "num_days": {
                         "type": "integer",
@@ -1000,6 +1036,10 @@ OPENAI_TOOL_DEFINITIONS = [
                             "(e.g. 'on day 2 I want to sleep by a lake' -> [{'day_number': 2, 'setting': 'by a lake'}]). "
                             "The planner picks a matching campsite near that night's stop."
                         ),
+                    },
+                    "allow_far_waypoints": {
+                        "type": "boolean",
+                        "description": "Keep waypoints far off the direct route. Only after the user confirmed a big detour.",
                     },
                     "stays": {
                         "type": "array",
@@ -1082,7 +1122,12 @@ OPENAI_TOOL_DEFINITIONS = [
                             },
                             "required": ["label"],
                         },
-                        "description": "List of intermediate places, cities, or towns to pass through or visit along the route (e.g. [{'label': 'Gardelegen'}]).",
+                        "description": (
+                            "Intermediate places to pass through or visit (e.g. [{'label': 'Gardelegen'}]). "
+                            "CONCRETE named places only, never categories ('castles', 'wooden churches') — "
+                            "use suggest_attractions to find those. Places already on the trip are kept "
+                            "automatically; list only the ones to add."
+                        ),
                     },
                     "exclude_places": {
                         "type": "array",
@@ -1155,6 +1200,10 @@ OPENAI_TOOL_DEFINITIONS = [
                             "(e.g. 'on day 2 I want to sleep by a lake' -> [{'day_number': 2, 'setting': 'by a lake'}]). "
                             "The planner picks a matching campsite near that night's stop."
                         ),
+                    },
+                    "allow_far_waypoints": {
+                        "type": "boolean",
+                        "description": "Keep waypoints far off the direct route. Only after the user confirmed a big detour.",
                     },
                     "stays": {
                         "type": "array",

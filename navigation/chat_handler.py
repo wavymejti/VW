@@ -29,6 +29,7 @@ from tools.db import get_engine
 from navigation.dispatcher import (
     dispatch,
     OPENAI_TOOL_DEFINITIONS,
+    has_concrete_change,
 )
 from tools.interaction_logger import log_interaction
 from tools.chat_log import log_chat_turn
@@ -240,6 +241,7 @@ def send_message(session, user_message, trip_id=None, user_location=None):
             session.get("user_id"), session.get("lang"), MODEL_NAME, user_message,
             result, time.monotonic() - started,
             active_trip_id=session.get("active_trip_id"),
+            raw_reply=session.pop("last_raw_reply", None),
         )
 
         # Non-blocking extraction of newly stated durable preferences
@@ -279,6 +281,68 @@ def send_message(session, user_message, trip_id=None, user_location=None):
             "text": error_msg,
             "tool_calls": [],
         }
+
+
+def _for_model(result):
+    """
+    What the model reads back from a tool: route polylines, photos and the long
+    campsite option details are dropped (the frontend still gets the full result).
+    """
+    if not isinstance(result, dict) or not result.get("daily_schedules"):
+        return result
+    slim = {k: v for k, v in result.items() if k != "daily_schedules"}
+    slim["daily_schedules"] = []
+    for d in result["daily_schedules"]:
+        day = {k: v for k, v in d.items()
+               if k not in ("route_polyline", "overnight_options", "overnight_camping", "weather")}
+        camp = d.get("overnight_camping") or {}
+        if camp:
+            day["overnight_camping"] = {k: camp.get(k) for k in (
+                "name", "source", "spot_type", "price_info", "cost_per_night_eur",
+                "has_power", "has_water", "has_showers", "has_toilets", "rating") if camp.get(k) is not None}
+        day["overnight_options"] = [
+            {k: o.get(k) for k in ("name", "source", "spot_type", "price_info", "cost_per_night_eur")
+             if o.get(k) is not None}
+            for o in (d.get("overnight_options") or [])[:6]
+        ]
+        w = d.get("weather") or {}
+        if w:
+            day["weather"] = {k: w.get(k) for k in ("summary", "description", "temp_min", "temp_max",
+                                                     "precipitation_mm", "alerts") if w.get(k) is not None}
+        slim["daily_schedules"].append(day)
+    return slim
+
+
+def _compact_trip(result):
+    """Small trip overview for the model: days, km, stops and campsites (no polylines/photos)."""
+    trip = result.get("trip") or {}
+    days = []
+    for d in result.get("daily_schedules") or []:
+        camp = d.get("overnight_camping") or {}
+        days.append({
+            "day": d.get("day_number"),
+            "date": str(d.get("date") or d.get("schedule_date") or ""),
+            "km": d.get("driving_km"),
+            "hours": d.get("driving_hours"),
+            "stay": bool(d.get("stay")) or all(
+                w.get("type") == "stay" for w in (d.get("waypoints") or [{"type": ""}])),
+            "stops": [f"{w.get('type')}: {w.get('label')}" for w in d.get("waypoints") or []],
+            "campsite": camp.get("name"),
+            "campsite_options": [
+                {"name": o.get("name"), "source": o.get("source"),
+                 "price": o.get("price_info") or o.get("cost_per_night_eur")}
+                for o in (d.get("overnight_options") or [])[:6]
+            ],
+        })
+    return {
+        "status": "success",
+        "trip_id": trip.get("id") or result.get("trip_id"),
+        "title": trip.get("title"),
+        "start_date": trip.get("start_date"),
+        "end_date": trip.get("end_date"),
+        "total_driving_km": result.get("total_driving_km") or trip.get("total_driving_km"),
+        "days": days,
+    }
 
 
 def _parse_slot_state(text, session=None):
@@ -433,6 +497,7 @@ def _process_response(session, response, trip_id):
     if not message.tool_calls:
         # Text-only response — parse and strip slot_state block
         raw_text = message.content
+        session["last_raw_reply"] = raw_text
         response_text, slot_state = _parse_slot_state(raw_text, session)
 
         # Store clean text (without slot_state block) in history
@@ -487,13 +552,22 @@ def _process_response(session, response, trip_id):
 
         # modify_route re-plans from the stored trip; an anonymous trip isn't stored,
         # so fill what the call leaves out from the trip planned in this conversation.
-        if fn_name == "modify_route" and session.get("last_plan"):
-            for key, val in session["last_plan"].items():
-                if fn_args.get(key) is None and val is not None:
-                    fn_args[key] = val
+        # Only when the call changes something: filling these into a notes-only call
+        # would make it look like a change and re-plan the same trip.
+        if fn_name in ("modify_route", "add_waypoint") and session.get("last_plan"):
+            if fn_name == "add_waypoint" or has_concrete_change(fn_args):
+                for key, val in session["last_plan"].items():
+                    if key == "waypoints":
+                        fn_args["_conversation_waypoints"] = val
+                    elif fn_args.get(key) is None and val is not None:
+                        fn_args[key] = val
 
         # Dispatch to the appropriate tool
         tool_result = dispatch(fn_name, fn_args)
+        if fn_name == "suggest_attractions" and tool_result.get("status") == "error" \
+                and session.get("last_trip_rows"):
+            # Trip not in the DB (anonymous / not saved): use the one from this chat.
+            tool_result = dispatch(fn_name, {**fn_args, "schedules": session["last_trip_rows"]})
         tool_calls.append({
             "function_name": fn_name,
             "arguments": fn_args,
@@ -501,9 +575,17 @@ def _process_response(session, response, trip_id):
         })
 
         # Remember the trip's parameters for later modify_route calls.
-        if fn_name in ("plan_route", "modify_route") and tool_result.get("status") == "success":
+        if fn_name in ("plan_route", "modify_route", "add_waypoint") \
+                and tool_result.get("status") == "success" and tool_result.get("trip"):
             trip = tool_result.get("trip") or {}
             session["last_plan"] = {
+                "waypoints": [
+                    {k: w.get(k) for k in ("label", "lat", "lng", "place_id", "emoji",
+                                           "color", "category_label", "notes")}
+                    for d in tool_result.get("daily_schedules") or []
+                    for w in d.get("waypoints") or []
+                    if w.get("type") in ("attraction", "waypoint")
+                ],
                 "origin": trip.get("origin") or fn_args.get("origin"),
                 "destination": trip.get("destination") or fn_args.get("destination"),
                 "start_date": trip.get("start_date") or fn_args.get("start_date"),
@@ -513,6 +595,21 @@ def _process_response(session, response, trip_id):
                     "overnight_preferences", "max_daily_km", "max_daily_drive_hours",
                     "preferred_amenities")},
             }
+
+        # Remember a compact view of the trip for get_trip_summary.
+        if fn_name in ("plan_route", "modify_route", "add_waypoint") and tool_result.get("status") == "success" \
+                and tool_result.get("daily_schedules"):
+            session["last_trip_summary"] = _compact_trip(tool_result)
+            session["last_trip_rows"] = [
+                (d.get("day_number"), d.get("waypoints") or [], d.get("route_polyline"))
+                for d in tool_result["daily_schedules"]
+            ]
+        if fn_name == "get_trip_summary":
+            if tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
+                tool_result = _compact_trip(tool_result)
+            elif session.get("last_trip_summary"):
+                tool_result = session["last_trip_summary"]
+            tool_calls[-1]["result"] = tool_result
 
         # Persist the new trip_id when a route is planned or modified
         if fn_name in ("plan_route", "modify_route", "add_waypoint"):
@@ -528,7 +625,7 @@ def _process_response(session, response, trip_id):
             "role": "tool",
             "tool_call_id": tc.id,
             "name": fn_name,
-            "content": json.dumps(tool_result, default=str)
+            "content": json.dumps(_for_model(tool_result), default=str)
         })
 
         if fn_name == "plan_route" and tool_result.get("status") == "success":
@@ -560,6 +657,7 @@ def _process_response(session, response, trip_id):
         final_response = session["client"].chat.completions.create(**final_kwargs)
         final_message = final_response.choices[0].message
         final_text = final_message.content if final_message and final_message.content else None
+        session["last_raw_reply"] = final_text
 
         if not final_text:
             if lang == 'de':

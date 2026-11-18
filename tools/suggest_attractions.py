@@ -79,6 +79,7 @@ def suggest_attractions(
     limit_per_day=8,
     sample_every_km=30,
     search_radius_m=20000,
+    schedules=None,
 ):
     """
     Suggest attractions along the route for a given trip.
@@ -117,17 +118,20 @@ def suggest_attractions(
     # Determine which place types to query
     types_to_search = _parse_preferences(preferences)
 
-    # Load daily schedules (polylines + fallback waypoints)
-    engine = get_engine()
-    with engine.connect() as conn:
-        schedules = conn.execute(
-            text(
-                "SELECT day_number, waypoints, route_polyline "
-                "FROM daily_schedules "
-                "WHERE trip_id = :tid ORDER BY day_number ASC"
-            ),
-            {"tid": trip_id},
-        ).fetchall()
+    # Load daily schedules (polylines + fallback waypoints). `schedules` can be
+    # passed in as (day_number, waypoints, route_polyline) rows for a trip that
+    # isn't stored in the DB (anonymous chat).
+    if schedules is None:
+        engine = get_engine()
+        with engine.connect() as conn:
+            schedules = conn.execute(
+                text(
+                    "SELECT day_number, waypoints, route_polyline "
+                    "FROM daily_schedules "
+                    "WHERE trip_id = :tid ORDER BY day_number ASC"
+                ),
+                {"tid": trip_id},
+            ).fetchall()
 
     if not schedules:
         return {"status": "error", "message": "Trip or schedules not found."}

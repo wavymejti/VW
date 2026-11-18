@@ -405,6 +405,7 @@ def plan_route(
     overnight_preferences=None,
     stays=None,
     rest_day_every=None,
+    allow_far_waypoints=False,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -491,6 +492,26 @@ def plan_route(
     num_days = driving_days  # from here until the stay days are added: driving days only
 
     normalized_waypoints = _normalize_waypoints(waypoints, client)
+
+    # Skip places far off the route (a vague name geocoded to another country, or a
+    # castle on the other side of Poland): they would wreck the day split.
+    direct_km = _haversine_distance(origin["lat"], origin["lng"],
+                                    destination["lat"], destination["lng"])
+    max_detour_km = max(150.0, 0.35 * direct_km)
+    kept_waypoints = []
+    for wp in normalized_waypoints:
+        detour = (_haversine_distance(origin["lat"], origin["lng"], wp["lat"], wp["lng"])
+                  + _haversine_distance(wp["lat"], wp["lng"], destination["lat"], destination["lng"])
+                  - direct_km)
+        if detour > max_detour_km and not allow_far_waypoints:
+            warnings.append(
+                f"Skipped '{wp['label']}': about {detour:.0f} km off the route "
+                f"(limit {max_detour_km:.0f} km). Use a more specific place, or confirm with "
+                "the user and pass allow_far_waypoints=true."
+            )
+        else:
+            kept_waypoints.append(wp)
+    normalized_waypoints = kept_waypoints
 
     # Step 1: Get the total route via Google Maps
     total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
@@ -917,8 +938,7 @@ def plan_route(
     }
 
     # Step 5: Persist to database if user_id provided
-    if user_id:
-        _persist_trip(trip, daily_schedules)
+    save_error = _persist_trip(trip, daily_schedules) if user_id else None
 
     return {
         "status": "success",
@@ -932,6 +952,8 @@ def plan_route(
         "stay_days": stay_count,
         "rest_days": rest_count,
         "warnings": warnings,
+        "saved": bool(user_id) and save_error is None,
+        "save_error": save_error,
     }
 
 
@@ -1131,6 +1153,9 @@ def _persist_trip(trip, daily_schedules):
     Args:
         trip (dict): Trip data.
         daily_schedules (list): List of daily schedule dicts.
+
+    Returns:
+        str | None: Error description if saving failed, else None.
     """
     try:
         engine = get_engine()
@@ -1203,9 +1228,11 @@ def _persist_trip(trip, daily_schedules):
 
             conn.commit()
             print(f"  ✅ Trip '{trip['title']}' saved to DB")
+            return None
 
     except Exception as e:
         print(f"  ⚠️  Failed to persist trip: {e}")
+        return f"{type(e).__name__}: {str(e)[:400]}"
 
 
 if __name__ == "__main__":

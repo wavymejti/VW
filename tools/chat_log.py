@@ -49,6 +49,8 @@ def _summarize_result(result):
         "warnings": result.get("warnings") or None,
         "num_days": result.get("num_days"),
         "trip_id": (result.get("trip") or {}).get("id") or result.get("trip_id"),
+        "saved": result.get("saved"),
+        "save_error": result.get("save_error"),
     }
     days = result.get("daily_schedules")
     if isinstance(days, list):
@@ -69,7 +71,7 @@ def _summarize_result(result):
 
 
 def log_chat_turn(user_id, lang, model, user_message, result, duration_s,
-                  active_trip_id=None, error=None):
+                  active_trip_id=None, error=None, raw_reply=None):
     """Append one chat turn to logs/chat.jsonl. Never raises."""
     try:
         result = result or {}
@@ -93,6 +95,8 @@ def log_chat_turn(user_id, lang, model, user_message, result, duration_s,
             "slots_complete": result.get("slots_complete"),
             "duration_s": round(duration_s, 2),
         }
+        if raw_reply and raw_reply.strip() != (result.get("text") or "").strip():
+            entry["raw_reply"] = raw_reply  # model output before slot_state stripping
         if error:
             entry["error"] = error
         _get_logger().info(json.dumps(entry, ensure_ascii=False, default=str))
