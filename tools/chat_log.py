@@ -95,7 +95,7 @@ def log_chat_turn(user_id, lang, model, user_message, result, duration_s,
             "slots_complete": result.get("slots_complete"),
             "duration_s": round(duration_s, 2),
         }
-        if raw_reply and raw_reply.strip() != (result.get("text") or "").strip():
+        if raw_reply:
             entry["raw_reply"] = raw_reply  # model output before slot_state stripping
         if error:
             entry["error"] = error
