@@ -301,6 +301,8 @@
         "legend_attraction": "⭐ Atrakcja",
         "legend_photo": "Zdjęcie",
         "day_return_badge": "Powrót",
+        "day_stay_label": "Dzień na miejscu",
+        "day_rest_label": "Dzień odpoczynku",
         "lang_name_pl": "Polski",
         "lang_name_de": "Deutsch",
         "lang_name_en": "English"
@@ -604,6 +606,8 @@
         "legend_attraction": "⭐ Attraktion",
         "legend_photo": "Foto",
         "day_return_badge": "Rückfahrt",
+        "day_stay_label": "Tag vor Ort",
+        "day_rest_label": "Ruhetag",
         "lang_name_pl": "Polski",
         "lang_name_de": "Deutsch",
         "lang_name_en": "English"
@@ -907,6 +911,8 @@
         "legend_attraction": "⭐ Highlight",
         "legend_photo": "Photo",
         "day_return_badge": "Return leg",
+        "day_stay_label": "Day on site",
+        "day_rest_label": "Rest day",
         "lang_name_pl": "Polski",
         "lang_name_de": "Deutsch",
         "lang_name_en": "English"

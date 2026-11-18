@@ -109,6 +109,52 @@ def dispatch(function_name, arguments):
         }
 
 
+def _existing_stays(sched_rows, destination=None):
+    """
+    Rebuild `stays` and `rest_day_every` from a stored trip, so re-planning keeps them.
+
+    Stay days are days whose waypoints are all of type "stay" (stay_kind "stay" or "rest").
+    """
+    from tools.plan_route import _haversine_distance
+
+    stays, first_rest_after, driving = [], None, 0
+    current = None
+    for row in sched_rows:
+        wps = row[1]
+        if isinstance(wps, str):
+            try:
+                wps = json.loads(wps)
+            except Exception:
+                wps = []
+        wps = wps or []
+        if wps and all(w.get("type") == "stay" for w in wps):
+            w = wps[0]
+            if w.get("stay_kind") == "rest":
+                if first_rest_after is None:
+                    first_rest_after = driving
+                current = None
+                continue
+            if current and abs(current["lat"] - w["lat"]) < 1e-6 and abs(current["lng"] - w["lng"]) < 1e-6:
+                current["days"] += 1
+            else:
+                current = {"label": w.get("label"), "lat": w["lat"], "lng": w["lng"], "days": 1}
+                if destination and destination.get("lat") is not None and _haversine_distance(
+                        w["lat"], w["lng"], destination["lat"], destination["lng"]) <= 30:
+                    current = {"label": None, "days": 1, "lat": w["lat"], "lng": w["lng"],
+                               "_dest": True}
+                stays.append(current)
+        else:
+            driving += 1
+            current = None
+    out = []
+    for st in stays:
+        if st.get("_dest"):
+            out.append({"days": st["days"]})
+        else:
+            out.append({"label": st["label"], "lat": st["lat"], "lng": st["lng"], "days": st["days"]})
+    return out, (first_rest_after or None)
+
+
 def _handle_modify_route(arguments):
     """
     Handle route modification by re-planning with amended parameters.
@@ -136,6 +182,8 @@ def _handle_modify_route(arguments):
         overnight_stops = arguments.get("overnight_stops")
         max_daily_km = arguments.get("max_daily_km")
         overnight_preferences = arguments.get("overnight_preferences")
+        stays = arguments.get("stays")
+        rest_day_every = arguments.get("rest_day_every")
         if not overnight_preferences and preferred_overnight:
             # Older calls describe the surroundings only in free text: apply it to every night.
             overnight_preferences = [{"setting": preferred_overnight}]
@@ -148,7 +196,7 @@ def _handle_modify_route(arguments):
             "waypoints", "via_places", "include_places", "exclude_places", "round_trip",
             "overnight_stops", "origin", "destination", "num_days", "start_date",
             "max_daily_km", "max_daily_drive_hours", "preferred_amenities",
-            "overnight_preferences", "preferred_overnight",
+            "overnight_preferences", "preferred_overnight", "stays", "rest_day_every",
         )
         if not any(arguments.get(k) not in (None, "", []) for k in change_keys):
             return {
@@ -240,6 +288,13 @@ def _handle_modify_route(arguments):
                                     )
                                     if is_match_label or is_match_coords:
                                         round_trip = True
+
+                        if stays is None or rest_day_every is None:
+                            got_stays, got_rest = _existing_stays(sched_rows, destination)
+                            if stays is None and got_stays:
+                                stays = got_stays
+                            if rest_day_every is None and got_rest:
+                                rest_day_every = got_rest
 
                         for sr in sched_rows:
                             wps = sr[1]
@@ -338,6 +393,8 @@ def _handle_modify_route(arguments):
             overnight_stops=overnight_stops,
             max_daily_km=max_daily_km,
             overnight_preferences=overnight_preferences,
+            stays=stays,
+            rest_day_every=rest_day_every,
             **({"max_daily_drive_hours": max_daily_drive_hours} if max_daily_drive_hours else {}),
         )
 
@@ -937,6 +994,30 @@ OPENAI_TOOL_DEFINITIONS = [
                             "The planner picks a matching campsite near that night's stop."
                         ),
                     },
+                    "stays": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Place of the stay; omit for the destination (turnaround point of a round trip)."},
+                                "days": {"type": "integer", "description": "Full days spent there without driving."},
+                            },
+                            "required": ["days"],
+                        },
+                        "description": (
+                            "Days without driving, spent at one place, e.g. 'a week in Dubrovnik' -> "
+                            "[{'label': 'Dubrovnik', 'days': 7}], '2 days in Paris' -> [{'label': 'Paris', 'days': 2}]. "
+                            "They count INTO num_days: num_days = driving days + stay days + rest days. "
+                            "In a round trip a stay at the destination splits the trip into outbound and return."
+                        ),
+                    },
+                    "rest_day_every": {
+                        "type": "integer",
+                        "description": (
+                            "Add one day off at the campsite after every N driving days (from the "
+                            "pace slot, e.g. 'base every 2-3 days' -> 3). Counts into num_days."
+                        ),
+                    },
                     "max_daily_km": {
                         "type": "number",
                         "description": (
@@ -1064,6 +1145,30 @@ OPENAI_TOOL_DEFINITIONS = [
                             "Where the user wants to sleep in terms of surroundings, without naming a town "
                             "(e.g. 'on day 2 I want to sleep by a lake' -> [{'day_number': 2, 'setting': 'by a lake'}]). "
                             "The planner picks a matching campsite near that night's stop."
+                        ),
+                    },
+                    "stays": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Place of the stay; omit for the destination (turnaround point of a round trip)."},
+                                "days": {"type": "integer", "description": "Full days spent there without driving."},
+                            },
+                            "required": ["days"],
+                        },
+                        "description": (
+                            "Days without driving, spent at one place, e.g. 'a week in Dubrovnik' -> "
+                            "[{'label': 'Dubrovnik', 'days': 7}], '2 days in Paris' -> [{'label': 'Paris', 'days': 2}]. "
+                            "They count INTO num_days: num_days = driving days + stay days + rest days. "
+                            "In a round trip a stay at the destination splits the trip into outbound and return."
+                        ),
+                    },
+                    "rest_day_every": {
+                        "type": "integer",
+                        "description": (
+                            "Add one day off at the campsite after every N driving days (from the "
+                            "pace slot, e.g. 'base every 2-3 days' -> 3). Counts into num_days."
                         ),
                     },
                     "max_daily_km": {

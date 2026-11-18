@@ -512,7 +512,14 @@ function fitMapToDayRoute(day) {
     }
 
     if (!bounds.isEmpty()) {
-        state.map.fitBounds(bounds, getMapFitPadding({ top: 90 }));
+        const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
+        if (ne.equals(sw)) {
+            // Stay / rest day: one point, so zoom to the campsite area instead of street level
+            state.map.setCenter(ne);
+            state.map.setZoom(12);
+        } else {
+            state.map.fitBounds(bounds, getMapFitPadding({ top: 90 }));
+        }
     }
 }
 window.fitMapToDayRoute = fitMapToDayRoute;
@@ -627,6 +634,8 @@ function displayTripOnMap(tripData) {
         day.waypoints.forEach(wp => {
             // Attraction / waypoint items will be rendered as rich attraction markers, not generic red pins
             if (wp.type === 'attraction' || wp.type === 'waypoint') return;
+            // Stay / rest days sit at the previous night's campsite, which already has a marker
+            if (wp.type === 'stay') return;
 
             let markerLabel = '';
             if (wp.type === 'start' && idx === 0) markerLabel = 'A';
@@ -728,7 +737,7 @@ function displayTripOnMap(tripData) {
         card.dataset.dayNumber = day.day_number;
 
         const btnText = window.t ? window.t('camping_change_btn') : '🏕️ Zobacz / zmień kemping';
-        const campingName = day.overnight_camping ? (day.overnight_camping.name || day.overnight_camping.label) : null;
+        let campingName = day.overnight_camping ? (day.overnight_camping.name || day.overnight_camping.label) : null;
 
         const isReturn = (typeof day.is_return === 'boolean') ? day.is_return :
                          (typeof day.is_return_leg === 'boolean') ? day.is_return_leg :
@@ -738,6 +747,7 @@ function displayTripOnMap(tripData) {
 
         const attractionWaypoints = (day.waypoints || []).filter(wp => wp.type === 'attraction' || wp.type === 'waypoint');
         let attractionsHtml = '';
+
         if (attractionWaypoints.length > 0) {
             const attrBadges = attractionWaypoints.map(wp => {
                 const badgeEmoji = wp.emoji || (wp.type === 'waypoint' ? '📍' : '⭐');
@@ -748,6 +758,18 @@ function displayTripOnMap(tripData) {
         }
 
         const dayTitle = window.t ? window.t('day_card_day', { day: day.day_number }) : `Dzień ${day.day_number}`;
+        // Stay / rest day: no driving, the night is at the same campsite
+        const stayWp = (day.waypoints || []).length > 0 && day.waypoints.every(wp => wp.type === 'stay')
+            ? day.waypoints[0] : null;
+        const stayKind = day.stay_kind || (stayWp && stayWp.stay_kind) || 'stay';
+        const stayText = window.t
+            ? window.t(stayKind === 'rest' ? 'day_rest_label' : 'day_stay_label')
+            : (stayKind === 'rest' ? 'Dzień odpoczynku' : 'Dzień na miejscu');
+        const drivingLineHtml = stayWp
+            ? `<span>⛺ ${stayText}</span>`
+            : `<span>🚗 ${day.driving_hours || 0}h</span>
+                <span style="margin-left: 8px;">📏 ${Math.round(day.driving_km || 0)}km</span>`;
+        if (!campingName && stayWp) campingName = stayWp.label;
         const dayBadgeColor = isReturn ? '#E65100' : '#001E50';
 
         card.innerHTML = `
@@ -757,8 +779,7 @@ function displayTripOnMap(tripData) {
             </div>
             <div class="day-label">${day.date || ''}</div>
             <div style="font-size: 0.8rem; color: #666; margin-top: 4px;">
-                <span>🚗 ${day.driving_hours || 0}h</span>
-                <span style="margin-left: 8px;">📏 ${Math.round(day.driving_km || 0)}km</span>
+                ${drivingLineHtml}
             </div>
             <div class="day-card-content">
                 ${attractionsHtml}

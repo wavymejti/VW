@@ -932,6 +932,11 @@ def api_select_camping():
     if not all([trip_id, day_number, camping]):
         return jsonify({"status": "error", "message": "trip_id, day_number, and camping are required"}), 400
 
+    def _is_stay(wps):
+        if isinstance(wps, str):
+            wps = json.loads(wps)
+        return bool(wps) and all(w.get("type") == "stay" for w in wps)
+
     try:
         engine = get_engine()
         with engine.begin() as conn:
@@ -942,6 +947,16 @@ def api_select_camping():
 
             if not schedule_row:
                 return jsonify({"status": "error", "message": "Day schedule not found"}), 404
+
+            # A stay day sleeps where the previous driving day ended: change that day.
+            while _is_stay(schedule_row[1]) and int(day_number) > 1:
+                day_number = int(day_number) - 1
+                schedule_row = conn.execute(
+                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                    {"tid": trip_id, "day": day_number}
+                ).fetchone()
+                if not schedule_row:
+                    return jsonify({"status": "error", "message": "Day schedule not found"}), 404
 
             schedule_id = schedule_row[0]
             waypoints = schedule_row[1] or []
@@ -969,10 +984,30 @@ def api_select_camping():
                     {"wps": json.dumps(waypoints), "cid": camping.get("id"), "sid": str(schedule_id)}
                 )
 
-            # Update start location of next day if day_number + 1 exists
+            # Stay days right after this day move to the new campsite too.
+            next_number = int(day_number) + 1
+            while True:
+                stay_row = conn.execute(
+                    text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
+                    {"tid": trip_id, "day": next_number}
+                ).fetchone()
+                if not stay_row or not _is_stay(stay_row[1]):
+                    break
+                stay_wps = stay_row[1] if not isinstance(stay_row[1], str) else json.loads(stay_row[1])
+                stay_wps = [{**stay_wps[0],
+                             "label": camping.get("name", "Camping"),
+                             "lat": camping.get("lat"), "lng": camping.get("lng"),
+                             "place_id": camping.get("place_id")}]
+                conn.execute(
+                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
+                    {"wps": json.dumps(stay_wps), "cid": camping.get("id"), "sid": str(stay_row[0])}
+                )
+                next_number += 1
+
+            # Update start location of the next driving day if it exists
             next_day_row = conn.execute(
                 text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                {"tid": trip_id, "day": day_number + 1}
+                {"tid": trip_id, "day": next_number}
             ).fetchone()
             if next_day_row:
                 next_sid = next_day_row[0]
