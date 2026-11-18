@@ -336,10 +336,15 @@ def _parse_slot_state(text, session=None):
         if val is not None:
             merged[key] = val
 
-    clean_text = text
-
-    # Strip the block from visible text and trim whitespace
-    clean_text = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+    # Visible text = what the model wrote before the block. GPT-6 Luna sometimes
+    # writes the reply, the block, and then the reply again in other words —
+    # stripping only the block showed the user (and Sniffer) both versions.
+    before = text[:match.start()]
+    after = re.sub(pattern, "", text[match.end():], flags=re.DOTALL)
+    before, after = before.strip(), after.strip()
+    if before and after:
+        print(f"[chat_handler] text after <slot_state> dropped: {after[:120]!r}")
+    clean_text = before or after
 
     return clean_text, merged
 

@@ -205,3 +205,16 @@ def test_text_reply_without_slot_block_keeps_previous_slots():
 def test_anonymous_session_has_no_user_id():
     assert chat_handler._real_user_id({"user_id": "anon"}) is None
     assert chat_handler._real_user_id({"user_id": "abc"}) == "abc"
+
+
+def test_reply_repeated_after_slot_block_is_shown_once():
+    raw = ('Shall I replace the current route?\n<slot_state>{"origin": "Poznań"}</slot_state>\n'
+           'Would you like me to replace the current route?')
+    text, slots = chat_handler._parse_slot_state(raw, {})
+    assert text == "Shall I replace the current route?"
+    assert slots["origin"] == "Poznań"
+
+
+def test_reply_only_after_slot_block_is_kept():
+    text, _ = chat_handler._parse_slot_state('<slot_state>{}</slot_state>\nHello!', {})
+    assert text == "Hello!"
