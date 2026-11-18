@@ -1021,8 +1021,10 @@ OPENAI_TOOL_DEFINITIONS = [
                     "rest_day_every": {
                         "type": "integer",
                         "description": (
-                            "Add one day off at the campsite after every N driving days (from the "
-                            "pace slot, e.g. 'base every 2-3 days' -> 3). Counts into num_days."
+                            "Add one day off at the campsite after every N driving days. Set it ONLY "
+                            "when the user asks for days off / a slow pace with breaks (e.g. 'a rest "
+                            "day every 3 days' -> 3) — never from default assumptions, and not when "
+                            "they want to just drive. Counts into num_days."
                         ),
                     },
                     "max_daily_km": {
@@ -1174,8 +1176,10 @@ OPENAI_TOOL_DEFINITIONS = [
                     "rest_day_every": {
                         "type": "integer",
                         "description": (
-                            "Add one day off at the campsite after every N driving days (from the "
-                            "pace slot, e.g. 'base every 2-3 days' -> 3). Counts into num_days."
+                            "Add one day off at the campsite after every N driving days. Set it ONLY "
+                            "when the user asks for days off / a slow pace with breaks (e.g. 'a rest "
+                            "day every 3 days' -> 3) — never from default assumptions, and not when "
+                            "they want to just drive. Counts into num_days."
                         ),
                     },
                     "max_daily_km": {

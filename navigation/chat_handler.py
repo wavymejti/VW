@@ -485,6 +485,13 @@ def _process_response(session, response, trip_id):
             if "user_id" not in fn_args and _real_user_id(session):
                 fn_args["user_id"] = _real_user_id(session)
 
+        # modify_route re-plans from the stored trip; an anonymous trip isn't stored,
+        # so fill what the call leaves out from the trip planned in this conversation.
+        if fn_name == "modify_route" and session.get("last_plan"):
+            for key, val in session["last_plan"].items():
+                if fn_args.get(key) is None and val is not None:
+                    fn_args[key] = val
+
         # Dispatch to the appropriate tool
         tool_result = dispatch(fn_name, fn_args)
         tool_calls.append({
@@ -492,6 +499,20 @@ def _process_response(session, response, trip_id):
             "arguments": fn_args,
             "result": tool_result,
         })
+
+        # Remember the trip's parameters for later modify_route calls.
+        if fn_name in ("plan_route", "modify_route") and tool_result.get("status") == "success":
+            trip = tool_result.get("trip") or {}
+            session["last_plan"] = {
+                "origin": trip.get("origin") or fn_args.get("origin"),
+                "destination": trip.get("destination") or fn_args.get("destination"),
+                "start_date": trip.get("start_date") or fn_args.get("start_date"),
+                "num_days": tool_result.get("num_days") or fn_args.get("num_days"),
+                **{k: fn_args.get(k) for k in (
+                    "round_trip", "stays", "rest_day_every", "overnight_stops",
+                    "overnight_preferences", "max_daily_km", "max_daily_drive_hours",
+                    "preferred_amenities")},
+            }
 
         # Persist the new trip_id when a route is planned or modified
         if fn_name in ("plan_route", "modify_route", "add_waypoint"):

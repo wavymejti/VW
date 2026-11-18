@@ -218,3 +218,49 @@ def test_reply_repeated_after_slot_block_is_shown_once():
 def test_reply_only_after_slot_block_is_kept():
     text, _ = chat_handler._parse_slot_state('<slot_state>{}</slot_state>\nHello!', {})
     assert text == "Hello!"
+
+
+def test_modify_route_gets_the_conversation_trip_parameters(monkeypatch):
+    """Anonymous trips aren't stored in the DB: modify_route needs the plan from the chat."""
+    calls = []
+
+    def fake_dispatch(name, args):
+        calls.append((name, dict(args)))
+        if name == "plan_route":
+            return {"status": "success", "num_days": 4,
+                    "trip": {"id": "t1", "origin": {"label": "Poznań", "lat": 1, "lng": 2},
+                             "destination": {"label": "Paris", "lat": 3, "lng": 4},
+                             "start_date": "2026-11-19"}}
+        return {"status": "success", "trip": {"id": "t2"}}
+
+    def tool_turn(name, arguments):
+        tc = MagicMock()
+        tc.id = f"call_{name}"
+        tc.function.name = name
+        tc.function.arguments = arguments
+        msg = MagicMock(tool_calls=[tc], content=None)
+        msg.model_dump.return_value = {"role": "assistant", "content": None, "tool_calls": [
+            {"id": tc.id, "type": "function", "function": {"name": name, "arguments": arguments}}]}
+        return msg
+
+    final = MagicMock(tool_calls=None, content="done")
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        _fake_completion(tool_turn("plan_route", '{"origin": {"label": "Poznań"}, "destination": {"label": "Paris"}, "num_days": 4, "start_date": "2026-11-19", "round_trip": false}')),
+        _fake_completion(final),
+        _fake_completion(tool_turn("modify_route", '{"trip_id": "t1", "overnight_preferences": [{"day_number": 2, "setting": "near a lake"}]}')),
+        _fake_completion(final),
+    ]
+    monkeypatch.setattr(chat_handler, "dispatch", fake_dispatch)
+    monkeypatch.setattr(chat_handler, "_store_message", lambda *a, **k: None)
+    monkeypatch.setattr(chat_handler, "log_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(chat_handler, "log_chat_turn", lambda *a, **k: None)
+    session = {"client": client, "tools": [], "user_id": "anon", "trip_id": None,
+               "history": [{"role": "system", "content": "P"}], "lang": "en", "active_trip_id": None}
+    chat_handler.send_message(session, "plan it")
+    chat_handler.send_message(session, "day 2 by a lake")
+    name, args = calls[-1]
+    assert name == "modify_route"
+    assert args["destination"]["label"] == "Paris" and args["num_days"] == 4
+    assert args["start_date"] == "2026-11-19" and args["round_trip"] is False
+    assert args["overnight_preferences"] == [{"day_number": 2, "setting": "near a lake"}]
