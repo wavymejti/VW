@@ -197,3 +197,44 @@ def test_past_dates_move_to_their_next_occurrence(monkeypatch):
     assert f("2023-12-24") == "2026-12-24"      # old model prior
     assert f("2027-03-10") == "2027-03-10"
     assert f(None) == "2026-11-18"
+
+
+def test_round_trip_halves_get_proportional_days(planner):
+    """Live case: 4 outbound days (last one 235 km) and 3 return days (one of 713 km)."""
+    r = pr.plan_route(POZNAN, DUBROVNIK, num_days=14, start_date="2027-07-01",
+                      round_trip=True, stays=[{"days": 7}], max_daily_drive_hours=10)
+    kinds = _kinds(r)
+    first_stay = kinds.index("stay")
+    out_days = kinds[:first_stay].count("drive")
+    back_days = kinds[first_stay:].count("drive")
+    assert abs(out_days - back_days) <= 1, kinds
+    # day ends of the outbound half are evenly spread towards Dubrovnik
+    ends = [d["waypoints"][-1] for d in r["daily_schedules"][:out_days]]
+    dists = [pr._haversine_distance(POZNAN["lat"], POZNAN["lng"], e["lat"], e["lng"]) for e in ends]
+    steps = [b - a for a, b in zip([0] + dists, dists)]
+    assert max(steps) < 1.6 * min(steps), steps
+
+
+def test_cached_park4night_campsite_counts_as_a_campsite():
+    cached = {"name": "Camping Solitudo", "source": "park4night"}  # no spot_code from the DB
+    street = {"name": "Dubrovnik, 21 Vukovarska ulica", "source": "park4night"}
+    assert pr._is_proper_campsite(cached)
+    assert not pr._is_proper_campsite(street)
+    assert pr._pick_campsite([street, cached], long_stay=True) == (cached, False)
+
+
+def test_stay_in_a_city_searches_campsites_further_out(planner, monkeypatch):
+    import tools.maps_client as mc
+    parking = {"name": "Praha, Španělská", "source": "park4night", "spot_code": "P"}
+    monkeypatch.setattr(pr, "search_campings", lambda lat, lng, **k: {
+        "status": "success", "results": [dict(parking, lat=lat, lng=lng)]})
+    monkeypatch.setattr(mc, "maps_allows", lambda f: f != "places_rich")
+    monkeypatch.setattr(mc, "places_text_basic", lambda q, lat=None, lng=None, **k: {"results": [
+        {"name": "Camping Sokol Troja", "types": ["campground"], "place_id": "troja",
+         "geometry": {"location": {"lat": lat + 0.05, "lng": lng}}}]})
+    r = pr.plan_route(POZNAN, PARIS, num_days=4, start_date="2027-07-01",
+                      stays=[{"label": "Paris", "days": 2}], max_daily_drive_hours=10)
+    arrival = r["daily_schedules"][1]
+    assert arrival["overnight_camping"]["name"] == "Camping Sokol Troja"
+    assert r["daily_schedules"][0]["overnight_camping"]["name"] == "Praha, Španělská"  # normal night
+    assert not any("no proper campsite" in w for w in r["warnings"])

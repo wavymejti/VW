@@ -240,6 +240,18 @@ _OFFICE_WORDS = ("siège", "siege social", "head office", "headquarters", "haupt
 _STAY_SPOT_CODES = {"C", "ACC_P", "ACC_PR"}  # park4night: campsite, paid / private motorhome area
 
 
+def _is_proper_campsite(option):
+    """A campsite / paid motorhome area, not a parking spot (park4night spots cached
+    in the DB lose their type code, so the name is checked too)."""
+    if option.get("source") != "park4night":
+        return True
+    if option.get("spot_code") in _STAY_SPOT_CODES:
+        return True
+    name = (option.get("name") or "").lower()
+    return any(w in name for w in ("camping", "campsite", "camp ", "kamp", "campingplatz",
+                                   "wohnmobilstellplatz", "aire de camping"))
+
+
 def _pick_campsite(options, long_stay=False):
     """
     Choose the night's campsite from search results (nearest first).
@@ -255,8 +267,7 @@ def _pick_campsite(options, long_stay=False):
     good = [o for o in options
             if not any(w in (o.get("name") or "").lower() for w in _OFFICE_WORDS)] or options
     if long_stay:
-        proper = [o for o in good
-                  if o.get("source") != "park4night" or o.get("spot_code") in _STAY_SPOT_CODES]
+        proper = [o for o in good if _is_proper_campsite(o)]
         if proper:
             return proper[0], False
         return good[0], True
@@ -336,7 +347,7 @@ def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
 
     if not maps_allows("places"):
         return []
-    query = f"campsite {setting}"
+    query = f"campsite {setting}".strip()
     try:
         if maps_allows("places_rich"):
             res = maps_client().places(query=query, location=(lat, lng), radius=radius_km * 1000)
@@ -531,11 +542,40 @@ def plan_route(
     one_way_dest_stay = bool(dest_stay_days) and not round_trip
     metric = "distance" if max_daily_km else "duration"
 
+    turn_step = None
+    if round_trip and dest_stay_days:
+        all_steps = [st for leg in legs for st in leg.get("steps", [])]
+        turn_step = _route_position(legs, destination["lat"], destination["lng"])
+        key = "distance" if metric == "distance" else "duration"
+        out_value = sum(st.get(key, {}).get("value", 0) for st in all_steps[:turn_step])
+        all_value = sum(st.get(key, {}).get("value", 0) for st in all_steps) or 1
+        out_share = out_value / all_value
+
+    def _half_points(steps, n, start, end):
+        return _interpolate_stops_along_route(
+            [{"steps": steps}], 0, n, start, end, metric=metric)
+
     def _layout(n_driving):
         """Day ends for n driving days + what follows each day (stay / rest days)."""
-        pts = _interpolate_stops_along_route(
-            legs, total_duration_s, n_driving, origin, route_end, metric=metric)
-        pts = _apply_overnight_stops(pts, forced_stops)
+        if turn_step and n_driving >= 2:
+            # Outbound and return get their own days in proportion to their length,
+            # with a day end exactly at the turnaround (the stay).
+            n_out = min(max(1, round(n_driving * out_share)), n_driving - 1)
+            pts = (_half_points(all_steps[:turn_step], n_out, origin, destination)
+                   + [{"label": destination["label"], "lat": destination["lat"],
+                       "lng": destination["lng"], "requested_overnight": True,
+                       "stay_days": dest_stay_days, "turnaround": True}]
+                   + _half_points(all_steps[turn_step:], n_driving - n_out, destination, origin))
+            others = [st for st in forced_stops if not st.get("turnaround")]
+            if others:
+                fixed = pts[n_out - 1]
+                rest = pts[:n_out - 1] + pts[n_out:]
+                rest = _apply_overnight_stops(rest, others) if len(rest) >= len(others) else rest
+                pts = rest[:n_out - 1] + [fixed] + rest[n_out - 1:]
+        else:
+            pts = _interpolate_stops_along_route(
+                legs, total_duration_s, n_driving, origin, route_end, metric=metric)
+            pts = _apply_overnight_stops(pts, forced_stops)
         if round_trip and dest_stay_days:
             for pt in pts:
                 if pt.get("stay_days") and _haversine_distance(
@@ -665,6 +705,15 @@ def plan_route(
                     overnight_options = camping_results["results"]
                     long_stay = extra_after[day_num][1] == "stay"
                     overnight_camping, makeshift = _pick_campsite(overnight_options, long_stay)
+                    if makeshift:
+                        # The nearest spots are city parkings: look for real campsites
+                        # a bit further out before settling for a street.
+                        campsites = [c for c in _find_overnight_by_setting(
+                            day_end["lat"], day_end["lng"], "", radius_km=40)
+                            if not any(w in (c.get("name") or "").lower() for w in _OFFICE_WORDS)]
+                        if campsites:
+                            overnight_options = campsites[:6] + overnight_options
+                            overnight_camping, makeshift = campsites[0], False
                     if makeshift:
                         warnings.append(
                             f"Day {day_num}: no proper campsite found near "
