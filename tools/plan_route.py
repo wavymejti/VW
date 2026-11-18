@@ -458,7 +458,7 @@ def plan_route(
                     amenities=preferred_amenities,
                     max_cost_eur=budget_per_night_eur,
                     vw_compatible=True,
-                    limit=3,
+                    limit=6,
                 )
                 if camping_results.get("results"):
                     overnight_options = camping_results["results"]

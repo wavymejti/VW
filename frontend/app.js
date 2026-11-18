@@ -302,7 +302,7 @@ function addMarker(lat, lng, title, icon, label, photoUrl = null, photoId = null
 
     marker.addListener('click', async () => {
         openSingleInfoWindow(infoWindow, marker);
-        if (placeId && !displayPhotoUrl) {
+        if (placeId && !String(placeId).startsWith('p4n:') && !displayPhotoUrl) {
             try {
                 const res = await fetch(`${API_BASE}/api/place_details/${placeId}`);
                 const data = await res.json();
@@ -4588,6 +4588,21 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── Camping Selection Modal Functions ─────────────────────────
+function park4nightBadgeHtml(camp) {
+    if (!camp || camp.source !== 'park4night') return '';
+    const p4nLabel = escapeCampText(camp.spot_type ? `park4night · ${camp.spot_type}` : 'park4night');
+    const p4nId = String(camp.place_id || '').startsWith('p4n:') ? String(camp.place_id).slice(4) : '';
+    const rawUrl = camp.external_url || (/^\d+$/.test(p4nId) ? `https://park4night.com/en/place/${p4nId}` : '');
+    const p4nUrl = /^https:\/\/([a-z0-9-]+\.)*park4night\.com\//i.test(rawUrl) ? escapeCampText(rawUrl) : '';
+    return p4nUrl
+        ? `<a class="camping-badge p4n-badge" href="${p4nUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:4px; font-size:11px; text-decoration:none;">🚐 ${p4nLabel}</a>`
+        : `<span class="camping-badge p4n-badge" style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:4px; font-size:11px;">🚐 ${p4nLabel}</span>`;
+}
+
+function escapeCampText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 function openCampingSelectionModal(tripData, targetDayInput = 1) {
     const modal = document.getElementById('camping-selection-modal');
     if (!modal) return;
@@ -4675,7 +4690,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096; font-size: 0.95rem;">Wyszukiwanie kempingów dla Dnia ${daySchedule.day_number}...</div>`;
         const lastWp = (daySchedule.waypoints && daySchedule.waypoints.length > 0) ? daySchedule.waypoints[daySchedule.waypoints.length - 1] : null;
         if (lastWp && lastWp.lat && lastWp.lng) {
-            const searchRes = await apiCall('search_campings', { lat: lastWp.lat, lng: lastWp.lng, radius_km: 40, limit: 3 });
+            const searchRes = await apiCall('search_campings', { lat: lastWp.lat, lng: lastWp.lng, radius_km: 40, limit: 6 });
             if (searchRes.status === 'success' && searchRes.results && searchRes.results.length > 0) {
                 options = searchRes.results;
                 daySchedule.overnight_options = options;
@@ -4709,7 +4724,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="camping-card-img-wrap">
-                <img src="${photoSrc}" alt="${camp.name}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
+                <img src="${escapeCampText(photoSrc)}" alt="${escapeCampText(camp.name)}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
                 ${previewBadge}
             </div>
         `;
@@ -4728,6 +4743,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
         }
+        badgesHtml += park4nightBadgeHtml(camp);
         badgesHtml += '</div>';
 
         const selectedBadgeText = window.t ? window.t('camping_selected_badge') : '✓ Wybrany';
@@ -4739,11 +4755,11 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
             ${badgeTop}
             ${photoHtml}
             <div class="camping-card-header">
-                <h4>${camp.name}</h4>
-                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${camp.address}</div>` : ''}
+                <h4>${escapeCampText(camp.name)}</h4>
+                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : ''}
+                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : (camp.price_info ? `<span class="camping-card-cost">${escapeCampText(camp.price_info)}</span>` : '')}
                 </div>
                 ${badgesHtml}
             </div>
@@ -4950,7 +4966,7 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="camping-card-img-wrap">
-                <img src="${photoSrc}" alt="${camp.name}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
+                <img src="${escapeCampText(photoSrc)}" alt="${escapeCampText(camp.name)}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
                 ${previewBadge}
             </div>
         `;
@@ -4968,16 +4984,17 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
         }
+        badgesHtml += park4nightBadgeHtml(camp);
         badgesHtml += '</div>';
 
         card.innerHTML = `
             ${photoHtml}
             <div class="camping-card-header">
-                <h4>${camp.name}</h4>
-                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${camp.address}</div>` : ''}
+                <h4>${escapeCampText(camp.name)}</h4>
+                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : ''}
+                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : (camp.price_info ? `<span class="camping-card-cost">${escapeCampText(camp.price_info)}</span>` : '')}
                 </div>
                 ${badgesHtml}
             </div>

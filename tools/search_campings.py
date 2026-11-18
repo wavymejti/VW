@@ -2,18 +2,20 @@
 Camping search tool for the VW California AI Trip Planner.
 
 Searches for campgrounds matching user filters near a given location.
-Uses PostGIS database first, falls back to Google Maps Places API
-if insufficient results are found.
+Uses PostGIS database first; if insufficient results are found, queries
+Google Maps Places API and park4night (unofficial app endpoint, POC) in parallel.
 
 See: architecture/camping_search_sop.md
 """
 
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import text
 
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message, places_nearby_basic
+from tools import park4night_client
 
 
 def search_campings(
@@ -58,17 +60,35 @@ def search_campings(
         vw_compatible, limit,
     )
 
-    # Step 2: If insufficient results, fall back to Google Maps
+    # Step 2: If insufficient results, ask Google Maps and park4night in parallel
     if len(db_results) < 3:
-        maps_results = _search_google_maps(lat, lng, radius_km)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            maps_future = pool.submit(_search_google_maps, lat, lng, radius_km)
+            p4n_future = pool.submit(
+                _search_park4night, lat, lng, radius_km, amenities
+            )
+            maps_results = maps_future.result()
+            p4n_results = p4n_future.result()
+
         # Cache new results in the database
         _cache_maps_results(maps_results)
-        # Merge results, avoiding duplicates by place_id
+        _cache_maps_results(p4n_results)
+
+        # Merge external results nearest-first, avoiding duplicates by place_id
+        external = maps_results + p4n_results
+        for camp in external:
+            if camp.get("distance_km") is None and camp.get("lat") is not None:
+                camp["distance_km"] = round(park4night_client.haversine_km(
+                    lat, lng, camp["lat"], camp["lng"]), 1)
+        external.sort(key=lambda c: (c.get("distance_km") is None,
+                                     c.get("distance_km") or 0))
+
         existing_ids = {c["place_id"] for c in db_results if c["place_id"]}
-        for camp in maps_results:
+        for camp in external:
             if camp["place_id"] not in existing_ids:
                 db_results.append(camp)
-        source = "mixed" if maps_results else "database"
+                existing_ids.add(camp["place_id"])
+        source = "mixed" if external else "database"
     else:
         source = "database"
 
@@ -252,12 +272,35 @@ def _search_google_maps(lat, lng, radius_km):
         return []
 
 
+def _search_park4night(lat, lng, radius_km, amenities):
+    """
+    Overnight spots from park4night (POC). Required amenities are
+    applied locally; price and VW-compatibility filters are not (no data).
+
+    Returns:
+        list: List of camping dictionaries with source 'park4night'.
+    """
+    if not park4night_client.is_enabled():
+        return []
+    amenity_map = {
+        "power": "has_power",
+        "water": "has_water",
+        "wifi": "has_wifi",
+        "showers": "has_showers",
+        "toilets": "has_toilets",
+        "waste_disposal": "has_waste_disposal",
+    }
+    required = [amenity_map[a.lower()] for a in amenities if a.lower() in amenity_map]
+    spots = park4night_client.search_spots(lat, lng, radius_km=radius_km)
+    return [s for s in spots if all(s.get(col) for col in required)]
+
+
 def _cache_maps_results(campings):
     """
-    Cache Google Maps results into the local database for future queries.
+    Cache external results (Google Maps, park4night) into the local database.
 
     Args:
-        campings (list): List of camping dicts from Google Maps.
+        campings (list): List of camping dicts from an external source.
     """
     if not campings:
         return
@@ -286,13 +329,20 @@ def _cache_maps_results(campings):
                     text("""
                         INSERT INTO campings
                             (name, lat, lng, location, place_id,
-                             address, rating, review_count, photos, source)
+                             address, country, rating, review_count,
+                             photos, source,
+                             has_power, has_water, has_wifi, has_showers,
+                             has_toilets, has_waste_disposal,
+                             shore_power_hookup)
                         VALUES
                             (:name, :lat, :lng,
                              ST_SetSRID(ST_MakePoint(:lng, :lat),
                              4326)::geography,
-                             :place_id, :address, :rating,
-                             :review_count, :photos, 'google_maps')
+                             :place_id, :address, :country, :rating,
+                             :review_count, :photos, :source,
+                             :has_power, :has_water, :has_wifi, :has_showers,
+                             :has_toilets, :has_waste_disposal,
+                             :shore_power_hookup)
                     """),
                     {
                         "name": camp["name"],
@@ -300,9 +350,18 @@ def _cache_maps_results(campings):
                         "lng": camp["lng"],
                         "place_id": camp["place_id"],
                         "address": camp.get("address"),
+                        "country": camp.get("country"),
                         "rating": camp.get("rating"),
                         "review_count": camp.get("review_count", 0),
                         "photos": camp.get("photos", []),
+                        "source": camp.get("source") or "google_maps",
+                        "has_power": bool(camp.get("has_power")),
+                        "has_water": bool(camp.get("has_water")),
+                        "has_wifi": bool(camp.get("has_wifi")),
+                        "has_showers": bool(camp.get("has_showers")),
+                        "has_toilets": bool(camp.get("has_toilets")),
+                        "has_waste_disposal": bool(camp.get("has_waste_disposal")),
+                        "shore_power_hookup": bool(camp.get("shore_power_hookup")),
                     },
                 )
 
