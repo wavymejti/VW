@@ -19,11 +19,11 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Default model for all interactions
-MODEL_NAME = "gpt-4o-mini"
+MODEL_NAME = "gpt-6-luna"
 
 # Whether the selected model supports the `reasoning_effort` parameter.
 # gpt-4o / gpt-4o-mini do NOT support it (only o-series/reasoning models do).
-REASONING_SUPPORTED = False
+REASONING_SUPPORTED = True
 
 # VW brand system prompt — streamlined tool calling
 SYSTEM_PROMPT = """# SYSTEM PROMPT — Asystent Podróży Volkswagen Sniffer (VW California)
