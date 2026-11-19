@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 
 from tools.db import get_engine
-from tools.openai_client import get_client, MODEL_NAME
+from tools.openai_client import get_client, MODEL_NAME, chat_kwargs
 
 
 # Default embedding model (1536 dimensions, highly cost-effective)
@@ -389,7 +389,7 @@ def extract_memories_from_message(user_id: str, user_message: str) -> List[Dict[
                 {"role": "user", "content": user_message},
             ],
             response_format={"type": "json_object"},
-            temperature=0.1,
+            **chat_kwargs(temperature=0.1),
         )
 
         content = response.choices[0].message.content or "{}"

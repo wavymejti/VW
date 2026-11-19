@@ -25,6 +25,34 @@ MODEL_NAME = "gpt-6-luna"
 # gpt-4o / gpt-4o-mini do NOT support it (only o-series/reasoning models do).
 REASONING_SUPPORTED = True
 
+def _is_reasoning_model(model):
+    """GPT-4o / GPT-3.5 family: classic parameters; newer (GPT-5+, o-series): reasoning."""
+    name = (model or "").lower()
+    return not (name.startswith("gpt-4") or name.startswith("gpt-3"))
+
+
+def chat_kwargs(max_tokens=None, temperature=None, model=None):
+    """
+    Model-specific parameters for chat.completions.create.
+
+    Reasoning models (GPT-6 Luna/Sol) reject `max_tokens` and `temperature` with a
+    400 "Invalid request"; they take `max_completion_tokens` and, for tool calls in
+    Chat Completions, `reasoning_effort="none"`. Older models take the classic ones.
+    """
+    kwargs = {}
+    reasoning = REASONING_SUPPORTED if model is None else _is_reasoning_model(model)
+    if reasoning:
+        kwargs["reasoning_effort"] = "none"
+        if max_tokens:
+            kwargs["max_completion_tokens"] = max_tokens
+    else:
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+    return kwargs
+
+
 # VW brand system prompt — streamlined tool calling
 SYSTEM_PROMPT = """# SYSTEM PROMPT — Asystent Podróży Volkswagen Sniffer (VW California)
 

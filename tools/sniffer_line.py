@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from tools.openai_client import get_client, MODEL_NAME
+from tools.openai_client import get_client, MODEL_NAME, chat_kwargs
 from tools.tts_service import clean_text_for_speech
 
 # Separate setting so this call can use a faster/cheaper model than the planner.
@@ -110,9 +110,9 @@ def make_sniffer_line(user_message, reply_text, lang="en", client=None):
                 },
             ],
             response_format=RESPONSE_FORMAT,
-            max_tokens=200 if is_english else 1500,
-            temperature=0.3,
             timeout=30,
+            **chat_kwargs(max_tokens=200 if is_english else 1500, temperature=0.3,
+                          model=SNIFFER_LINE_MODEL),
         )
         line = json.loads(response.choices[0].message.content)
     except Exception as e:  # noqa: BLE001 — Sniffer must never break the chat
