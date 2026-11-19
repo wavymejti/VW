@@ -919,8 +919,18 @@
     }
 };
 
+// English-only for now: the whole app (UI, chat, Sniffer) runs in English and the
+// language switchers are hidden. PL/DE translations stay; set false to bring them back.
+const ENGLISH_ONLY = true;
+
 class I18nManager {
     constructor() {
+        if (ENGLISH_ONLY) {
+            this.currentLang = 'en';
+            try { localStorage.setItem('vw_app_lang', 'en'); } catch (e) { /* storage may be unavailable */ }
+            document.documentElement.lang = 'en';
+            return;
+        }
         const saved = localStorage.getItem('vw_app_lang');
         if (saved && translations[saved]) {
             this.currentLang = saved;
@@ -932,6 +942,7 @@ class I18nManager {
 
     t(key, params = {}) {
         let text = (translations[this.currentLang] && translations[this.currentLang][key]) ||
+                   (translations['en'] && translations['en'][key]) ||
                    (translations['pl'] && translations['pl'][key]) || key;
         
         for (const [pKey, pVal] of Object.entries(params)) {
@@ -942,6 +953,7 @@ class I18nManager {
 
     setLanguage(lang, reload = false) {
         if (!translations[lang]) return;
+        if (ENGLISH_ONLY && lang !== 'en') return;
         this.currentLang = lang;
         localStorage.setItem('vw_app_lang', lang);
         document.documentElement.lang = lang;
@@ -961,6 +973,12 @@ class I18nManager {
     }
 
     updateStaticUI() {
+        if (ENGLISH_ONLY) {
+            ['lang-switcher', 'chat-lang-dropdown'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+        }
         document.querySelectorAll('[data-i18n]').forEach(el => {
             const key = el.getAttribute('data-i18n');
             if (key) {

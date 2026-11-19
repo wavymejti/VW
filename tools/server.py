@@ -362,7 +362,7 @@ def api_get_travel_suggestions():
     duration filtering (all, weekend, week, expedition).
     """
     user_id = session.get("user_id")
-    lang = request.args.get("lang", "pl")
+    lang = _lang(request.args.get("lang"))
     duration = request.args.get("duration", "all")
     if duration not in ("all", "weekend", "week", "expedition"):
         duration = "all"
@@ -443,6 +443,16 @@ def api_select_travel_suggestion():
 
 
 from tools.trip_store import _sanitize_for_json, _get_trip_data  # noqa: E402
+
+# English-only for now (UI, chat replies, Sniffer). APP_ENGLISH_ONLY=0 brings PL/DE back.
+ENGLISH_ONLY = os.getenv("APP_ENGLISH_ONLY", "1") != "0"
+
+
+def _lang(requested):
+    """The language to answer in: always English while ENGLISH_ONLY is on."""
+    if ENGLISH_ONLY:
+        return "en"
+    return requested or "pl"
 
 
 @app.route("/api/trip/<trip_id>", methods=["GET"])
@@ -626,7 +636,7 @@ def api_reverse_location():
     data = request.get_json() or {}
     lat = data.get("lat")
     lng = data.get("lng")
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
 
     result = reverse_geocode_coordinates(lat, lng, lang=lang)
     return jsonify(result)
@@ -642,7 +652,7 @@ def api_chat():
     """
     data = request.get_json() or {}
     user_message = data.get("message", "").strip()
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
     user_location = data.get("user_location") or data.get("location")
 
     if not user_message:
@@ -1254,7 +1264,7 @@ def api_generate_summary():
 
     format = data.get("format", "image_slideshow")
     music_track = data.get("music_track")
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
 
     result = generate_summary(
         trip_id=trip_id,
@@ -1438,7 +1448,7 @@ def api_transcribe():
     Transcribe uploaded audio file (from MediaRecorder or voice input)
     using OpenAI Whisper API with graceful fallback.
     """
-    lang = request.form.get("lang", "pl")
+    lang = _lang(request.form.get("lang"))
 
     if "file" not in request.files and "audio" not in request.files:
         if lang == "de":
@@ -1543,7 +1553,7 @@ def api_tts_speak():
 
         data = request.get_json(silent=True) or {}
         text = data.get("text", "")
-        lang = data.get("lang", "pl")
+        lang = _lang(data.get("lang"))
         voice = data.get("voice", "onyx")
         eleven_voice_id = data.get("eleven_voice_id")
 

@@ -141,7 +141,8 @@ def send_message(session, user_message, trip_id=None, user_location=None):
         elif lang == "en":
             lang_context = (
                 "[SYSTEM NOTE] User interface language is set to English (en). "
-                "Respond in English. Maintain the VW California vanlife companion tone: "
+                "Always respond in English — also when the user writes in Polish, German or "
+                "another language. Maintain the VW California vanlife companion tone: "
                 "knowledgeable road-trip buddy, conversational, warm, enthusiastic about camper life. "
                 "Use appropriate campervan terminology (shore power / hookup, pop-up roof, campsite / RV pitch, wild camping / boondocking). "
                 "Plan the route as soon as start, destination and dates are known or can be inferred — "
