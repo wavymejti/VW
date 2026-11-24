@@ -138,7 +138,8 @@ def _normalize_overnight_stops(overnight_stops, client=None):
     for item in overnight_stops:
         place = _ensure_coords(item, client)
         if place:
-            resolved.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"]})
+            resolved.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
+                             **({"seq": place["seq"]} if "seq" in place else {})})
         else:
             failed.append(item.get("label") if isinstance(item, dict) else str(item))
     return resolved, failed
@@ -216,7 +217,7 @@ def _normalize_stays(stays, client, destination):
             dest_days += days
             continue
         places.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
-                       "stay_days": days})
+                       "stay_days": days, **({"seq": item["seq"]} if "seq" in item else {})})
     return dest_days, places, failed
 
 
@@ -443,6 +444,7 @@ def plan_route(
     stays=None,
     rest_day_every=None,
     allow_far_waypoints=False,
+    route_stops=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -471,6 +473,10 @@ def plan_route(
             They are part of num_days.
         rest_day_every (int): Add one day off at the campsite after every N driving
             days (also part of num_days).
+        route_stops (list): Stops in the order the user gave them (the start form):
+            [{"label", "lat", "lng", "nights", "leg": "out" | "back"}]. nights 0 = pass
+            through, 1 = one night there, n = a stay of n-1 full days. "back" stops are on
+            the way home of a round trip. The route keeps this order (no reordering).
 
     Returns:
         dict: Complete trip plan with daily schedules, plus `warnings`
@@ -481,6 +487,36 @@ def plan_route(
 
     client = get_maps_client()
     warnings = []
+
+    # The start form gives the stops in travel order: keep that order everywhere.
+    ordered = bool(route_stops)
+    route_out, route_back = [], []
+    if ordered:
+        waypoints = list(waypoints or [])
+        overnight_stops = list(overnight_stops or [])
+        stays = list(stays or [])
+        for seq, stop in enumerate(route_stops):
+            place = _ensure_coords(stop, client)
+            if place is None:
+                warnings.append(f"Could not locate the stop '{(stop or {}).get('label')}'; it is skipped.")
+                continue
+            place = {"label": place["label"], "lat": place["lat"], "lng": place["lng"], "seq": seq}
+            leg = stop.get("leg") or "out"
+            if leg == "back" and round_trip:
+                route_back.append(place)
+            elif leg != "turn":  # "turn": a night at the destination itself
+                route_out.append(place)
+            try:
+                nights = max(0, int(stop.get("nights") or 0))
+            except (TypeError, ValueError):
+                nights = 0
+            if nights == 0:
+                waypoints.append(place)
+            elif nights == 1:
+                overnight_stops.append(place)
+            else:
+                stays.append({**place, "days": nights - 1})
+        allow_far_waypoints = True  # the user placed every stop on purpose
 
     origin = _ensure_coords(origin, client)
     destination = _ensure_coords(destination, client)
@@ -562,7 +598,12 @@ def plan_route(
     normalized_waypoints = kept_waypoints
 
     # Step 1: Get the total route via Google Maps
-    total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
+    if ordered:
+        # Every stop (also the ones to sleep at) shapes the route, in the user's order.
+        total_route = _compute_total_route(origin, destination, round_trip, route_out,
+                                           return_waypoints=route_back, ordered=True)
+    else:
+        total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
 
     if total_route["status"] == "error":
         return total_route
@@ -606,7 +647,10 @@ def plan_route(
         forced_stops.append({"label": destination["label"], "lat": destination["lat"],
                              "lng": destination["lng"], "stay_days": dest_stay_days,
                              "turnaround": True})
-    if stay_places or (round_trip and dest_stay_days):
+    if ordered and all("seq" in st for st in forced_stops if not st.get("turnaround")):
+        turn_key = max([p["seq"] for p in route_out], default=-1) + 0.5
+        forced_stops.sort(key=lambda st: turn_key if st.get("turnaround") else st["seq"])
+    elif stay_places or (round_trip and dest_stay_days):
         forced_stops.sort(key=lambda st: _route_position(legs, st["lat"], st["lng"]))
     one_way_dest_stay = bool(dest_stay_days) and not round_trip
     metric = "distance" if max_daily_km else "duration"
@@ -1022,7 +1066,8 @@ def plan_route(
     }
 
 
-def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
+def _compute_total_route(origin, destination, round_trip=False, waypoints=None,
+                         return_waypoints=None, ordered=False):
     """
     Compute the total route between origin and destination
     using Google Maps Directions API.
@@ -1037,11 +1082,17 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
         client = get_maps_client()
         normalized_wps = _normalize_waypoints(waypoints, client)
         wp_list = [f"{wp['lat']},{wp['lng']}" for wp in normalized_wps]
-        
+        # ordered: the user's order (start form), Google must not reorder the stops
+        optimize = len(wp_list) > 1 and not ordered
+
         if round_trip:
             # Add destination to waypoints as the turnaround point if it's different from origin
             if destination['label'] != origin['label']:
                 wp_list.append(f"{destination['lat']},{destination['lng']}")
+            # Stops on the way home come after the turnaround.
+            wp_list += [f"{wp['lat']},{wp['lng']}"
+                        for wp in _normalize_waypoints(return_waypoints, client)]
+            optimize = len(wp_list) > 1 and not ordered
                 
             directions = client.directions(
                 origin=f"{origin['lat']},{origin['lng']}",
@@ -1050,7 +1101,7 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
                 mode="driving",
                 departure_time="now",
                 traffic_model="best_guess",
-                optimize_waypoints=True if len(wp_list) > 1 else False
+                optimize_waypoints=optimize
             )
         else:
             directions = client.directions(
@@ -1060,7 +1111,7 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
                 mode="driving",
                 departure_time="now",
                 traffic_model="best_guess",
-                optimize_waypoints=True if len(wp_list) > 1 else False
+                optimize_waypoints=optimize
             )
 
         if not directions:

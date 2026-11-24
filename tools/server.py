@@ -25,7 +25,7 @@ import uuid
 
 from tools import audius_service
 
-from navigation.chat_handler import create_chat_session, send_message
+from navigation.chat_handler import create_chat_session, send_message, send_form
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
@@ -696,6 +696,35 @@ def api_chat():
         result["sniffer"] = make_sniffer_line(user_message, result["text"], lang=lang)
 
     return jsonify(result)
+
+
+@app.route("/api/plan_form", methods=["POST"])
+def api_plan_form():
+    """
+    Plan the first route from the start form (Direct / Point-to-point / Turnaround).
+
+    Same chat session as /api/chat (conversation_id), so the user can change the trip
+    in the chat afterwards. Response like /api/chat, plus `summary` (the form as a message).
+    """
+    data = request.get_json() or {}
+    form = data.get("form") or {}
+    lang = _lang(data.get("lang"))
+    user_id = session.get("user_id")
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=user_id, trip_id=None, lang=lang,
+                            conversation_id=conversation_id)
+    chat["lang"] = lang
+    result = send_form(chat, form, user_location=data.get("user_location"))
+
+    key = chat.get("_key")
+    if key in _CHAT_SESSIONS and chat.get("active_trip_id"):
+        _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
+        session["active_trip_id"] = chat["active_trip_id"]
+
+    if result.get("text") and result.get("status") in ("success", "partial"):
+        result["sniffer"] = make_sniffer_line(result.get("summary") or "", result["text"], lang=lang)
+    status = 400 if result.get("status") == "error" and not result.get("tool_calls") else 200
+    return jsonify(result), status
 
 
 @app.route("/api/chat/history", methods=["GET"])

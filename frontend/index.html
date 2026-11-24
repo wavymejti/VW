@@ -167,6 +167,63 @@
                 <div class="chat-welcome" id="chat-welcome">
                     <h2 class="welcome-heading" id="welcome-chat-heading" data-i18n="chat_welcome_heading">Dokąd dzisiaj zmierzamy?</h2>
                     <p class="welcome-sub" data-i18n="chat_welcome_sub">Zaprojektuj trasę dla swojego VW California lub skorzystaj z rekomendacji AI dopasowanych do Twojego stylu podróży.</p>
+
+                    <!-- Start form: the first route from structured fields, the chat takes over after it -->
+                    <form class="trip-form" id="trip-form" novalidate>
+                        <div class="tf-modes" role="radiogroup" aria-label="Trip type">
+                            <button type="button" class="tf-mode active" data-mode="direct" role="radio" aria-checked="true">
+                                <span class="tf-mode-name">Direct</span><span class="tf-mode-hint">A → B</span>
+                            </button>
+                            <button type="button" class="tf-mode" data-mode="p2p" role="radio" aria-checked="false">
+                                <span class="tf-mode-name">Point-to-point</span><span class="tf-mode-hint">A → stops → B</span>
+                            </button>
+                            <button type="button" class="tf-mode" data-mode="turnaround" role="radio" aria-checked="false">
+                                <span class="tf-mode-name">Turnaround</span><span class="tf-mode-hint">A → B → A</span>
+                            </button>
+                        </div>
+
+                        <div class="tf-row">
+                            <label class="tf-field">
+                                <span>From</span>
+                                <input type="text" id="tf-origin" placeholder="City or place" autocomplete="off" maxlength="120">
+                            </label>
+                            <label class="tf-field">
+                                <span>To</span>
+                                <input type="text" id="tf-destination" placeholder="City or place" autocomplete="off" maxlength="120">
+                            </label>
+                        </div>
+
+                        <div class="tf-stops" id="tf-stops-wrap" hidden>
+                            <div class="tf-stops-title" id="tf-stops-title">Stops on the way</div>
+                            <div class="tf-stop-list" id="tf-stops"></div>
+                            <button type="button" class="tf-add-stop" data-list="tf-stops">+ Add stop</button>
+                        </div>
+
+                        <div class="tf-stops" id="tf-back-wrap" hidden>
+                            <div class="tf-stops-title">Stops on the way back</div>
+                            <div class="tf-stop-list" id="tf-back-stops"></div>
+                            <button type="button" class="tf-add-stop" data-list="tf-back-stops">+ Add stop</button>
+                        </div>
+
+                        <div class="tf-row">
+                            <label class="tf-field tf-field-small">
+                                <span>Start</span>
+                                <input type="date" id="tf-start">
+                            </label>
+                            <label class="tf-field tf-field-small">
+                                <span>Days</span>
+                                <input type="number" id="tf-days" min="1" max="60" placeholder="Auto">
+                            </label>
+                            <label class="tf-field tf-field-small" id="tf-dest-nights-wrap" hidden>
+                                <span>Nights at destination</span>
+                                <select id="tf-dest-nights"></select>
+                            </label>
+                        </div>
+
+                        <div class="tf-error" id="tf-error" role="alert" hidden></div>
+                        <button type="submit" class="tf-submit" id="tf-submit">Plan the route</button>
+                        <div class="tf-or">or just tell Sniffer below</div>
+                    </form>
                 </div>
 
                 <!-- Typing Indicator -->

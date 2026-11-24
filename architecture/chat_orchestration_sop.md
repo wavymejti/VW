@@ -107,6 +107,30 @@ Generating a route is expensive, so it is a **separate, explicitly confirmed ste
 
 ---
 
+## Start Form (`POST /api/plan_form`)
+
+The first route can come from a form on the chat's welcome screen instead of free text:
+
+| Mode | Route | plan_route arguments |
+|---|---|---|
+| Direct | A → B | origin, destination, start_date, num_days |
+| Point-to-point | A → stop 1 → … → B | + `route_stops` (leg `out`) |
+| Turnaround | A → stops there → B → stops back → A | `round_trip`, `route_stops` (`out`, `turn`, `back`), destination nights ≥ 2 → `stays` |
+
+Each stop has `nights`: 0 = pass through, 1 = one night, n = a stay of n−1 full days. With
+`route_stops` the planner keeps the user's order (no Google waypoint optimisation). An empty
+"Days" field is estimated (`navigation/plan_form.estimate_days`).
+`chat_handler.send_form` adds the form summary as the user's message and the plan_route call
+without asking the model, so the model only describes the result; the same chat session
+(conversation_id) continues with this trip.
+
+## Tool Rounds
+
+After tools run, the model is asked again; if it calls more tools (e.g. `search_campings`,
+then `set_overnight`), those run too, up to `MAX_TOOL_ROUNDS` (4). The last round is
+text-only. Without a text reply the user gets `_fallback_text`, which says what actually
+happened (never "route planned" after a search).
+
 ## Post-Planning Mode
 
 Once a route is planned, the backend injects:

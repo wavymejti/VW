@@ -1835,6 +1835,11 @@ async function sendMessage(text) {
     if (mapSendBtn) mapSendBtn.disabled = mapInput ? mapInput.value.trim().length === 0 : true;
 
 
+    handleChatResult(result);
+}
+
+// What a chat (or start form) reply does: bubble, Sniffer, map and campsites.
+function handleChatResult(result) {
     if (result.status === 'success' || result.status === 'partial') {
         addMessage('assistant', result.text);
         speakSnifferLine(result.sniffer);
@@ -2729,8 +2734,202 @@ function notifySnifferTyping(inputEl) {
     }
 }
 
+// ── Start form: Direct / Point-to-point / Turnaround ─────────────
+// The first route comes from structured fields (free text was not always understood
+// for a first plan); the chat takes over after it. POST /api/plan_form.
+const tripFormState = { mode: 'direct' };
+
+function _isoDate(d) {
+    const z = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+}
+
+// Places Autocomplete when the Maps library is there; plain text otherwise (the server geocodes).
+function attachPlaceAutocomplete(input) {
+    if (!input || input.dataset.acAttached) return;
+    input.addEventListener('input', () => {
+        delete input.dataset.lat;
+        delete input.dataset.lng;
+    });
+    const tryAttach = () => {
+        if (input.dataset.acAttached) return;
+        if (!(window.google && google.maps && google.maps.places && google.maps.places.Autocomplete)) return;
+        input.dataset.acAttached = '1';
+        const ac = new google.maps.places.Autocomplete(input, { fields: ['geometry', 'name', 'formatted_address'] });
+        ac.addListener('place_changed', () => {
+            const place = ac.getPlace();
+            if (place && place.geometry && place.geometry.location) {
+                input.dataset.lat = place.geometry.location.lat();
+                input.dataset.lng = place.geometry.location.lng();
+                if (place.name) input.value = place.name;
+            }
+        });
+    };
+    input.addEventListener('focus', tryAttach);
+    tryAttach();
+}
+
+function _readPlace(input) {
+    const label = (input.value || '').trim();
+    if (!label) return null;
+    const place = { label };
+    if (input.dataset.lat && input.dataset.lng) {
+        place.lat = Number(input.dataset.lat);
+        place.lng = Number(input.dataset.lng);
+    }
+    return place;
+}
+
+function addStopRow(listId, data = {}) {
+    const list = document.getElementById(listId);
+    if (!list || list.children.length >= 10) return;
+    const row = document.createElement('div');
+    row.className = 'tf-stop';
+    const nightsOptions = [0, 1, 2, 3, 4, 5, 6, 7]
+        .map(n => `<option value="${n}">${n === 0 ? 'Drive through' : `${n} night${n > 1 ? 's' : ''}`}</option>`)
+        .join('');
+    row.innerHTML = `
+        <input type="text" class="tf-stop-place" placeholder="Stop ${list.children.length + 1}" autocomplete="off" maxlength="120">
+        <select class="tf-stop-nights" aria-label="Nights at this stop">${nightsOptions}</select>
+        <button type="button" class="tf-stop-remove" aria-label="Remove stop">×</button>
+    `;
+    const input = row.querySelector('.tf-stop-place');
+    if (data.label) input.value = data.label;
+    row.querySelector('.tf-stop-nights').value = String(data.nights || 0);
+    row.querySelector('.tf-stop-remove').addEventListener('click', () => row.remove());
+    list.appendChild(row);
+    attachPlaceAutocomplete(input);
+    return row;
+}
+
+function _readStops(listId) {
+    const list = document.getElementById(listId);
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.tf-stop')).map(row => {
+        const place = _readPlace(row.querySelector('.tf-stop-place'));
+        if (!place) return null;
+        place.nights = parseInt(row.querySelector('.tf-stop-nights').value, 10) || 0;
+        return place;
+    }).filter(Boolean);
+}
+
+function setTripFormMode(mode) {
+    tripFormState.mode = mode;
+    document.querySelectorAll('#trip-form .tf-mode').forEach(btn => {
+        const on = btn.dataset.mode === mode;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const stopsWrap = document.getElementById('tf-stops-wrap');
+    const backWrap = document.getElementById('tf-back-wrap');
+    const destNights = document.getElementById('tf-dest-nights-wrap');
+    const title = document.getElementById('tf-stops-title');
+    if (stopsWrap) stopsWrap.hidden = mode === 'direct';
+    if (backWrap) backWrap.hidden = mode !== 'turnaround';
+    if (destNights) destNights.hidden = mode !== 'turnaround';
+    if (title) title.textContent = mode === 'turnaround' ? 'Stops on the way there' : 'Stops on the way';
+    if (mode !== 'direct') {
+        const list = document.getElementById('tf-stops');
+        if (list && !list.children.length) addStopRow('tf-stops');
+    }
+}
+
+function _tripFormError(message) {
+    const el = document.getElementById('tf-error');
+    if (!el) return;
+    el.textContent = message || '';
+    el.hidden = !message;
+}
+
+async function submitTripForm(e) {
+    if (e) e.preventDefault();
+    if (state.isTyping) return;
+    _tripFormError('');
+    const originInput = document.getElementById('tf-origin');
+    const destInput = document.getElementById('tf-destination');
+    let origin = _readPlace(originInput);
+    if (!origin && state.userLocation && state.userLocation.lat != null) {
+        origin = {
+            label: state.userLocation.city || state.userLocation.name || 'My location',
+            lat: state.userLocation.lat,
+            lng: state.userLocation.lng,
+        };
+    }
+    const destination = _readPlace(destInput);
+    if (!origin) { _tripFormError('Where do you start?'); originInput.focus(); return; }
+    if (!destination) { _tripFormError('Where are you going?'); destInput.focus(); return; }
+
+    const mode = tripFormState.mode;
+    const form = {
+        mode,
+        origin,
+        destination,
+        start_date: document.getElementById('tf-start').value || null,
+        num_days: document.getElementById('tf-days').value || null,
+    };
+    if (mode !== 'direct') form.stops = _readStops('tf-stops');
+    if (mode === 'turnaround') {
+        form.back_stops = _readStops('tf-back-stops');
+        form.dest_nights = parseInt(document.getElementById('tf-dest-nights').value, 10) || 0;
+    }
+
+    const submitBtn = document.getElementById('tf-submit');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Planning…'; }
+    if (window.snifferAVW) window.snifferAVW.stop();
+    showTyping(true, true);
+    const payload = { form, conversation_id: CHAT_CONVERSATION_ID };
+    if (state.locationEnabled && state.userLocation) payload.user_location = state.userLocation;
+    const result = await apiCall('plan_form', payload);
+    showTyping(false);
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Plan the route'; }
+
+    if (result.status === 'error' && !(result.tool_calls && result.tool_calls.length)) {
+        _tripFormError(result.text || result.message || 'The route could not be planned.');
+        return;
+    }
+    addMessage('user', result.summary || `${origin.label} → ${destination.label}`);
+    handleChatResult(result);
+}
+
+function initTripForm() {
+    const formEl = document.getElementById('trip-form');
+    if (!formEl) return;
+    formEl.querySelectorAll('.tf-mode').forEach(btn =>
+        btn.addEventListener('click', () => setTripFormMode(btn.dataset.mode)));
+    formEl.querySelectorAll('.tf-add-stop').forEach(btn =>
+        btn.addEventListener('click', () => {
+            const row = addStopRow(btn.dataset.list);
+            if (row) row.querySelector('.tf-stop-place').focus();
+        }));
+    const origin = document.getElementById('tf-origin');
+    attachPlaceAutocomplete(origin);
+    attachPlaceAutocomplete(document.getElementById('tf-destination'));
+    if (origin) origin.addEventListener('focus', () => {
+        const loc = state.userLocation;
+        origin.placeholder = (loc && loc.lat != null)
+            ? `My location (${loc.city || loc.name || 'GPS'})` : 'City or place';
+    });
+    const start = document.getElementById('tf-start');
+    if (start) {
+        const today = new Date();
+        const tomorrow = new Date(today.getTime() + 86400000);
+        start.min = _isoDate(today);
+        start.value = _isoDate(tomorrow);
+    }
+    const destNights = document.getElementById('tf-dest-nights');
+    if (destNights) {
+        destNights.innerHTML = [0, 1, 2, 3, 4, 5, 6, 7, 10, 14]
+            .map(n => `<option value="${n}">${n === 0 ? 'Turn straight back' : `${n} night${n > 1 ? 's' : ''}`}</option>`)
+            .join('');
+        destNights.value = '1';
+    }
+    formEl.addEventListener('submit', submitTripForm);
+    setTripFormMode('direct');
+}
+
 // ── Event Listeners ──────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    initTripForm();
     // Language Switcher setup
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {

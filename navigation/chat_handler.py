@@ -90,6 +90,108 @@ def create_chat_session(user_id=None, trip_id=None, lang="pl", load_history=True
     }
 
 
+def _build_system_injections(session, user_message, user_location=None):
+    """This turn's system notes: language, date, the 3-message rule, active trip, user prefs,
+    long-term memories and location."""
+    system_injections = []
+
+    # Add language context injection
+    lang = session.get("lang", "pl")
+    if lang == "de":
+        lang_context = (
+            "[SYSTEM NOTE] User interface language is set to German (de). "
+            "Respond in German. Maintain the VW California vanlife companion tone: "
+            "address the user with informal 'Du', use proper German vanlife terminology "
+            "(Landstrom / CEE-Anschluss, Aufstelldach, Wohnmobilstellplatz / Campingplatz, Freistehen). "
+            "Plan the route as soon as start, destination and dates are known or can be inferred — "
+            "no summary or confirmation question before planning. Never comment on <slot_state>."
+        )
+        system_injections.append({"role": "system", "content": lang_context})
+    elif lang == "en":
+        lang_context = (
+            "[SYSTEM NOTE] User interface language is set to English (en). "
+            "Always respond in English — also when the user writes in Polish, German or "
+            "another language. Maintain the VW California vanlife companion tone: "
+            "knowledgeable road-trip buddy, conversational, warm, enthusiastic about camper life. "
+            "Use appropriate campervan terminology (shore power / hookup, pop-up roof, campsite / RV pitch, wild camping / boondocking). "
+            "Plan the route as soon as start, destination and dates are known or can be inferred — "
+            "no summary or confirmation question before planning. Never comment on <slot_state>."
+        )
+        system_injections.append({"role": "system", "content": lang_context})
+
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d (%A)")
+    date_context = (
+        f"[SYSTEM NOTE] Today is {today_str}. Trips start today or later, never in the past. "
+        "Relative dates ('tomorrow', 'next weekend') count from today. A day or month "
+        "without a year means its NEXT occurrence: if it has already passed this year, "
+        f"use {today.year + 1} (e.g. '1 July' asked now -> {today.year + 1}-07-01)."
+    )
+    system_injections.append({"role": "system", "content": date_context})
+
+    # The first route must come by the user's 3rd message at the latest.
+    if not session.get("active_trip_id"):
+        session["turns_without_plan"] = session.get("turns_without_plan", 0) + 1
+        if session["turns_without_plan"] >= 3:
+            system_injections.append({"role": "system", "content": (
+                f"[SYSTEM NOTE] This is the user's message no. {session['turns_without_plan']} "
+                "and there is no route yet. Call plan_route in THIS turn: assume anything "
+                "missing (start from the user's location or the city mentioned, leave "
+                "tomorrow, a sensible number of days for the distance) and say what you "
+                "assumed. Only ask instead if the destination is completely unknown."
+            )})
+
+    active_trip_id = session.get("active_trip_id")
+    if active_trip_id:
+        # Insert a system reminder right after the main system prompt
+        trip_context = (
+            f"[SYSTEM NOTE] Active trip ID: {active_trip_id}. "
+            "A route is already planned. Changes to THIS trip (via places, exclusions, "
+            "more or fewer days, overnight stops) → modify_route / add_waypoint / "
+            "add_attraction, without re-asking known parameters. A trip with a different "
+            "origin or destination is a NEW trip → briefly confirm, then call plan_route "
+            "with all its parameters (overnight_stops / num_days as the user said)."
+        )
+        system_injections.append({"role": "system", "content": trip_context})
+
+    user_id = _real_user_id(session)
+    if user_id:
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                prefs = conn.execute(
+                    text("SELECT preferences_json FROM users WHERE id = :uid"), 
+                    {"uid": user_id}
+                ).scalar()
+                if prefs and prefs != {}:
+                    pref_context = f"[SYSTEM NOTE] User Preferences: {json.dumps(prefs)}. Keep these preferences in mind."
+                    system_injections.append({"role": "system", "content": pref_context})
+        except Exception as e:
+            print(f"Failed to load user preferences: {e}")
+
+        # Personalized RAG: retrieve and inject semantically relevant long-term memories
+        try:
+            relevant_memories = get_relevant_user_memories(
+                user_id=user_id,
+                query_text=user_message,
+            )
+            if relevant_memories:
+                memory_note = format_memories_for_prompt(relevant_memories)
+                system_injections.append({"role": "system", "content": memory_note})
+        except Exception as e:
+            print(f"[chat_handler] Failed to retrieve user memories: {e}")
+
+    # Inject real-time user location context if provided
+    if user_location and isinstance(user_location, dict):
+        coords = sanitize_coordinates(user_location.get("lat"), user_location.get("lng"))
+        if coords:
+            normalized_loc = dict(user_location)
+            normalized_loc["lat"], normalized_loc["lng"] = coords
+            loc_note = format_location_for_prompt(normalized_loc, lang=lang)
+            system_injections.append({"role": "system", "content": loc_note})
+    return system_injections
+
+
 def send_message(session, user_message, trip_id=None, user_location=None):
     """
     Send a user message, process any function calls,
@@ -124,102 +226,7 @@ def send_message(session, user_message, trip_id=None, user_location=None):
         # Inject active trip context into a temporary system injection
         # so the AI knows a route already exists and enters POST-PLANNING MODE.
         messages_to_send = list(session["history"])
-        system_injections = []
-
-        # Add language context injection
-        lang = session.get("lang", "pl")
-        if lang == "de":
-            lang_context = (
-                "[SYSTEM NOTE] User interface language is set to German (de). "
-                "Respond in German. Maintain the VW California vanlife companion tone: "
-                "address the user with informal 'Du', use proper German vanlife terminology "
-                "(Landstrom / CEE-Anschluss, Aufstelldach, Wohnmobilstellplatz / Campingplatz, Freistehen). "
-                "Plan the route as soon as start, destination and dates are known or can be inferred — "
-                "no summary or confirmation question before planning. Never comment on <slot_state>."
-            )
-            system_injections.append({"role": "system", "content": lang_context})
-        elif lang == "en":
-            lang_context = (
-                "[SYSTEM NOTE] User interface language is set to English (en). "
-                "Always respond in English — also when the user writes in Polish, German or "
-                "another language. Maintain the VW California vanlife companion tone: "
-                "knowledgeable road-trip buddy, conversational, warm, enthusiastic about camper life. "
-                "Use appropriate campervan terminology (shore power / hookup, pop-up roof, campsite / RV pitch, wild camping / boondocking). "
-                "Plan the route as soon as start, destination and dates are known or can be inferred — "
-                "no summary or confirmation question before planning. Never comment on <slot_state>."
-            )
-            system_injections.append({"role": "system", "content": lang_context})
-
-        today = datetime.now()
-        today_str = today.strftime("%Y-%m-%d (%A)")
-        date_context = (
-            f"[SYSTEM NOTE] Today is {today_str}. Trips start today or later, never in the past. "
-            "Relative dates ('tomorrow', 'next weekend') count from today. A day or month "
-            "without a year means its NEXT occurrence: if it has already passed this year, "
-            f"use {today.year + 1} (e.g. '1 July' asked now -> {today.year + 1}-07-01)."
-        )
-        system_injections.append({"role": "system", "content": date_context})
-
-        # The first route must come by the user's 3rd message at the latest.
-        if not session.get("active_trip_id"):
-            session["turns_without_plan"] = session.get("turns_without_plan", 0) + 1
-            if session["turns_without_plan"] >= 3:
-                system_injections.append({"role": "system", "content": (
-                    f"[SYSTEM NOTE] This is the user's message no. {session['turns_without_plan']} "
-                    "and there is no route yet. Call plan_route in THIS turn: assume anything "
-                    "missing (start from the user's location or the city mentioned, leave "
-                    "tomorrow, a sensible number of days for the distance) and say what you "
-                    "assumed. Only ask instead if the destination is completely unknown."
-                )})
-
-        active_trip_id = session.get("active_trip_id")
-        if active_trip_id:
-            # Insert a system reminder right after the main system prompt
-            trip_context = (
-                f"[SYSTEM NOTE] Active trip ID: {active_trip_id}. "
-                "A route is already planned. Changes to THIS trip (via places, exclusions, "
-                "more or fewer days, overnight stops) → modify_route / add_waypoint / "
-                "add_attraction, without re-asking known parameters. A trip with a different "
-                "origin or destination is a NEW trip → briefly confirm, then call plan_route "
-                "with all its parameters (overnight_stops / num_days as the user said)."
-            )
-            system_injections.append({"role": "system", "content": trip_context})
-
-        user_id = _real_user_id(session)
-        if user_id:
-            try:
-                engine = get_engine()
-                with engine.connect() as conn:
-                    prefs = conn.execute(
-                        text("SELECT preferences_json FROM users WHERE id = :uid"), 
-                        {"uid": user_id}
-                    ).scalar()
-                    if prefs and prefs != {}:
-                        pref_context = f"[SYSTEM NOTE] User Preferences: {json.dumps(prefs)}. Keep these preferences in mind."
-                        system_injections.append({"role": "system", "content": pref_context})
-            except Exception as e:
-                print(f"Failed to load user preferences: {e}")
-
-            # Personalized RAG: retrieve and inject semantically relevant long-term memories
-            try:
-                relevant_memories = get_relevant_user_memories(
-                    user_id=user_id,
-                    query_text=user_message,
-                )
-                if relevant_memories:
-                    memory_note = format_memories_for_prompt(relevant_memories)
-                    system_injections.append({"role": "system", "content": memory_note})
-            except Exception as e:
-                print(f"[chat_handler] Failed to retrieve user memories: {e}")
-
-        # Inject real-time user location context if provided
-        if user_location and isinstance(user_location, dict):
-            coords = sanitize_coordinates(user_location.get("lat"), user_location.get("lng"))
-            if coords:
-                normalized_loc = dict(user_location)
-                normalized_loc["lat"], normalized_loc["lng"] = coords
-                loc_note = format_location_for_prompt(normalized_loc, lang=lang)
-                system_injections.append({"role": "system", "content": loc_note})
+        system_injections = _build_system_injections(session, user_message, user_location)
 
         # The follow-up call after tool use needs the same notes (language etc.).
         session["system_injections"] = system_injections
@@ -710,6 +717,15 @@ def _process_response(session, response, trip_id):
     for tc in message.tool_calls:
         _run_tool(session, tc, tool_calls)
 
+    return _finish_after_tools(session, tool_calls, trip_id)
+
+
+def _finish_after_tools(session, tool_calls, trip_id):
+    """
+    After tools ran: ask the model again (running further tool calls, up to
+    MAX_TOOL_ROUNDS), store and return its reply with the tool results.
+    """
+    lang = (session or {}).get("lang", "pl")
     # Get final text response from OpenAI
     try:
         final_kwargs = dict(
@@ -921,3 +937,59 @@ if __name__ == "__main__":
 
         result = send_message(session, user_input)
         print(f"\nAssistant: {result['text']}\n")
+
+
+def send_form(session, form, user_location=None):
+    """
+    Plan the first route from the start form (Direct / Point-to-point / Turnaround).
+
+    The form is turned into plan_route arguments without asking the model, so the first
+    route doesn't depend on free text being understood. The conversation then looks as if
+    the user had asked for it and the model had called plan_route: a user message with the
+    form summary, the tool call and its result; the model only describes the route.
+    Later chat messages change this trip like any other.
+    """
+    from types import SimpleNamespace
+    from navigation.plan_form import form_to_plan_args, FormError
+
+    started = time.monotonic()
+    try:
+        args, summary = form_to_plan_args(form)
+    except FormError as e:
+        return {"status": "error", "text": str(e), "message": str(e), "tool_calls": []}
+
+    # A new trip: the planner gets the logged-in user so it is saved.
+    session["active_trip_id"] = None
+    user_id = _real_user_id(session)
+    if user_id:
+        args["user_id"] = user_id
+        _store_message(user_id, None, "user", summary)
+    session["history"].append({"role": "user", "content": summary})
+
+    try:
+        session["system_injections"] = _build_system_injections(session, summary, user_location)
+        call = SimpleNamespace(
+            id=f"call_form_{uuid.uuid4().hex[:12]}",
+            type="function",
+            function=SimpleNamespace(name="plan_route", arguments=json.dumps(args, default=str)),
+        )
+        session["history"].append({
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": call.id, "type": "function",
+                            "function": {"name": "plan_route", "arguments": call.function.arguments}}],
+        })
+        tool_calls = []
+        _run_tool(session, call, tool_calls)
+        result = _finish_after_tools(session, tool_calls, session.get("active_trip_id"))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        result = {"status": "error", "tool_calls": [],
+                  "text": "Sorry, the route could not be planned right now. Please try again.",
+                  "message": f"{type(e).__name__}: {e}"}
+    result["summary"] = summary
+    log_chat_turn(session.get("user_id"), session.get("lang"), MODEL_NAME, "[form] " + summary,
+                  result, time.monotonic() - started,
+                  active_trip_id=session.get("active_trip_id"),
+                  raw_reply=session.pop("last_raw_reply", None))
+    return result

@@ -4489,3 +4489,84 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     line-height: 1;
     cursor: pointer;
 }
+
+/* ── Start form (Direct / Point-to-point / Turnaround) ─────────── */
+.trip-form {
+    max-width: 560px;
+    margin: 20px auto 0;
+    padding: 18px;
+    background: var(--vw-bg);
+    border: 1px solid var(--vw-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 18px rgba(0, 30, 80, 0.08);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.tf-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tf-mode {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 10px 6px;
+    border: 1.5px solid var(--vw-border);
+    border-radius: var(--radius);
+    background: var(--vw-bg-alt);
+    color: var(--vw-primary);
+    cursor: pointer;
+    font: inherit;
+}
+.tf-mode:hover { border-color: var(--vw-accent); }
+.tf-mode.active { border-color: var(--vw-primary); background: var(--vw-primary); color: var(--vw-text-light); }
+.tf-mode-name { font-weight: 700; font-size: 0.9rem; }
+.tf-mode-hint { font-size: 0.75rem; opacity: 0.8; }
+.tf-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.tf-field { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; font-weight: 600; color: var(--vw-text-secondary); }
+.tf-field-small { flex: 1 1 130px; }
+.tf-field input, .tf-field select, .tf-stop input, .tf-stop select {
+    padding: 9px 10px;
+    border: 1px solid var(--vw-border);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--vw-text);
+    background: var(--vw-bg);
+    min-width: 0;
+}
+.tf-field input:focus, .tf-field select:focus, .tf-stop input:focus, .tf-stop select:focus {
+    outline: 2px solid var(--vw-accent);
+    outline-offset: -1px;
+}
+.tf-stops { display: flex; flex-direction: column; gap: 6px; }
+.tf-stops[hidden], .tf-field[hidden], .tf-error[hidden] { display: none; }
+.tf-stops-title { font-size: 0.78rem; font-weight: 600; color: var(--vw-text-secondary); }
+.tf-stop-list { display: flex; flex-direction: column; gap: 6px; }
+.tf-stop { display: grid; grid-template-columns: 1fr 160px 32px; gap: 6px; align-items: center; }
+.tf-stop-remove {
+    width: 32px; height: 32px;
+    border: none; border-radius: 50%;
+    background: transparent; color: var(--vw-text-muted);
+    font-size: 1.2rem; cursor: pointer;
+}
+.tf-stop-remove:hover { background: var(--vw-bg-alt); color: var(--vw-error); }
+.tf-add-stop {
+    align-self: flex-start;
+    border: none; background: none; padding: 2px 0;
+    color: var(--vw-accent); font: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.tf-error { color: var(--vw-error); font-size: 0.85rem; font-weight: 600; }
+.tf-submit {
+    padding: 12px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--vw-primary);
+    color: var(--vw-text-light);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.tf-submit:hover { background: var(--vw-accent); }
+.tf-submit:disabled { opacity: 0.6; cursor: wait; }
+.tf-or { text-align: center; font-size: 0.8rem; color: var(--vw-text-muted); }
