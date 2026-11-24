@@ -489,6 +489,179 @@ def _sanitize_messages_for_openai(messages):
     return sanitized
 
 
+MAX_TOOL_ROUNDS = 4
+
+
+def _run_tool(session, tc, tool_calls):
+    """Run one tool call from the model, record it in `tool_calls` and the history."""
+    fn_name = tc.function.name
+    
+    try:
+        fn_args = json.loads(tc.function.arguments)
+    except json.JSONDecodeError:
+        try:
+            import ast
+            # gpt-4o-mini sometimes outputs Python dict string instead of JSON
+            # or adds trailing commas. ast.literal_eval can parse some of these.
+            cleaned = tc.function.arguments.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+            fn_args = ast.literal_eval(cleaned)
+        except Exception:
+            print(f"  ⚠️ Failed to parse JSON or AST: {tc.function.arguments}")
+            fn_args = {}
+
+    print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
+
+    # Inject active_trip_id into mutation tool calls if not provided
+    if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint",
+                   "set_overnight", "get_trip_summary"):
+        if "trip_id" not in fn_args and session.get("active_trip_id"):
+            fn_args["trip_id"] = session["active_trip_id"]
+
+    # Inject user_id into plan_route / modify_route so the trip
+    # gets persisted in the DB (AI doesn't know the logged-in user).
+    if fn_name in ("plan_route", "modify_route", "add_waypoint"):
+        if "user_id" not in fn_args and _real_user_id(session):
+            fn_args["user_id"] = _real_user_id(session)
+
+    # modify_route re-plans from the stored trip; an anonymous trip isn't stored,
+    # so fill what the call leaves out from the trip planned in this conversation.
+    # Only when the call changes something: filling these into a notes-only call
+    # would make it look like a change and re-plan the same trip.
+    if fn_name in ("modify_route", "add_waypoint") and session.get("last_plan"):
+        if fn_name == "add_waypoint" or has_concrete_change(fn_args):
+            for key, val in session["last_plan"].items():
+                if key == "waypoints":
+                    fn_args["_conversation_waypoints"] = val
+                elif fn_args.get(key) is None and val is not None:
+                    fn_args[key] = val
+
+    # Dispatch to the appropriate tool
+    tool_result = dispatch(fn_name, fn_args)
+    if fn_name == "suggest_attractions" and tool_result.get("status") == "error" \
+            and session.get("last_trip_rows"):
+        # Trip not in the DB (anonymous / not saved): use the one from this chat.
+        tool_result = dispatch(fn_name, {**fn_args, "schedules": session["last_trip_rows"]})
+    tool_calls.append({
+        "function_name": fn_name,
+        "arguments": fn_args,
+        "result": tool_result,
+    })
+
+    # Remember the trip's parameters for later modify_route calls.
+    if fn_name in ("plan_route", "modify_route", "add_waypoint") \
+            and tool_result.get("status") == "success" and tool_result.get("trip"):
+        trip = tool_result.get("trip") or {}
+        session["last_plan"] = {
+            "waypoints": [
+                {k: w.get(k) for k in ("label", "lat", "lng", "place_id", "emoji",
+                                       "color", "category_label", "notes")}
+                for d in tool_result.get("daily_schedules") or []
+                for w in d.get("waypoints") or []
+                if w.get("type") in ("attraction", "waypoint")
+            ],
+            "origin": trip.get("origin") or fn_args.get("origin"),
+            "destination": trip.get("destination") or fn_args.get("destination"),
+            "start_date": trip.get("start_date") or fn_args.get("start_date"),
+            "num_days": tool_result.get("num_days") or fn_args.get("num_days"),
+            **{k: fn_args.get(k) for k in (
+                "round_trip", "stays", "rest_day_every", "overnight_stops",
+                "overnight_preferences", "max_daily_km", "max_daily_drive_hours",
+                "preferred_amenities")},
+        }
+
+    # Remember a compact view of the trip for get_trip_summary.
+    if fn_name in ("plan_route", "modify_route", "add_waypoint", "set_overnight") \
+            and tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
+        session["last_trip_summary"] = _compact_trip(tool_result)
+        session["last_trip_rows"] = [
+            (d.get("day_number"), d.get("waypoints") or [], d.get("route_polyline"))
+            for d in tool_result["daily_schedules"]
+        ]
+    if fn_name == "get_trip_summary":
+        if tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
+            tool_result = _compact_trip(tool_result)
+        elif session.get("last_trip_summary"):
+            tool_result = session["last_trip_summary"]
+        tool_calls[-1]["result"] = tool_result
+
+    # Persist the new trip_id when a route is planned or modified
+    if fn_name in ("plan_route", "modify_route", "add_waypoint"):
+        new_trip_id = (
+            tool_result.get("trip", {}).get("id")
+            or tool_result.get("trip_id")
+        )
+        if new_trip_id:
+            session["active_trip_id"] = new_trip_id
+
+    # MUST append tool response IMMEDIATELY after assistant's tool call for OpenAI contract
+    session["history"].append({
+        "role": "tool",
+        "tool_call_id": tc.id,
+        "name": fn_name,
+        "content": json.dumps(_for_model(tool_result), default=str)
+    })
+
+    if fn_name == "plan_route" and tool_result.get("status") == "success":
+        session["history"].append({
+            "role": "system",
+            "content": (
+                "[SYSTEM NOTE] Route planned successfully. Describe it only from the tool result "
+                "(days, overnight campsites). If the result has `warnings`, tell the user about "
+                "them plainly. Then briefly ask whether to find 3-5 attractions on the way, "
+                "asking first about their interests (e.g. castles, museums, nature). "
+                "Reply in the user's interface language."
+            )
+        })
+
+
+def _with_injections(session):
+    """The history with this turn's system notes (language, date, trip) after the system prompt."""
+    history = session["history"]
+    injections = session.get("system_injections") or []
+    if injections and history:
+        return [history[0], *injections, *history[1:]]
+    return history
+
+
+def _fallback_text(tool_calls, lang="en"):
+    """
+    What to show when the model gives no text after its tools: say what actually happened,
+    never claim a route was planned when it wasn't.
+    """
+    ok = {}
+    errors = []
+    for tc in tool_calls:
+        res = tc.get("result") or {}
+        if res.get("status") == "success":
+            ok.setdefault(tc.get("function_name"), res)
+        elif res.get("message"):
+            errors.append(res["message"])
+    route_tools = ("plan_route", "modify_route", "add_waypoint", "add_attraction", "edit_waypoint")
+    if lang == "pl":
+        if any(n in ok for n in route_tools):
+            return "Trasa jest zaktualizowana: punkty i noclegi są na mapie i w kartach dni."
+        if "set_overnight" in ok:
+            return ok["set_overnight"].get("message") or "Nocleg został zmieniony."
+        if "search_campings" in ok:
+            n = ok["search_campings"].get("results_count") or len(ok["search_campings"].get("results") or [])
+            return (f"Znalazłem {n} miejsc na nocleg — są na liście. Wybierz jedno i powiedz, "
+                    "na którą noc je ustawić.")
+        if errors:
+            return "Nie udało się: " + errors[-1]
+        return "Gotowe."
+    if any(n in ok for n in route_tools):
+        return "Your route is updated: all stops and campsites are on the map and in the day cards."
+    if "set_overnight" in ok:
+        return ok["set_overnight"].get("message") or "The overnight spot is changed."
+    if "search_campings" in ok:
+        n = ok["search_campings"].get("results_count") or len(ok["search_campings"].get("results") or [])
+        return (f"I found {n} places to stay — they're in the list. Pick one and tell me which "
+                "night to put it on.")
+    if errors:
+        return "That didn't work: " + errors[-1]
+    return "Done."
+
+
 def _process_response(session, response, trip_id):
     """
     Process OpenAI response, handling function calls if present.
@@ -530,156 +703,38 @@ def _process_response(session, response, trip_id):
             "slots_complete": _slots_complete(slot_state),
         }
 
-    # Process function calls
-    # Add model's response to history
+    # Process function calls: run them, ask the model again, and repeat while it keeps
+    # calling tools (e.g. search_campings, then set_overnight with a result), up to
+    # MAX_TOOL_ROUNDS. Tool calls in a follow-up reply used to be dropped silently.
     session["history"].append(message.model_dump(exclude_unset=True))
-
     for tc in message.tool_calls:
-        fn_name = tc.function.name
-        
-        try:
-            fn_args = json.loads(tc.function.arguments)
-        except json.JSONDecodeError:
-            try:
-                import ast
-                # gpt-4o-mini sometimes outputs Python dict string instead of JSON
-                # or adds trailing commas. ast.literal_eval can parse some of these.
-                cleaned = tc.function.arguments.replace('true', 'True').replace('false', 'False').replace('null', 'None')
-                fn_args = ast.literal_eval(cleaned)
-            except Exception:
-                print(f"  ⚠️ Failed to parse JSON or AST: {tc.function.arguments}")
-                fn_args = {}
-
-        print(f"  🔧 Tool call: {fn_name}({str(fn_args)[:100]}...)")
-
-        # Inject active_trip_id into mutation tool calls if not provided
-        if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint",
-                       "set_overnight", "get_trip_summary"):
-            if "trip_id" not in fn_args and session.get("active_trip_id"):
-                fn_args["trip_id"] = session["active_trip_id"]
-
-        # Inject user_id into plan_route / modify_route so the trip
-        # gets persisted in the DB (AI doesn't know the logged-in user).
-        if fn_name in ("plan_route", "modify_route", "add_waypoint"):
-            if "user_id" not in fn_args and _real_user_id(session):
-                fn_args["user_id"] = _real_user_id(session)
-
-        # modify_route re-plans from the stored trip; an anonymous trip isn't stored,
-        # so fill what the call leaves out from the trip planned in this conversation.
-        # Only when the call changes something: filling these into a notes-only call
-        # would make it look like a change and re-plan the same trip.
-        if fn_name in ("modify_route", "add_waypoint") and session.get("last_plan"):
-            if fn_name == "add_waypoint" or has_concrete_change(fn_args):
-                for key, val in session["last_plan"].items():
-                    if key == "waypoints":
-                        fn_args["_conversation_waypoints"] = val
-                    elif fn_args.get(key) is None and val is not None:
-                        fn_args[key] = val
-
-        # Dispatch to the appropriate tool
-        tool_result = dispatch(fn_name, fn_args)
-        if fn_name == "suggest_attractions" and tool_result.get("status") == "error" \
-                and session.get("last_trip_rows"):
-            # Trip not in the DB (anonymous / not saved): use the one from this chat.
-            tool_result = dispatch(fn_name, {**fn_args, "schedules": session["last_trip_rows"]})
-        tool_calls.append({
-            "function_name": fn_name,
-            "arguments": fn_args,
-            "result": tool_result,
-        })
-
-        # Remember the trip's parameters for later modify_route calls.
-        if fn_name in ("plan_route", "modify_route", "add_waypoint") \
-                and tool_result.get("status") == "success" and tool_result.get("trip"):
-            trip = tool_result.get("trip") or {}
-            session["last_plan"] = {
-                "waypoints": [
-                    {k: w.get(k) for k in ("label", "lat", "lng", "place_id", "emoji",
-                                           "color", "category_label", "notes")}
-                    for d in tool_result.get("daily_schedules") or []
-                    for w in d.get("waypoints") or []
-                    if w.get("type") in ("attraction", "waypoint")
-                ],
-                "origin": trip.get("origin") or fn_args.get("origin"),
-                "destination": trip.get("destination") or fn_args.get("destination"),
-                "start_date": trip.get("start_date") or fn_args.get("start_date"),
-                "num_days": tool_result.get("num_days") or fn_args.get("num_days"),
-                **{k: fn_args.get(k) for k in (
-                    "round_trip", "stays", "rest_day_every", "overnight_stops",
-                    "overnight_preferences", "max_daily_km", "max_daily_drive_hours",
-                    "preferred_amenities")},
-            }
-
-        # Remember a compact view of the trip for get_trip_summary.
-        if fn_name in ("plan_route", "modify_route", "add_waypoint", "set_overnight") \
-                and tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
-            session["last_trip_summary"] = _compact_trip(tool_result)
-            session["last_trip_rows"] = [
-                (d.get("day_number"), d.get("waypoints") or [], d.get("route_polyline"))
-                for d in tool_result["daily_schedules"]
-            ]
-        if fn_name == "get_trip_summary":
-            if tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
-                tool_result = _compact_trip(tool_result)
-            elif session.get("last_trip_summary"):
-                tool_result = session["last_trip_summary"]
-            tool_calls[-1]["result"] = tool_result
-
-        # Persist the new trip_id when a route is planned or modified
-        if fn_name in ("plan_route", "modify_route", "add_waypoint"):
-            new_trip_id = (
-                tool_result.get("trip", {}).get("id")
-                or tool_result.get("trip_id")
-            )
-            if new_trip_id:
-                session["active_trip_id"] = new_trip_id
-
-        # MUST append tool response IMMEDIATELY after assistant's tool call for OpenAI contract
-        session["history"].append({
-            "role": "tool",
-            "tool_call_id": tc.id,
-            "name": fn_name,
-            "content": json.dumps(_for_model(tool_result), default=str)
-        })
-
-        if fn_name == "plan_route" and tool_result.get("status") == "success":
-            session["history"].append({
-                "role": "system",
-                "content": (
-                    "[SYSTEM NOTE] Route planned successfully. Describe it only from the tool result "
-                    "(days, overnight campsites). If the result has `warnings`, tell the user about "
-                    "them plainly. Then briefly ask whether to find 3-5 attractions on the way, "
-                    "asking first about their interests (e.g. castles, museums, nature). "
-                    "Reply in the user's interface language."
-                )
-            })
+        _run_tool(session, tc, tool_calls)
 
     # Get final text response from OpenAI
     try:
-        history = session["history"]
-        injections = session.get("system_injections") or []
-        if injections and history:
-            history = [history[0], *injections, *history[1:]]
-        sanitized_history = _sanitize_messages_for_openai(history)
         final_kwargs = dict(
             model=MODEL_NAME,
-            messages=sanitized_history,
             tools=session["tools"],
         )
         if REASONING_SUPPORTED:
             final_kwargs["reasoning_effort"] = "none"
-        final_response = session["client"].chat.completions.create(**final_kwargs)
-        final_message = final_response.choices[0].message
+        final_message = None
+        for round_no in range(1, MAX_TOOL_ROUNDS + 1):
+            final_kwargs["messages"] = _sanitize_messages_for_openai(_with_injections(session))
+            if round_no == MAX_TOOL_ROUNDS:
+                final_kwargs["tool_choice"] = "none"  # last round: text only
+            final_response = session["client"].chat.completions.create(**final_kwargs)
+            final_message = final_response.choices[0].message
+            if not final_message.tool_calls or round_no == MAX_TOOL_ROUNDS:
+                break
+            session["history"].append(final_message.model_dump(exclude_unset=True))
+            for tc in final_message.tool_calls:
+                _run_tool(session, tc, tool_calls)
         final_text = final_message.content if final_message and final_message.content else None
         session["last_raw_reply"] = final_text
 
         if not final_text:
-            if lang == 'de':
-                final_text = "Hier ist deine geplante Route! Alle Wegpunkte und empfohlenen Campingplätze wurden auf der Karte hinzugefügt. Du kannst die Details auf der Karte einsehen."
-            elif lang == 'en':
-                final_text = "Here's your planned route! All stops and recommended campsites are on the map — check the day cards for details."
-            else:
-                final_text = "Oto Twoja zaplanowana trasa! Wszystkie punkty trasy oraz rekomendowane kempingi zostały pomyślnie wyznaczone. Przejdź do zakładki Mapa lub sprawdź kartę podsumowania poniżej."
+            final_text = _fallback_text(tool_calls, lang)
 
         session["history"].append({"role": "assistant", "content": final_text})
 
@@ -716,6 +771,14 @@ def _process_response(session, response, trip_id):
                     summary += f"- {fn}: Erfolgreich ausgeführt\n"
                 else:
                     summary += f"- {fn}: Fehler - {tc.get('result', {}).get('message', '')}\n"
+        elif lang == 'en':
+            summary = "Here's what was done:\n"
+            for tc in tool_calls:
+                fn = tc.get('function_name', '')
+                if tc.get("result", {}).get("status") == "success":
+                    summary += f"- {fn}: done\n"
+                else:
+                    summary += f"- {fn}: failed - {tc.get('result', {}).get('message', '')}\n"
         else:
             summary = "Oto podsumowanie wykonanych akcji:\n"
             for tc in tool_calls:
