@@ -913,7 +913,7 @@ async function loadCampingsOnMap() {
             }
 
             // Build badges for amenities and CEE power
-            let badgesHtml = '<div class="camping-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">' + campPriceBadgeHtml(camp);
+            let badgesHtml = '<div class="camping-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">';
             if (camp.shore_power_hookup || camp.has_power || camp.hookup_type === '230V CEE' || (camp.amenities && camp.amenities.includes('power'))) {
                 badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
             }
@@ -934,7 +934,7 @@ async function loadCampingsOnMap() {
             const infoWindowContent = `
                 <div class="camping-infowindow" style="padding:6px; max-width:220px;">
                     <h4 style="margin:0 0 4px 0; color:#001E50; font-size:14px;">${camp.name}</h4>
-                    ${camp.rating ? `<div style="font-size:12px; color:#555;">⭐ ${camp.rating}</div>` : ''}
+                    <div style="font-size:12px; color:#555; display:flex; gap:8px;">${camp.rating ? `<span>⭐ ${camp.rating}</span>` : ''}${campPriceTextHtml(camp)}</div>
                     ${badgesHtml}
                 </div>
             `;
@@ -4847,8 +4847,9 @@ function showCampsiteReviewBar(tripData) {
 }
 
 // ── Camping Selection Modal Functions ─────────────────────────
-// Free or paid, on every place to stay (backend: tools/camping_price.py).
-function campPriceBadgeHtml(camp) {
+// Free or paid, on every place to stay (backend: tools/camping_price.py),
+// shown as text next to the rating.
+function campPriceTextHtml(camp) {
     let kind = camp && camp.price_kind;
     let label = camp && camp.price_label;
     if (!kind) {
@@ -4861,8 +4862,7 @@ function campPriceBadgeHtml(camp) {
             label = 'Price not listed';
         }
     }
-    const icon = kind === 'free' ? '🆓' : kind === 'paid' ? '💶' : '❔';
-    return `<span class="camping-badge price-badge price-${kind}">${icon} ${escapeCampText(label)}</span>`;
+    return `<span class="camping-card-price price-${kind}">${escapeCampText(label)}</span>`;
 }
 
 function park4nightBadgeHtml(camp) {
@@ -5007,7 +5007,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         `;
 
         // Build badges
-        let badgesHtml = '<div class="camping-card-badges">' + campPriceBadgeHtml(camp);
+        let badgesHtml = '<div class="camping-card-badges">';
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
             badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
@@ -5036,6 +5036,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
                 ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
+                    ${campPriceTextHtml(camp)}
                 </div>
                 ${badgesHtml}
             </div>
@@ -5300,7 +5301,7 @@ function openCampingSearchModal(campingsList, locationTitle = 'Places to stay ne
             </div>
         `;
 
-        let badgesHtml = '<div class="camping-card-badges">' + campPriceBadgeHtml(camp);
+        let badgesHtml = '<div class="camping-card-badges">';
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
             badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
@@ -5323,6 +5324,7 @@ function openCampingSearchModal(campingsList, locationTitle = 'Places to stay ne
                 ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
+                    ${campPriceTextHtml(camp)}
                 </div>
                 ${badgesHtml}
             </div>

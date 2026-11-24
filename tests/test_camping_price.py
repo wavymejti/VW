@@ -19,6 +19,9 @@ import tools.search_campings as sc
     ({"source": "google_maps"}, "paid", "Paid · price not listed"),
     ({"place_id": "ChIJabc"}, "paid", "Paid · price not listed"),
     ({"source": "park4night", "place_id": "p4n:1"}, "unknown", "Price not listed"),
+    ({"source": "park4night", "name": "Kemp Malen"}, "paid", "Paid · price not listed"),
+    ({"source": "park4night", "name": "kemp -chatky-Doctor"}, "paid", "Paid · price not listed"),
+    ({"source": "park4night", "name": "Parking by the lake"}, "unknown", "Price not listed"),
 ])
 def test_price_of(camp, kind, label):
     assert price_of(camp) == {"price_kind": kind, "price_label": label}

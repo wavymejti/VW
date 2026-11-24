@@ -21,6 +21,11 @@ HOST_CODES = {"F"}  # farms / wineries hosting campers: free, a purchase is welc
 
 PAID_SOURCES = {"google_maps", "partner_db", "user_submitted"}
 
+# A name like "Kemp Malen" or "Tom's Camping" is a campsite, so a paid place.
+CAMPSITE_NAME = re.compile(
+    r"\b(camping\w*|campsite|camp|kemp\w*|kamp\w*|campeggio|caravan\w*|autocamp\w*|"
+    r"zeltplatz|pole namiotowe|stellplatz)\b", re.IGNORECASE)
+
 
 # park4night's price texts are often French; the app shows them in plain words.
 _PRICE_WORDS = [
@@ -79,7 +84,7 @@ def price_of(camp):
 
     source = camp.get("source") or ("google_maps" if not camp.get("spot_code") and camp.get("place_id")
                                     and not str(camp.get("place_id")).startswith("p4n:") else None)
-    if source in PAID_SOURCES:
+    if source in PAID_SOURCES or CAMPSITE_NAME.search(camp.get("name") or ""):
         return {"price_kind": "paid", "price_label": "Paid · price not listed"}
     return {"price_kind": "unknown", "price_label": "Price not listed"}
 
