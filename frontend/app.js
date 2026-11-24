@@ -2940,8 +2940,12 @@ function initTripForm() {
 // line, the line is simplified to a start, an end and up to MAX_DRAWN_VIA pass-through
 // points, and /api/plan_form (mode "drawn") plans the route along it. Mouse input is
 // ignored on purpose: this is the touch mode.
-const IS_TOUCH_SCREEN = !!((window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)
-    || (navigator.maxTouchPoints || 0) > 0);
+// Checked again on every change: DevTools device mode or a tablet keyboard dock can switch
+// it after the page has loaded, and the first touch on the page shows the button too.
+function isTouchScreen() {
+    return !!((window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)
+        || (navigator.maxTouchPoints || 0) > 0);
+}
 const MAX_DRAWN_VIA = 10;
 const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null };
 
@@ -3179,8 +3183,18 @@ function initDrawRoute() {
     const btn = _drawEl('btn-draw-route');
     const layer = _drawEl('draw-layer');
     if (!btn || !layer) return;
-    btn.hidden = !IS_TOUCH_SCREEN;
-    if (!IS_TOUCH_SCREEN) return;
+    const update = (touch = isTouchScreen()) => {
+        btn.hidden = !touch;
+        if (!touch && drawState.active) stopDrawing();
+    };
+    update();
+    if (window.matchMedia) {
+        const mq = window.matchMedia('(any-pointer: coarse)');
+        if (mq.addEventListener) mq.addEventListener('change', () => update());
+    }
+    window.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') update(true);
+    }, { capture: true, passive: true });
     btn.addEventListener('click', () => (drawState.active ? stopDrawing() : startDrawing()));
     layer.addEventListener('pointerdown', _onDrawDown);
     layer.addEventListener('pointermove', _onDrawMove);

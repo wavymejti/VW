@@ -102,6 +102,9 @@ _ATTRACTIONS_CACHE = {}
 
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_vw_planner")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+# index.html changes show up on reload, without restarting the server (debug is off).
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 # --- Authentication ---
 
