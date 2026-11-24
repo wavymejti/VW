@@ -1035,6 +1035,20 @@ def api_add_attraction():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _route_fingerprint(trip_id):
+    """Short hash of the trip's day routes; changes whenever any day's route changes."""
+    import hashlib
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(
+                "SELECT day_number, COALESCE(route_polyline, '') FROM daily_schedules "
+                "WHERE trip_id = :tid ORDER BY day_number"), {"tid": trip_id}).fetchall()
+    except Exception:
+        return ""
+    digest = hashlib.md5("|".join(f"{d}:{p}" for d, p in rows).encode()).hexdigest()
+    return digest[:12]
+
+
 @app.route("/api/attractions/<trip_id>", methods=["GET"])
 def api_get_attractions(trip_id):
     """
@@ -1057,8 +1071,10 @@ def api_get_attractions(trip_id):
     # Default sample interval raised to 80 km to reduce API call count
     sample_every_km = float(request.args.get("sample_every_km", 80))
 
-    # Build a cache key
-    cache_key = f"{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}"
+    # Build a cache key. It includes a fingerprint of the route: a trip changed in place
+    # (extended, part redrawn, a night moved) keeps its id but needs new attractions.
+    cache_key = (f"{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}:"
+                 f"{_route_fingerprint(trip_id)}")
     if cache_key in _ATTRACTIONS_CACHE:
         print(f"[api_get_attractions] RAM Cache HIT for {cache_key}", flush=True)
         return jsonify(_ATTRACTIONS_CACHE[cache_key])

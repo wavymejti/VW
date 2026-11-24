@@ -102,3 +102,31 @@ def test_a_trip_ending_at_a_campsite_goes_on_from_there(env):
 ])
 def test_lines_that_cannot_extend(env, trip_id, line, code):
     assert re_.extend_route(trip_id, line)["code"] == code
+
+
+def test_attractions_cache_follows_route_changes(monkeypatch):
+    """After extending (same trip id), /api/attractions must not serve the old days."""
+    import tools.server as server
+    routes = {"v": [(1, "abc")]}
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, *a, **k):
+            return type("R", (), {"fetchall": lambda _s: routes["v"]})()
+
+    monkeypatch.setattr(server, "get_engine", lambda: type("E", (), {"connect": lambda _s: Conn()})())
+    calls = []
+    monkeypatch.setattr(server, "suggest_attractions",
+                        lambda **k: calls.append(1) or {"status": "success", "attractions_by_day": {"1": []}})
+    monkeypatch.setattr(server, "get_trip_attractions_cache", lambda *a: None)
+    monkeypatch.setattr(server, "save_trip_attractions_cache", lambda *a: None)
+    server._ATTRACTIONS_CACHE.clear()
+    with server.app.test_client() as c:
+        c.get("/api/attractions/t1")
+        c.get("/api/attractions/t1")
+        assert len(calls) == 1                    # same route: cached
+        routes["v"] = [(1, "abc"), (2, "def")]    # trip extended
+        c.get("/api/attractions/t1")
+        assert len(calls) == 2                    # new route: fetched again
+    server._ATTRACTIONS_CACHE.clear()
