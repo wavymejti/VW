@@ -72,6 +72,19 @@ the end is put on it first; then `plan_route` plans the new part from there (sta
 after the last day, the line's points as `via_points`, optional days at the new destination)
 and its days are appended. The trip's destination, end date and title follow the new end.
 
+## Fuel, EV charging and lunch stops (`/api/route_stops`, `find_route_stops`)
+
+`tools/route_stops.py` gives every driving day a clock (departure, default 09:00; driving at
+the day's average speed; a 15 min break every 2 h) and picks target points: fuel when ~75%
+of the tank range is used (the tank carries over days; T6.1 diesel 800 km, eHybrid 750 km),
+charging when the battery reaches 20% (full each morning, fast charge to 80%; ID. Buzz
+380 km), lunch where the clock reaches 12:45. Places come from OpenStreetMap via Overpass
+(`tools/osm_client.py`, one query per request, cached) — no Google Places cost. A chosen
+place is added as a `waypoint` with `service`, emoji and `planned_time` at its position on
+the day (`navigation/route_stop_add.py`); only that day is recalculated. Attractions are
+re-fetched only when the trip's shape changes (day ends, 10 km steps of day length), not
+when such a stop is added.
+
 ## Output Schema
 
 ```json

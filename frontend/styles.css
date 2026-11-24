@@ -4657,3 +4657,36 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     cursor: pointer;
 }
 .draw-mode-btn.active { background: var(--vw-primary); border-color: var(--vw-primary); color: var(--vw-text-light); }
+
+/* ── Fuel / charging / lunch stops panel ─────────────────────── */
+.stops-panel {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 7;
+    width: min(520px, calc(100% - 140px));
+    max-height: calc(100% - 140px);
+    overflow-y: auto;
+    padding: 14px 16px;
+    background: var(--vw-bg);
+    color: var(--vw-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 6px 24px rgba(0, 30, 80, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.stops-panel[hidden] { display: none; }
+.stops-title { font-weight: 700; font-size: 1.05rem; padding-right: 32px; }
+.stops-results { display: flex; flex-direction: column; gap: 10px; }
+.stops-target { border-top: 1px solid var(--vw-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.stops-when { display: flex; flex-direction: column; gap: 2px; }
+.stops-when span { font-size: 0.78rem; color: var(--vw-text-secondary); }
+.stops-place { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; background: var(--vw-bg-alt); border-radius: var(--radius); }
+.stops-name { font-weight: 700; font-size: 0.9rem; }
+.stops-extra { font-size: 0.75rem; color: var(--vw-text-secondary); }
+.stops-add { border: none; border-radius: 999px; padding: 6px 14px; background: var(--vw-primary); color: #fff; font: inherit; font-weight: 700; font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
+.stops-add:disabled { background: var(--vw-success); cursor: default; }
+.stops-empty { font-size: 0.85rem; color: var(--vw-text-secondary); }
+.stops-credit { font-size: 0.7rem; color: var(--vw-text-muted); text-align: right; }

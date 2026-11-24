@@ -524,7 +524,7 @@ def _run_tool(session, tc, tool_calls):
 
     # Inject active_trip_id into mutation tool calls if not provided
     if fn_name in ("modify_route", "add_attraction", "suggest_attractions", "edit_waypoint", "add_waypoint",
-                   "set_overnight", "get_trip_summary"):
+                   "set_overnight", "get_trip_summary", "find_route_stops", "add_route_stop"):
         if "trip_id" not in fn_args and session.get("active_trip_id"):
             fn_args["trip_id"] = session["active_trip_id"]
 
@@ -548,6 +548,11 @@ def _run_tool(session, tc, tool_calls):
 
     # Dispatch to the appropriate tool
     tool_result = dispatch(fn_name, fn_args)
+    if fn_name == "find_route_stops" and tool_result.get("code") == "not_saved" \
+            and session.get("last_trip_rows"):
+        # Trip not in the DB (anonymous): search along the one planned in this chat.
+        from tools.route_stops import schedules_from_rows
+        tool_result = dispatch(fn_name, {**fn_args, "schedules": schedules_from_rows(session["last_trip_rows"])})
     if fn_name == "suggest_attractions" and tool_result.get("status") == "error" \
             and session.get("last_trip_rows"):
         # Trip not in the DB (anonymous / not saved): use the one from this chat.
@@ -581,7 +586,7 @@ def _run_tool(session, tc, tool_calls):
         }
 
     # Remember a compact view of the trip for get_trip_summary.
-    if fn_name in ("plan_route", "modify_route", "add_waypoint", "set_overnight") \
+    if fn_name in ("plan_route", "modify_route", "add_waypoint", "set_overnight", "add_route_stop") \
             and tool_result.get("status") == "success" and tool_result.get("daily_schedules"):
         session["last_trip_summary"] = _compact_trip(tool_result)
         session["last_trip_rows"] = [

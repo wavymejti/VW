@@ -97,6 +97,10 @@ def dispatch(function_name, arguments):
         return _handle_set_overnight(arguments)
     if function_name == "edit_waypoint":
         return _handle_edit_waypoint(arguments)
+    if function_name == "find_route_stops":
+        return _handle_find_route_stops(arguments)
+    if function_name == "add_route_stop":
+        return _handle_add_route_stop(arguments)
 
     if function_name not in TOOL_REGISTRY:
         return {
@@ -186,6 +190,36 @@ MODIFY_CHANGE_KEYS = (
 
 def has_concrete_change(arguments):
     return any((arguments or {}).get(k) not in (None, "", []) for k in MODIFY_CHANGE_KEYS)
+
+
+def _handle_find_route_stops(arguments):
+    """Chat tool: where and when to stop for fuel / charging / lunch (OpenStreetMap, no Google cost)."""
+    from tools.trip_store import get_trip_data
+    from tools.route_stops import plan_route_stops
+
+    data = get_trip_data(arguments.get("trip_id")) if arguments.get("trip_id") else None
+    schedules = (data or {}).get("daily_schedules") or arguments.get("schedules")
+    if not schedules:
+        return {"status": "error", "code": "not_saved", "message": "No planned route to search along."}
+    result = plan_route_stops(schedules, arguments.get("kind"), arguments.get("vehicle") or "diesel",
+                              arguments.get("departure") or "09:00", arguments.get("day_number"))
+    if result.get("status") == "success":
+        result["saved_trip"] = bool(data)
+    return result
+
+
+def _handle_add_route_stop(arguments):
+    """Chat tool: put one place from find_route_stops on its day (saved trips)."""
+    from navigation.route_stop_add import add_route_stop
+
+    place = {k: arguments.get(k) for k in ("name", "lat", "lng", "osm_id")}
+    result = add_route_stop(arguments.get("trip_id"), arguments.get("day_number"), place,
+                            arguments.get("kind"), arguments.get("eta"))
+    if result.get("status") == "success":
+        data = result.pop("trip_data") or {}
+        result.update({"trip": data.get("trip"), "daily_schedules": data.get("daily_schedules"),
+                       "trip_id": arguments.get("trip_id")})
+    return result
 
 
 def _handle_set_overnight(arguments):
@@ -1593,6 +1627,55 @@ OPENAI_TOOL_DEFINITIONS = [
                 "required": ["trip_id", "day_number", "action", "waypoint_index"],
             },
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_route_stops",
+            "description": (
+                "Where and when to stop along the planned route for fuel (kind 'fuel'), EV charging "
+                "('ev_charging') or lunch ('restaurant'). Times assume departure at 09:00 and the "
+                "vehicle's range (diesel T6.1 by default). Returns per day the planned time, the reason "
+                "and up to 3 places from OpenStreetMap nearest to the route. Tell the user the time and "
+                "the best option per stop; add one only when the user wants it (add_route_stop)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["fuel", "ev_charging", "restaurant"]},
+                    "day_number": {"type": "integer", "description": "Only this day (optional)."},
+                    "vehicle": {"type": "string", "enum": ["diesel", "phev", "ev"],
+                                "description": "diesel = California T6.1, phev = California eHybrid, ev = ID. Buzz."},
+                    "departure": {"type": "string", "description": "Departure time HH:MM (default 09:00)."},
+                },
+                "required": ["kind"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_route_stop",
+            "description": (
+                "Add a fuel / charging / lunch place from find_route_stops results to its day "
+                "(exact name, lat, lng from the results; eta = the planned time). Saved trips only."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"},
+                    "day_number": {"type": "integer"},
+                    "kind": {"type": "string", "enum": ["fuel", "ev_charging", "restaurant"]},
+                    "name": {"type": "string"},
+                    "lat": {"type": "number"},
+                    "lng": {"type": "number"},
+                    "osm_id": {"type": "string"},
+                    "eta": {"type": "string", "description": "Planned time HH:MM."},
+                },
+                "required": ["day_number", "kind", "name", "lat", "lng"],
+            },
+        },
     },
     {
         "type": "function",

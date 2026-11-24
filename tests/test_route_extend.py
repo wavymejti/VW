@@ -107,7 +107,8 @@ def test_lines_that_cannot_extend(env, trip_id, line, code):
 def test_attractions_cache_follows_route_changes(monkeypatch):
     """After extending (same trip id), /api/attractions must not serve the old days."""
     import tools.server as server
-    routes = {"v": [(1, "abc")]}
+    day1 = (1, 240.0, [{"lat": 52.4, "lng": 16.9}, {"lat": 51.0, "lng": 15.0}])
+    routes = {"v": [day1]}
 
     class Conn:
         def __enter__(self): return self
@@ -126,7 +127,10 @@ def test_attractions_cache_follows_route_changes(monkeypatch):
         c.get("/api/attractions/t1")
         c.get("/api/attractions/t1")
         assert len(calls) == 1                    # same route: cached
-        routes["v"] = [(1, "abc"), (2, "def")]    # trip extended
+        routes["v"] = [(1, 243.0, day1[2][:1] + [{"lat": 50.9, "lng": 15.1}, day1[2][1]])]
         c.get("/api/attractions/t1")
-        assert len(calls) == 2                    # new route: fetched again
+        assert len(calls) == 1                    # a stop added to the day: no new search
+        routes["v"] = [day1, (2, 300.0, [{"lat": 51.0, "lng": 15.0}, {"lat": 50.1, "lng": 14.4}])]
+        c.get("/api/attractions/t1")
+        assert len(calls) == 2                    # trip extended: fetched again
     server._ATTRACTIONS_CACHE.clear()

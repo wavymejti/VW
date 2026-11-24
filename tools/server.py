@@ -936,6 +936,58 @@ def api_extend_route():
     return jsonify(result)
 
 
+@app.route("/api/route_stops", methods=["POST"])
+def api_route_stops():
+    """
+    Where and when to stop for fuel / EV charging / lunch along the current trip.
+
+    Body: {"trip_id", "kind": "fuel" | "ev_charging" | "restaurant", "vehicle", "departure",
+           "day_number" (optional), "conversation_id"}. Places come from OpenStreetMap
+    (no Google Places cost). Unsaved trips use the route planned in this chat.
+    """
+    from tools.route_stops import plan_route_stops, schedules_from_rows
+
+    data = request.get_json() or {}
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    trip = _get_trip_data(trip_id) if trip_id else None
+    schedules = (trip or {}).get("daily_schedules")
+    if not schedules:
+        conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+        chat = get_chat_session(user_id=session.get("user_id"), trip_id=None,
+                                lang=_lang(data.get("lang")), conversation_id=conversation_id)
+        schedules = schedules_from_rows(chat.get("last_trip_rows"))
+    if not schedules:
+        return jsonify({"status": "error", "message": "Plan a route first."}), 400
+    result = plan_route_stops(schedules, data.get("kind"), data.get("vehicle") or "diesel",
+                              data.get("departure") or "09:00", data.get("day_number"))
+    result["saved_trip"] = bool(trip)
+    return jsonify(result), (200 if result.get("status") == "success" else 400)
+
+
+@app.route("/api/add_route_stop", methods=["POST"])
+def api_add_route_stop():
+    """Put a fuel / charging / lunch place on its day: {"trip_id", "day_number", "kind", "place", "eta"}."""
+    from navigation.route_stop_add import add_route_stop
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to add stops to a saved route."}), 401
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    try:
+        result = add_route_stop(trip_id, data.get("day_number"), data.get("place") or {},
+                                data.get("kind"), data.get("eta"))
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"The stop could not be added: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": f"[SYSTEM NOTE] The user added a stop on the map: {result['message']}"})
+    return jsonify(result)
+
+
 @app.route("/api/add_attraction", methods=["POST"])
 def api_add_attraction():
     """
@@ -1036,17 +1088,27 @@ def api_add_attraction():
 
 
 def _route_fingerprint(trip_id):
-    """Short hash of the trip's day routes; changes whenever any day's route changes."""
+    """
+    Short hash of the trip's shape: each day's end point (~1 km) and length (10 km steps).
+    New days, a moved night or a redrawn stretch change it; a fuel or lunch stop added to a
+    day doesn't, so it doesn't trigger new (paid) attraction searches.
+    """
     import hashlib
+    import json as _json
     try:
         with get_engine().connect() as conn:
             rows = conn.execute(text(
-                "SELECT day_number, COALESCE(route_polyline, '') FROM daily_schedules "
+                "SELECT day_number, driving_km, waypoints FROM daily_schedules "
                 "WHERE trip_id = :tid ORDER BY day_number"), {"tid": trip_id}).fetchall()
     except Exception:
         return ""
-    digest = hashlib.md5("|".join(f"{d}:{p}" for d, p in rows).encode()).hexdigest()
-    return digest[:12]
+    parts = []
+    for day, km, wps in rows:
+        wps = wps if isinstance(wps, list) else _json.loads(wps or "[]")
+        end = wps[-1] if wps else {}
+        parts.append(f"{day}:{round(float(km or 0) / 10)}:"
+                     f"{round(float(end.get('lat') or 0), 2)},{round(float(end.get('lng') or 0), 2)}")
+    return hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
 
 
 @app.route("/api/attractions/<trip_id>", methods=["GET"])

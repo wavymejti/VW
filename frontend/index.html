@@ -336,6 +336,11 @@
                     <span class="btn-label" data-i18n="map_btn_attractions">Atrakcje</span>
                     <span class="attractions-badge" id="attractions-count-badge" style="display:none;">0</span>
                 </button>
+                <!-- Fuel / EV charging / lunch stops along the route (OpenStreetMap; app.js: initRouteStops) -->
+                <button class="map-control-btn" id="btn-route-stops" aria-label="Stops on the way" title="Fuel, charging and lunch stops" hidden>
+                    <span style="font-size: 1.1rem; line-height: 1;">⛽</span>
+                    <span class="btn-label">Stops</span>
+                </button>
                 <!-- Touch screens only: draw the route with a finger (app.js: initDrawRoute) -->
                 <button class="map-control-btn" id="btn-draw-route" aria-label="Draw a route" title="Draw a route with your finger" hidden>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -360,6 +365,31 @@
                 <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span>📍 Place on the route</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
+            </div>
+
+            <!-- Fuel / charging / lunch stops panel -->
+            <div class="stops-panel" id="stops-panel" hidden>
+                <button type="button" class="draw-route-close" id="btn-stops-close" aria-label="Close">×</button>
+                <div class="stops-title">Stops on the way</div>
+                <div class="draw-mode" id="stops-kinds" role="radiogroup" aria-label="Stop type">
+                    <button type="button" class="draw-mode-btn" data-kind="fuel" role="radio">⛽ Fuel</button>
+                    <button type="button" class="draw-mode-btn" data-kind="ev_charging" role="radio">🔌 Charging</button>
+                    <button type="button" class="draw-mode-btn" data-kind="restaurant" role="radio">🍽️ Lunch</button>
+                </div>
+                <div class="tf-row">
+                    <label class="tf-field tf-field-small"><span>Vehicle</span>
+                        <select id="stops-vehicle">
+                            <option value="diesel">California T6.1 (diesel)</option>
+                            <option value="phev">California eHybrid</option>
+                            <option value="ev">ID. Buzz (electric)</option>
+                        </select>
+                    </label>
+                    <label class="tf-field tf-field-small"><span>Departure</span><input type="time" id="stops-departure" value="09:00"></label>
+                </div>
+                <button type="button" class="tf-submit" id="btn-stops-find">Find stops</button>
+                <div class="tf-error" id="stops-error" role="alert" hidden></div>
+                <div class="stops-results" id="stops-results"></div>
+                <div class="stops-credit">Places: © OpenStreetMap contributors</div>
             </div>
 
             <!-- Drawing a route with a finger (touch screens): layer over the map + panel -->

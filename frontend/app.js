@@ -3361,10 +3361,181 @@ function initDrawRoute() {
         b.addEventListener('click', () => setDrawMode(b.dataset.mode)));
 }
 
+// ── Fuel / EV charging / lunch stops along the route ──────────────────
+// /api/route_stops works out when to stop (departure time, vehicle range, lunchtime) and
+// lists places nearest to the route from OpenStreetMap (no Google Places cost).
+// "Add" puts one on its day via /api/add_route_stop (saved trips).
+const stopsState = { kind: 'fuel', markers: [], result: null };
+const STOP_EMOJI = { fuel: '⛽', ev_charging: '🔌', restaurant: '🍽️' };
+
+function _stopsPrefs() {
+    try { return JSON.parse(localStorage.getItem('vw.stops') || '{}') || {}; } catch (e) { return {}; }
+}
+
+function _saveStopsPrefs(prefs) {
+    try { localStorage.setItem('vw.stops', JSON.stringify(prefs)); } catch (e) { /* private mode */ }
+}
+
+function _clearStopMarkers() {
+    stopsState.markers.forEach(m => m.setMap && m.setMap(null));
+    stopsState.markers = [];
+}
+
+function setStopsKind(kind) {
+    stopsState.kind = kind;
+    document.querySelectorAll('#stops-kinds .draw-mode-btn').forEach(b => {
+        const on = b.dataset.kind === kind;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    _drawEl('stops-results').innerHTML = '';
+    _drawEl('stops-error').hidden = true;
+    _clearStopMarkers();
+}
+
+function openStopsPanel() {
+    const prefs = _stopsPrefs();
+    if (prefs.vehicle) _drawEl('stops-vehicle').value = prefs.vehicle;
+    if (prefs.departure) _drawEl('stops-departure').value = prefs.departure;
+    setStopsKind(_drawEl('stops-vehicle').value === 'ev' ? 'ev_charging' : stopsState.kind);
+    const bar = _drawEl('campsite-review-bar');
+    if (bar) bar.hidden = true;
+    _drawEl('stops-panel').hidden = false;
+    _drawEl('btn-route-stops').classList.add('active');
+}
+
+function closeStopsPanel() {
+    _drawEl('stops-panel').hidden = true;
+    _drawEl('btn-route-stops').classList.remove('active');
+    _clearStopMarkers();
+}
+
+function _stopExtras(p) {
+    const bits = [];
+    if (p.kind === 'ev_charging') {
+        if (p.power_kw) bits.push(`${Math.round(p.power_kw)} kW`);
+        if (p.sockets && p.sockets.length) bits.push(p.sockets.join(', '));
+        if (p.operator && p.operator !== p.name) bits.push(p.operator);
+    }
+    if (p.kind === 'restaurant' && p.cuisine) bits.push(p.cuisine);
+    if (p.kind === 'restaurant' && p.fast_food) bits.push('fast food');
+    if (p.kind === 'fuel' && p.brand && p.brand !== p.name) bits.push(p.brand);
+    if (p.kind === 'fuel' && p.lpg) bits.push('LPG');
+    bits.push(p.off_route_km <= 0.3 ? 'on the route' : `${p.off_route_km} km off the route`);
+    return bits.map(escapeCampText).join(' · ');
+}
+
+function renderStops(result) {
+    const box = _drawEl('stops-results');
+    _clearStopMarkers();
+    const targets = result.targets || [];
+    if (!targets.length) {
+        box.innerHTML = `<div class="stops-empty">${escapeCampText(result.message || 'No stops needed.')}</div>`;
+        return;
+    }
+    box.innerHTML = targets.map((t, ti) => `
+        <div class="stops-target">
+            <div class="stops-when"><strong>Day ${t.day_number} · ~${escapeCampText(t.eta)}</strong>
+                <span>after ${escapeCampText(t.after_driving)} of driving · ${escapeCampText(t.reason)}</span></div>
+            ${(t.candidates || []).length ? t.candidates.map((p, pi) => `
+                <div class="stops-place">
+                    <div><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div></div>
+                    ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}">Add</button>` : ''}
+                </div>`).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
+        </div>`).join('') + (result.saved_trip ? '' :
+        '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    box.querySelectorAll('.stops-add').forEach(btn => btn.addEventListener('click', () => {
+        const t = targets[+btn.dataset.t];
+        addRouteStop(t, t.candidates[+btn.dataset.p], btn);
+    }));
+
+    if (state.map && window.google && google.maps && google.maps.Marker) {
+        targets.forEach(t => (t.candidates || []).forEach(p => {
+            stopsState.markers.push(new google.maps.Marker({
+                map: state.map, position: { lat: p.lat, lng: p.lng },
+                title: `${p.name} · day ${t.day_number} ~${t.eta}`,
+                label: { text: STOP_EMOJI[p.kind] || '•', fontSize: '16px' },
+            }));
+        }));
+    }
+}
+
+async function findRouteStops() {
+    const trip = state.currentTrip;
+    const err = _drawEl('stops-error');
+    err.hidden = true;
+    if (!trip) {
+        err.textContent = 'Plan a route first.';
+        err.hidden = false;
+        return;
+    }
+    const prefs = { vehicle: _drawEl('stops-vehicle').value, departure: _drawEl('stops-departure').value || '09:00' };
+    _saveStopsPrefs(prefs);
+    const btn = _drawEl('btn-stops-find');
+    btn.disabled = true;
+    btn.textContent = 'Searching…';
+    const result = await apiCall('route_stops', {
+        trip_id: trip.trip && trip.trip.id, kind: stopsState.kind, ...prefs,
+        conversation_id: CHAT_CONVERSATION_ID,
+    });
+    btn.disabled = false;
+    btn.textContent = 'Find stops';
+    if (result.status !== 'success') {
+        err.textContent = result.message || 'Could not find stops.';
+        err.hidden = false;
+        return;
+    }
+    stopsState.result = result;
+    renderStops(result);
+}
+
+async function addRouteStop(target, place, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    const res = await apiCall('add_route_stop', {
+        trip_id: state.currentTrip.trip.id, day_number: target.day_number, kind: place.kind,
+        place: { name: place.name, lat: place.lat, lng: place.lng, osm_id: place.osm_id },
+        eta: target.eta, conversation_id: CHAT_CONVERSATION_ID,
+    });
+    if (res.status !== 'success' || !res.trip_data) {
+        btn.disabled = false;
+        btn.textContent = 'Add';
+        const err = _drawEl('stops-error');
+        err.textContent = res.message || 'Could not add the stop.';
+        err.hidden = false;
+        return;
+    }
+    btn.textContent = '✓ Added';
+    state.currentTrip = res.trip_data;
+    const markers = stopsState.markers;
+    stopsState.markers = [];            // keep the list's markers while the route redraws
+    displayTripOnMap(res.trip_data);
+    stopsState.markers = markers;
+    addMessage('assistant', res.message);
+}
+
+function initRouteStops() {
+    const btn = _drawEl('btn-route-stops');
+    if (!btn) return;
+    btn.hidden = false;
+    btn.addEventListener('click', () => (_drawEl('stops-panel').hidden ? openStopsPanel() : closeStopsPanel()));
+    _drawEl('btn-stops-close').addEventListener('click', closeStopsPanel);
+    _drawEl('btn-stops-find').addEventListener('click', findRouteStops);
+    document.querySelectorAll('#stops-kinds .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => setStopsKind(b.dataset.kind)));
+    _drawEl('stops-vehicle').addEventListener('change', e => {
+        if (e.target.value === 'ev' && stopsState.kind === 'fuel') setStopsKind('ev_charging');
+        if (e.target.value !== 'ev' && stopsState.kind === 'ev_charging') setStopsKind('fuel');
+    });
+}
+
 // ── Event Listeners ──────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     initTripForm();
     initDrawRoute();
+    initRouteStops();
     // Language Switcher setup
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
