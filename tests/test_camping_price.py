@@ -10,7 +10,7 @@ import tools.search_campings as sc
     ({"cost_per_night_eur": 0}, "free", "Free"),
     ({"cost_per_night_eur": 18.5}, "paid", "Paid · €18.5/night"),
     ({"source": "park4night", "price_info": "Gratuit"}, "free", "Free"),
-    ({"source": "park4night", "price_info": "10 €/nuit"}, "paid", "Paid · 10 €/nuit"),
+    ({"source": "park4night", "price_info": "10 €/nuit"}, "paid", "Paid · 10 €/night"),
     ({"source": "park4night", "price_info": "0"}, "free", "Free"),
     ({"source": "park4night", "spot_code": "ACC_G"}, "free", "Free"),
     ({"source": "park4night", "spot_code": "PN"}, "free", "Free"),
@@ -42,3 +42,17 @@ def test_search_results_always_have_a_price(monkeypatch):
                      "Camping X": ("paid", "Paid · price not listed"),
                      "Camping Y": ("free", "Free")}
     assert cached and cached[0]["spot_code"] == "ACC_G"      # stored for next time
+
+
+@pytest.mark.parametrize("text, plain", [
+    ("Gratuit", "Gratis"), ("gratuit en hiver", "gratis en hiver"),
+    ("10 €/nuit", "10 €/night"), ("Kostenlos", "Gratis"),
+])
+def test_price_texts_in_plain_words(text, plain):
+    from tools.camping_price import plain_price_text, with_price
+    assert plain_price_text(text) == plain
+    assert with_price({"source": "park4night", "price_info": text})["price_info"] == plain
+
+
+def test_paid_text_is_not_repeated():
+    assert price_of({"source": "park4night", "price_info": "Payant 12€ / nuit"})["price_label"] == "Paid · 12€ / night"
