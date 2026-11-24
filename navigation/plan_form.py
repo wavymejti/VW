@@ -7,6 +7,8 @@ Modes:
 - turnaround:  A -> stops there -> B -> stops back -> A
 
 Each stop has `nights`: 0 = pass through, 1 = one night there, n = n nights (a stay).
+At the destination: `dest_days` full days there (all modes) and, on a turnaround,
+`dest_overnight` = one night there and straight back (older clients: `dest_nights`).
 Free text was not reliably understood for a first route (Nov 2026 tests), so the first
 plan comes from structured fields and the chat takes over from there.
 """
@@ -71,7 +73,7 @@ def _km(a, b):
     return 2 * 6371 * math.asin(math.sqrt(h))
 
 
-def estimate_days(origin, destination, stops, round_trip, dest_nights=0):
+def estimate_days(origin, destination, stops, round_trip, dest_days=0, dest_overnight=False):
     """
     A sensible trip length when the form leaves it empty: driving days from the straight-line
     distance (x road factor), at least one per night on the way, plus the stay days.
@@ -85,11 +87,10 @@ def estimate_days(origin, destination, stops, round_trip, dest_nights=0):
         driving = max(1, math.ceil(km / KM_PER_DRIVING_DAY))
     else:
         driving = 2 if round_trip else 1
-    nights_on_way = sum(1 for s in stops if s["nights"] >= 1) + (1 if round_trip and dest_nights == 1 else 0)
+    nights_on_way = sum(1 for s in stops if s["nights"] >= 1) + (1 if round_trip and dest_overnight else 0)
     driving = max(driving, nights_on_way + 1)
     stay_days = sum(s["nights"] - 1 for s in stops if s["nights"] >= 2)
-    if round_trip and dest_nights >= 2:
-        stay_days += dest_nights - 1
+    stay_days += dest_days
     return driving + stay_days
 
 
@@ -97,6 +98,12 @@ def _stop_text(s):
     if s["nights"] == 0:
         return s["label"]
     return f"{s['label']} ({s['nights']} night{'s' if s['nights'] > 1 else ''})"
+
+
+def _dest_text(days, overnight=False):
+    if days:
+        return f" ({days} day{'s' if days > 1 else ''} there)"
+    return " (1 night)" if overnight else ""
 
 
 def form_to_plan_args(form, today=None):
@@ -117,7 +124,14 @@ def form_to_plan_args(form, today=None):
     stops = [] if mode == "direct" else _stops(form.get("stops"), "out")
     if round_trip:
         stops += _stops(form.get("back_stops"), "back")
-    dest_nights = _nights(form.get("dest_nights")) if round_trip else 0
+    dest_days = _nights(form.get("dest_days"))
+    dest_overnight = bool(form.get("dest_overnight")) and round_trip
+    if form.get("dest_nights") not in (None, "") and form.get("dest_days") in (None, ""):
+        n = _nights(form.get("dest_nights"))  # older form: nights at the turnaround
+        dest_overnight = round_trip and n == 1
+        dest_days = max(0, n - 1) if round_trip else n
+    if dest_days:
+        dest_overnight = False
 
     today = today or date.today()
     start = today + timedelta(days=1)
@@ -138,10 +152,10 @@ def form_to_plan_args(form, today=None):
         raise FormError("A trip can be 1 to 60 days long.")
     auto_days = num_days is None
     if auto_days:
-        num_days = estimate_days(origin, destination, stops, round_trip, dest_nights)
+        num_days = estimate_days(origin, destination, stops, round_trip, dest_days, dest_overnight)
 
     route_stops = [s for s in stops if s["leg"] == "out"]
-    if round_trip and dest_nights == 1:
+    if dest_overnight:
         route_stops.append({**destination, "nights": 1, "leg": "turn"})
     route_stops += [s for s in stops if s["leg"] == "back"]
 
@@ -154,18 +168,19 @@ def form_to_plan_args(form, today=None):
     }
     if route_stops:
         args["route_stops"] = route_stops
-    if round_trip and dest_nights >= 2:
-        args["stays"] = [{"label": None, "days": dest_nights - 1}]
+    if dest_days:
+        # Full days at the destination (the turnaround on a round trip); part of num_days.
+        args["stays"] = [{"label": None, "days": dest_days}]
 
     out = [s for s in stops if s["leg"] == "out"]
     back = [s for s in stops if s["leg"] == "back"]
     if mode == "direct":
-        route = f"{origin['label']} → {destination['label']} (direct)"
+        route = f"{origin['label']} → {destination['label']}{_dest_text(dest_days)} (direct)"
     elif mode == "p2p":
-        route = " → ".join([origin["label"], *map(_stop_text, out), destination["label"]]) + " (point-to-point)"
+        route = " → ".join([origin["label"], *map(_stop_text, out),
+                            destination["label"] + _dest_text(dest_days)]) + " (point-to-point)"
     else:
-        dest_text = destination["label"] + (f" ({dest_nights} night{'s' if dest_nights > 1 else ''})"
-                                            if dest_nights else "")
+        dest_text = destination["label"] + _dest_text(dest_days, dest_overnight)
         route = " → ".join([origin["label"], *map(_stop_text, out), dest_text,
                             *map(_stop_text, back), origin["label"]]) + " (turnaround)"
     days_text = f"{num_days} days" + (" (estimated)" if auto_days else "")

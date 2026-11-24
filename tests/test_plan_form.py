@@ -50,19 +50,63 @@ def test_turnaround_puts_back_stops_after_the_destination():
     args, summary = form_to_plan_args(
         {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG, "num_days": 7,
          "stops": [{**PRAGUE, "nights": 1}], "back_stops": [{**DRESDEN, "nights": 0}],
-         "dest_nights": 3}, today=TODAY)
+         "dest_days": 2}, today=TODAY)
     assert args["round_trip"] is True
     assert [(s["label"], s["leg"]) for s in args["route_stops"]] == [("Prague", "out"), ("Dresden", "back")]
+    assert args["stays"] == [{"label": None, "days": 2}]
+    assert "Prague (1 night) → Salzburg (2 days there) → Dresden → Poznań (turnaround)" in summary
+
+
+def test_older_clients_nights_at_the_turnaround_still_work():
+    args, _ = form_to_plan_args(
+        {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG, "num_days": 7,
+         "dest_nights": 3}, today=TODAY)
     assert args["stays"] == [{"label": None, "days": 2}]     # 3 nights = 2 full days
-    assert "Prague (1 night) → Salzburg (3 nights) → Dresden → Poznań (turnaround)" in summary
 
 
 def test_one_night_at_the_turnaround_is_an_overnight_there():
     args, _ = form_to_plan_args(
         {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG, "num_days": 4,
-         "dest_nights": 1}, today=TODAY)
+         "dest_overnight": True}, today=TODAY)
     assert args["route_stops"] == [{**SALZBURG, "nights": 1, "leg": "turn"}]
     assert "stays" not in args
+
+
+def test_days_at_destination_in_every_mode():
+    args, summary = form_to_plan_args(
+        {"mode": "direct", "origin": POZNAN, "destination": PRAGUE, "num_days": 6, "dest_days": 3},
+        today=TODAY)
+    assert args["stays"] == [{"label": None, "days": 3}] and args["round_trip"] is False
+    assert "Poznań → Prague (3 days there) (direct)" in summary
+
+    args, summary = form_to_plan_args(
+        {"mode": "p2p", "origin": POZNAN, "destination": SALZBURG, "num_days": 6,
+         "stops": [{**PRAGUE, "nights": 1}], "dest_days": 2}, today=TODAY)
+    assert args["stays"] == [{"label": None, "days": 2}]
+    assert summary.startswith("Plan a trip: Poznań → Prague (1 night) → Salzburg (2 days there)")
+
+    args, summary = form_to_plan_args(
+        {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG, "num_days": 5,
+         "dest_overnight": True}, today=TODAY)
+    assert args["route_stops"] == [{**SALZBURG, "nights": 1, "leg": "turn"}] and "stays" not in args
+    assert "Salzburg (1 night)" in summary
+
+
+def test_estimate_counts_days_at_destination():
+    args, _ = form_to_plan_args(
+        {"mode": "direct", "origin": POZNAN, "destination": PRAGUE, "dest_days": 3}, today=TODAY)
+    assert args["num_days"] == 1 + 3      # ~330 km of driving + 3 days in Prague
+
+
+def test_one_way_stay_at_destination_is_planned(maps):
+    args, _ = form_to_plan_args(
+        {"mode": "direct", "origin": POZNAN, "destination": PRAGUE, "num_days": 4, "dest_days": 2},
+        today=TODAY)
+    result = pr.plan_route(**args)
+    assert result["status"] == "success", result
+    days = result["daily_schedules"]
+    assert len(days) == 4
+    assert [all(w["type"] == "stay" for w in d["waypoints"]) for d in days][-2:] == [True, True]
 
 
 @pytest.mark.parametrize("form, message", [
@@ -80,7 +124,7 @@ def test_bad_forms_say_what_is_missing(form, message):
 def test_days_are_estimated_when_left_empty():
     args, summary = form_to_plan_args(
         {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG,
-         "stops": [{**PRAGUE, "nights": 1}], "back_stops": [DRESDEN], "dest_nights": 3}, today=TODAY)
+         "stops": [{**PRAGUE, "nights": 1}], "back_stops": [DRESDEN], "dest_days": 2}, today=TODAY)
     assert args["num_days"] == 6          # 4 driving days (~1390 km) + 2 days in Salzburg
     assert "(estimated)" in summary
     assert estimate_days(POZNAN, SALZBURG, [], False) == 2   # ~670 km one way
@@ -136,7 +180,7 @@ def test_turnaround_route_goes_there_and_back_in_the_given_order(maps):
     args, _ = form_to_plan_args(
         {"mode": "turnaround", "origin": POZNAN, "destination": SALZBURG, "num_days": 6,
          "stops": [{**PRAGUE, "nights": 1}], "back_stops": [{**DRESDEN, "nights": 1}],
-         "dest_nights": 2}, today=TODAY)
+         "dest_days": 1}, today=TODAY)
     result = pr.plan_route(**args)
     assert result["status"] == "success", result
     total_call = maps.directions.call_args_list[0].kwargs

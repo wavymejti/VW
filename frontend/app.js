@@ -2813,6 +2813,19 @@ function _readStops(listId) {
     }).filter(Boolean);
 }
 
+// Full days at the destination; on a turnaround also "one night, then back".
+function renderDestStayOptions(mode) {
+    const select = document.getElementById('tf-dest-stay');
+    if (!select) return;
+    const previous = select.value;
+    const options = [['0', mode === 'turnaround' ? 'Turn straight back' : 'None']];
+    if (mode === 'turnaround') options.push(['night', '1 night, then back']);
+    [1, 2, 3, 4, 5, 6, 7, 10, 14].forEach(n => options.push([String(n), `${n} day${n > 1 ? 's' : ''}`]));
+    select.innerHTML = options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+    select.value = options.some(([v]) => v === previous) ? previous
+        : (mode === 'turnaround' ? 'night' : '0');
+}
+
 function setTripFormMode(mode) {
     tripFormState.mode = mode;
     document.querySelectorAll('#trip-form .tf-mode').forEach(btn => {
@@ -2822,11 +2835,10 @@ function setTripFormMode(mode) {
     });
     const stopsWrap = document.getElementById('tf-stops-wrap');
     const backWrap = document.getElementById('tf-back-wrap');
-    const destNights = document.getElementById('tf-dest-nights-wrap');
     const title = document.getElementById('tf-stops-title');
     if (stopsWrap) stopsWrap.hidden = mode === 'direct';
     if (backWrap) backWrap.hidden = mode !== 'turnaround';
-    if (destNights) destNights.hidden = mode !== 'turnaround';
+    renderDestStayOptions(mode);
     if (title) title.textContent = mode === 'turnaround' ? 'Stops on the way there' : 'Stops on the way';
     if (mode !== 'direct') {
         const list = document.getElementById('tf-stops');
@@ -2870,8 +2882,10 @@ async function submitTripForm(e) {
     if (mode !== 'direct') form.stops = _readStops('tf-stops');
     if (mode === 'turnaround') {
         form.back_stops = _readStops('tf-back-stops');
-        form.dest_nights = parseInt(document.getElementById('tf-dest-nights').value, 10) || 0;
     }
+    const destStay = document.getElementById('tf-dest-stay').value;
+    if (destStay === 'night') form.dest_overnight = true;
+    else form.dest_days = parseInt(destStay, 10) || 0;
 
     const submitBtn = document.getElementById('tf-submit');
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Planning…'; }
@@ -2915,13 +2929,6 @@ function initTripForm() {
         const tomorrow = new Date(today.getTime() + 86400000);
         start.min = _isoDate(today);
         start.value = _isoDate(tomorrow);
-    }
-    const destNights = document.getElementById('tf-dest-nights');
-    if (destNights) {
-        destNights.innerHTML = [0, 1, 2, 3, 4, 5, 6, 7, 10, 14]
-            .map(n => `<option value="${n}">${n === 0 ? 'Turn straight back' : `${n} night${n > 1 ? 's' : ''}`}</option>`)
-            .join('');
-        destNights.value = '1';
     }
     formEl.addEventListener('submit', submitTripForm);
     setTripFormMode('direct');
