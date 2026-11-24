@@ -636,6 +636,8 @@ function displayTripOnMap(tripData) {
             if (wp.type === 'attraction' || wp.type === 'waypoint') return;
             // Stay / rest days sit at the previous night's campsite, which already has a marker
             if (wp.type === 'stay') return;
+            // Pass-through points of a route drawn on the map: no marker
+            if (wp.type === 'via') return;
 
             let markerLabel = '';
             if (wp.type === 'start' && idx === 0) markerLabel = 'A';
@@ -2933,9 +2935,270 @@ function initTripForm() {
     setTripFormMode('direct');
 }
 
+// ── Drawing a route with a finger (touch screens only) ──────────────
+// On a touch screen the map gets a ✏️ button: the map stops moving, one finger draws the
+// line, the line is simplified to a start, an end and up to MAX_DRAWN_VIA pass-through
+// points, and /api/plan_form (mode "drawn") plans the route along it. Mouse input is
+// ignored on purpose: this is the touch mode.
+const IS_TOUCH_SCREEN = !!((window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)
+    || (navigator.maxTouchPoints || 0) > 0);
+const MAX_DRAWN_VIA = 10;
+const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null };
+
+function _drawEl(id) { return document.getElementById(id); }
+
+function _mapProjection() {
+    if (!drawState.projection && window.google && google.maps && state.map) {
+        const ov = new google.maps.OverlayView();
+        ov.onAdd = () => {};
+        ov.draw = () => {};
+        ov.onRemove = () => {};
+        ov.setMap(state.map);
+        drawState.projection = ov;
+    }
+    return drawState.projection ? drawState.projection.getProjection() : null;
+}
+
+function _pxToLatLng(x, y) {
+    const proj = _mapProjection();
+    if (!proj) return null;
+    const ll = proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
+    return ll ? { lat: ll.lat(), lng: ll.lng() } : null;
+}
+
+// Ramer–Douglas–Peucker on screen pixels: keeps the shape, drops the wobble of a finger.
+function simplifyStroke(points, tolerance) {
+    if (points.length < 3) return points.slice();
+    const [ax, ay] = points[0];
+    const [bx, by] = points[points.length - 1];
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    let maxD = -1, idx = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+        const [px, py] = points[i];
+        const d = Math.abs(dy * px - dx * py + bx * ay - by * ax) / len;
+        if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD <= tolerance) return [points[0], points[points.length - 1]];
+    const left = simplifyStroke(points.slice(0, idx + 1), tolerance);
+    const right = simplifyStroke(points.slice(idx), tolerance);
+    return left.slice(0, -1).concat(right);
+}
+
+function strokeLength(points) {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+        total += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    }
+    return total;
+}
+
+// Evenly spaced points along the simplified line (by length), without the two ends.
+function samplePassThrough(points, count) {
+    if (count <= 0 || points.length < 2) return [];
+    const total = strokeLength(points);
+    const out = [];
+    let seg = 1, walked = 0;
+    for (let k = 1; k <= count; k++) {
+        const target = total * k / (count + 1);
+        while (seg < points.length) {
+            const [x0, y0] = points[seg - 1];
+            const [x1, y1] = points[seg];
+            const l = Math.hypot(x1 - x0, y1 - y0);
+            if (walked + l >= target) {
+                const f = l ? (target - walked) / l : 0;
+                out.push([x0 + (x1 - x0) * f, y0 + (y1 - y0) * f]);
+                break;
+            }
+            walked += l;
+            seg++;
+        }
+    }
+    return out;
+}
+
+function _setDrawHint(text) {
+    const hint = _drawEl('draw-route-hint');
+    if (hint) { hint.textContent = text; hint.hidden = false; }
+}
+
+function _clearDrawnLine() {
+    if (drawState.line) { drawState.line.setMap(null); drawState.line = null; }
+    drawState.px = [];
+    drawState.drawn = null;
+}
+
+function startDrawing() {
+    if (!state.mapInitialized) initGoogleMap();
+    if (!state.map || !(window.google && google.maps)) {
+        alert('The map is not available, so a route cannot be drawn.');
+        return;
+    }
+    _mapProjection();
+    drawState.active = true;
+    _clearDrawnLine();
+    state.map.setOptions({ gestureHandling: 'none', draggable: false, zoomControl: false });
+    _drawEl('draw-layer').hidden = false;
+    _drawEl('draw-route-panel').hidden = false;
+    _drawEl('draw-route-summary').hidden = true;
+    _drawEl('btn-draw-route').classList.add('active');
+    const reviewBar = _drawEl('campsite-review-bar');
+    if (reviewBar) reviewBar.hidden = true;
+    _setDrawHint('✏️ Draw your route with one finger, from the start to the destination.');
+}
+
+function stopDrawing() {
+    drawState.active = false;
+    drawState.pointerId = null;
+    _clearDrawnLine();
+    if (state.map) state.map.setOptions({ gestureHandling: 'auto', draggable: true, zoomControl: true });
+    _drawEl('draw-layer').hidden = true;
+    _drawEl('draw-route-panel').hidden = true;
+    _drawEl('btn-draw-route').classList.remove('active');
+}
+
+function _onDrawDown(e) {
+    if (!drawState.active || e.pointerType === 'mouse') return;   // touch / pen only
+    e.preventDefault();
+    if (drawState.pointerId !== null) {
+        // A second finger: that's no drawing; start over.
+        drawState.pointerId = null;
+        _clearDrawnLine();
+        _setDrawHint('✏️ One finger only — draw the route again.');
+        return;
+    }
+    _clearDrawnLine();
+    _drawEl('draw-route-summary').hidden = true;
+    drawState.pointerId = e.pointerId;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    drawState.px = [[e.clientX - rect.left, e.clientY - rect.top]];
+    drawState.line = new google.maps.Polyline({
+        map: state.map, path: [], strokeColor: '#0040C1', strokeOpacity: 0.9, strokeWeight: 5,
+        clickable: false,
+    });
+    const ll = _pxToLatLng(...drawState.px[0]);
+    if (ll) drawState.line.getPath().push(new google.maps.LatLng(ll.lat, ll.lng));
+}
+
+function _onDrawMove(e) {
+    if (e.pointerId !== drawState.pointerId || !drawState.line) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const p = [e.clientX - rect.left, e.clientY - rect.top];
+    const last = drawState.px[drawState.px.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 4) return;
+    drawState.px.push(p);
+    const ll = _pxToLatLng(...p);
+    if (ll) drawState.line.getPath().push(new google.maps.LatLng(ll.lat, ll.lng));
+}
+
+async function _onDrawUp(e) {
+    if (e.pointerId !== drawState.pointerId) return;
+    drawState.pointerId = null;
+    const px = drawState.px;
+    if (px.length < 2 || strokeLength(px) < 60) {
+        _clearDrawnLine();
+        _setDrawHint('✏️ Draw a longer line, from the start to the destination.');
+        return;
+    }
+    const simple = simplifyStroke(px, 6);
+    const count = Math.min(MAX_DRAWN_VIA, Math.round(strokeLength(simple) / 120));
+    const toLL = pts => pts.map(p => _pxToLatLng(...p)).filter(Boolean);
+    const [start] = toLL([px[0]]);
+    const [end] = toLL([px[px.length - 1]]);
+    const via = toLL(samplePassThrough(simple, count));
+    if (!start || !end) return;
+    // Show the simplified line: that's what the planner follows.
+    drawState.line.setPath(toLL(simple).map(p => new google.maps.LatLng(p.lat, p.lng)));
+    drawState.drawn = { start, end, via, startLabel: null, endLabel: null };
+    await _showDrawSummary();
+}
+
+async function _placeName(point) {
+    const res = await apiCall('location/reverse', { lat: point.lat, lng: point.lng });
+    return (res && (res.city || res.name)) || `${point.lat.toFixed(3)}, ${point.lng.toFixed(3)}`;
+}
+
+async function _showDrawSummary() {
+    const d = drawState.drawn;
+    _drawEl('draw-route-hint').hidden = true;
+    _drawEl('draw-route-summary').hidden = false;
+    _drawEl('draw-error').hidden = true;
+    _drawEl('draw-from').textContent = '…';
+    _drawEl('draw-to').textContent = '…';
+    _drawEl('draw-route-note').textContent = `Along your line · ${d.via.length} pass-through point${d.via.length === 1 ? '' : 's'}`
+        + (state.currentTrip ? ' · replaces the current route' : '');
+    const start = _drawEl('draw-start');
+    if (start && !start.value) {
+        const today = new Date();
+        start.min = _isoDate(today);
+        start.value = _isoDate(new Date(today.getTime() + 86400000));
+    }
+    const [from, to] = await Promise.all([_placeName(d.start), _placeName(d.end)]);
+    if (drawState.drawn !== d) return;   // redrawn meanwhile
+    d.startLabel = from;
+    d.endLabel = to;
+    _drawEl('draw-from').textContent = from;
+    _drawEl('draw-to').textContent = to;
+}
+
+async function planDrawnRoute() {
+    const d = drawState.drawn;
+    if (!d || state.isTyping) return;
+    const form = {
+        mode: 'drawn',
+        origin: { label: d.startLabel || 'Start', lat: d.start.lat, lng: d.start.lng },
+        destination: { label: d.endLabel || 'Destination', lat: d.end.lat, lng: d.end.lng },
+        via_points: d.via,
+        start_date: _drawEl('draw-start').value || null,
+        num_days: _drawEl('draw-days').value || null,
+        dest_days: parseInt(_drawEl('draw-dest-days').value, 10) || 0,
+    };
+    const btn = _drawEl('btn-draw-plan');
+    btn.disabled = true;
+    btn.textContent = 'Planning…';
+    if (window.snifferAVW) window.snifferAVW.stop();
+    showTyping(true, true);
+    const result = await apiCall('plan_form', { form, conversation_id: CHAT_CONVERSATION_ID });
+    showTyping(false);
+    btn.disabled = false;
+    btn.textContent = 'Plan this route';
+    if (result.status === 'error' && !(result.tool_calls && result.tool_calls.length)) {
+        const err = _drawEl('draw-error');
+        err.textContent = result.text || result.message || 'The route could not be planned.';
+        err.hidden = false;
+        return;
+    }
+    stopDrawing();
+    addMessage('user', result.summary || `${form.origin.label} → ${form.destination.label}`);
+    handleChatResult(result);
+}
+
+function initDrawRoute() {
+    const btn = _drawEl('btn-draw-route');
+    const layer = _drawEl('draw-layer');
+    if (!btn || !layer) return;
+    btn.hidden = !IS_TOUCH_SCREEN;
+    if (!IS_TOUCH_SCREEN) return;
+    btn.addEventListener('click', () => (drawState.active ? stopDrawing() : startDrawing()));
+    layer.addEventListener('pointerdown', _onDrawDown);
+    layer.addEventListener('pointermove', _onDrawMove);
+    layer.addEventListener('pointerup', _onDrawUp);
+    layer.addEventListener('pointercancel', _onDrawUp);
+    _drawEl('btn-draw-cancel').addEventListener('click', stopDrawing);
+    _drawEl('btn-draw-redo').addEventListener('click', () => {
+        _clearDrawnLine();
+        _drawEl('draw-route-summary').hidden = true;
+        _setDrawHint('✏️ Draw your route with one finger, from the start to the destination.');
+    });
+    _drawEl('btn-draw-plan').addEventListener('click', planDrawnRoute);
+}
+
 // ── Event Listeners ──────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     initTripForm();
+    initDrawRoute();
     // Language Switcher setup
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {

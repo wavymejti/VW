@@ -61,6 +61,7 @@ def _summarize_result(result):
                 "km": d.get("driving_km"),
                 "stops": [
                     f"{w.get('type')}:{w.get('label')}" for w in (d.get("waypoints") or [])
+                    if w.get("type") != "via"
                 ],
             }
             for d in days

@@ -2073,7 +2073,7 @@ def _generate_pdf_report(trip_data, include_photos=True, lang="pl"):
         waypoint_labels = [
             wp.get("label", "Unknown")
             for wp in day.get("waypoints", [])
-            if isinstance(wp, dict)
+            if isinstance(wp, dict) and wp.get("type") != "via"
         ]
         if waypoint_labels:
             route_text = " → ".join(waypoint_labels)

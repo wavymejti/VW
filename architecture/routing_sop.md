@@ -47,6 +47,14 @@ daily schedules respectful of user driving limits.
 7. **Persist to database** — create Trip and DailySchedule records.
 8. **Return** — full trip plan with all days.
 
+## Drawn routes (`via_points`)
+
+A line drawn with a finger on the map (touch screens) arrives as `via_points`: pass-through
+points sent to Directions as `via:lat,lng` (no stop, no extra leg), in drawing order, with
+no waypoint optimisation. Each day gets the via points between its start and end; they are
+stored on the day as waypoints of type `via` (never shown) so a recalculation of the day
+(`_recalculate_day_route`) still follows the drawing.
+
 ## Output Schema
 
 ```json

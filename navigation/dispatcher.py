@@ -825,8 +825,12 @@ def _recalculate_day_route(conn, schedule_id, waypoints):
         
         if len(waypoints) > 2:
             intermediates = waypoints[1:-1]
-            directions_kwargs["waypoints"] = [f"{w['lat']},{w['lng']}" for w in intermediates]
-            directions_kwargs["optimize_waypoints"] = True
+            # "via" points come from a line drawn on the map: pass through them in order.
+            directions_kwargs["waypoints"] = [
+                (f"via:{w['lat']},{w['lng']}" if w.get("type") == "via" else f"{w['lat']},{w['lng']}")
+                for w in intermediates]
+            if not any(w.get("type") == "via" for w in intermediates):
+                directions_kwargs["optimize_waypoints"] = True
 
         directions = client.directions(**directions_kwargs)
         
@@ -837,7 +841,7 @@ def _recalculate_day_route(conn, schedule_id, waypoints):
             new_duration = sum(l["duration"]["value"] for l in legs) / 3600
             new_polyline = route["overview_polyline"]["points"]
             
-            if len(waypoints) > 2:
+            if len(waypoints) > 2 and directions_kwargs.get("optimize_waypoints"):
                 waypoint_order = route.get("waypoint_order", [])
                 optimized_intermediates = [intermediates[i] for i in waypoint_order]
                 waypoints = [origin_wp] + optimized_intermediates + [dest_wp]

@@ -5,6 +5,8 @@ Modes:
 - direct:      A -> B (the planner picks the nights)
 - p2p:         A -> stop 1 -> stop 2 -> ... -> B, in the given order
 - turnaround:  A -> stops there -> B -> stops back -> A
+- drawn:       A -> B along a line drawn on the map (touch screens); `via_points` are passed
+               through without stopping
 
 Each stop has `nights`: 0 = pass through, 1 = one night there, n = n nights (a stay).
 At the destination: `dest_days` full days there (all modes) and, on a turnaround,
@@ -16,7 +18,8 @@ plan comes from structured fields and the chat takes over from there.
 import math
 from datetime import date, timedelta
 
-MODES = ("direct", "p2p", "turnaround")
+MODES = ("direct", "p2p", "turnaround", "drawn")
+MAX_VIA_POINTS = 20
 MAX_STOPS = 10
 MAX_NIGHTS = 30
 KM_PER_DRIVING_DAY = 450  # with ~1.25 road factor on straight lines: about 5-6 h at the wheel
@@ -66,6 +69,18 @@ def _stops(raw_list, leg):
     return stops
 
 
+def _via_points(raw):
+    points = []
+    for p in (raw or [])[:MAX_VIA_POINTS]:
+        try:
+            lat, lng = float(p["lat"]), float(p["lng"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            points.append({"lat": lat, "lng": lng})
+    return points
+
+
 def _km(a, b):
     r = math.pi / 180
     h = (math.sin((b["lat"] - a["lat"]) * r / 2) ** 2
@@ -73,7 +88,8 @@ def _km(a, b):
     return 2 * 6371 * math.asin(math.sqrt(h))
 
 
-def estimate_days(origin, destination, stops, round_trip, dest_days=0, dest_overnight=False):
+def estimate_days(origin, destination, stops, round_trip, dest_days=0, dest_overnight=False,
+                  via_points=None):
     """
     A sensible trip length when the form leaves it empty: driving days from the straight-line
     distance (x road factor), at least one per night on the way, plus the stay days.
@@ -81,7 +97,7 @@ def estimate_days(origin, destination, stops, round_trip, dest_days=0, dest_over
     """
     out = [s for s in stops if s["leg"] != "back"]
     back = [s for s in stops if s["leg"] == "back"]
-    path = [origin] + out + [destination] + (back + [origin] if round_trip else [])
+    path = [origin] + out + list(via_points or []) + [destination] + (back + [origin] if round_trip else [])
     if all("lat" in p for p in path):
         km = sum(_km(a, b) for a, b in zip(path, path[1:])) * ROAD_FACTOR
         driving = max(1, math.ceil(km / KM_PER_DRIVING_DAY))
@@ -120,6 +136,9 @@ def form_to_plan_args(form, today=None):
     origin = _place(form.get("origin"), "starting point")
     destination = _place(form.get("destination"), "destination")
     round_trip = mode == "turnaround"
+    via_points = _via_points(form.get("via_points")) if mode == "drawn" else []
+    if mode == "drawn" and ("lat" not in origin or "lat" not in destination):
+        raise FormError("The drawn route needs a start and an end on the map.")
 
     stops = [] if mode == "direct" else _stops(form.get("stops"), "out")
     if round_trip:
@@ -152,7 +171,8 @@ def form_to_plan_args(form, today=None):
         raise FormError("A trip can be 1 to 60 days long.")
     auto_days = num_days is None
     if auto_days:
-        num_days = estimate_days(origin, destination, stops, round_trip, dest_days, dest_overnight)
+        num_days = estimate_days(origin, destination, stops, round_trip, dest_days, dest_overnight,
+                                 via_points)
 
     route_stops = [s for s in stops if s["leg"] == "out"]
     if dest_overnight:
@@ -168,6 +188,8 @@ def form_to_plan_args(form, today=None):
     }
     if route_stops:
         args["route_stops"] = route_stops
+    if via_points:
+        args["via_points"] = via_points
     if dest_days:
         # Full days at the destination (the turnaround on a round trip); part of num_days.
         args["stays"] = [{"label": None, "days": dest_days}]
@@ -176,6 +198,9 @@ def form_to_plan_args(form, today=None):
     back = [s for s in stops if s["leg"] == "back"]
     if mode == "direct":
         route = f"{origin['label']} → {destination['label']}{_dest_text(dest_days)} (direct)"
+    elif mode == "drawn":
+        route = (f"{origin['label']} → {destination['label']}{_dest_text(dest_days)} "
+                 "along the route drawn on the map")
     elif mode == "p2p":
         route = " → ".join([origin["label"], *map(_stop_text, out),
                             destination["label"] + _dest_text(dest_days)]) + " (point-to-point)"

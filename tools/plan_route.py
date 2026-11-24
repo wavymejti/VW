@@ -388,6 +388,26 @@ def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
     return found
 
 
+MAX_VIA_POINTS = 20
+
+
+def _via_for_day(via, legs, day_start, day_end):
+    """The drawn pass-through points between this day's start and end, in route order."""
+    if not via:
+        return []
+    start_pos = _route_position(legs, day_start["lat"], day_start["lng"])
+    end_pos = _route_position(legs, day_end["lat"], day_end["lng"])
+    out = []
+    for p in via:
+        pos = _route_position(legs, p["lat"], p["lng"])
+        # Not right at the day's start or end (a via point there only adds a kink).
+        near_end = min(_haversine_distance(p["lat"], p["lng"], q["lat"], q["lng"])
+                       for q in (day_start, day_end))
+        if start_pos < pos <= end_pos and near_end > 5:
+            out.append((pos, p))
+    return [p for _, p in sorted(out, key=lambda x: x[0])]
+
+
 # A day end this close to a place on the route moves to that place (km; also at most a
 # quarter of an average driving day, so short days are not stretched).
 SNAP_MAX_KM = 60.0
@@ -445,6 +465,7 @@ def plan_route(
     rest_day_every=None,
     allow_far_waypoints=False,
     route_stops=None,
+    via_points=None,
 ):
     """
     Plan a multi-day route from origin to destination.
@@ -477,6 +498,9 @@ def plan_route(
             [{"label", "lat", "lng", "nights", "leg": "out" | "back"}]. nights 0 = pass
             through, 1 = one night there, n = a stay of n-1 full days. "back" stops are on
             the way home of a round trip. The route keeps this order (no reordering).
+        via_points (list): Points the route must pass through without stopping, in order
+            ([{"lat", "lng"}], e.g. a line drawn on the map). They shape the route and each
+            day's directions but are no stops: no marker, no day split of their own.
 
     Returns:
         dict: Complete trip plan with daily schedules, plus `warnings`
@@ -488,14 +512,22 @@ def plan_route(
     client = get_maps_client()
     warnings = []
 
+    # A line drawn on the map: pass-through points, in drawing order.
+    via = []
+    for p in (via_points or [])[:MAX_VIA_POINTS]:
+        try:
+            via.append({"lat": float(p["lat"]), "lng": float(p["lng"])})
+        except (TypeError, ValueError, KeyError):
+            continue
+
     # The start form gives the stops in travel order: keep that order everywhere.
-    ordered = bool(route_stops)
+    ordered = bool(route_stops) or bool(via)
     route_out, route_back = [], []
     if ordered:
         waypoints = list(waypoints or [])
         overnight_stops = list(overnight_stops or [])
         stays = list(stays or [])
-        for seq, stop in enumerate(route_stops):
+        for seq, stop in enumerate(route_stops or []):
             place = _ensure_coords(stop, client)
             if place is None:
                 warnings.append(f"Could not locate the stop '{(stop or {}).get('label')}'; it is skipped.")
@@ -601,7 +633,8 @@ def plan_route(
     if ordered:
         # Every stop (also the ones to sleep at) shapes the route, in the user's order.
         total_route = _compute_total_route(origin, destination, round_trip, route_out,
-                                           return_waypoints=route_back, ordered=True)
+                                           return_waypoints=route_back, ordered=True,
+                                           via_points=via)
     else:
         total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
 
@@ -851,6 +884,7 @@ def plan_route(
         # Get exact directions for this day
         target_end = overnight_camping if overnight_camping else day_end
         ordered_day_wps = list(day_wps)
+        day_via = []
         try:
             directions_kwargs = {
                 "origin": f"{day_start['lat']},{day_start['lng']}",
@@ -859,7 +893,14 @@ def plan_route(
                 "departure_time": max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
                 "traffic_model": "best_guess",
             }
-            if day_wps:
+            day_via = _via_for_day(via, legs, day_start, target_end)
+            if day_via:
+                # Drawn line: pass through its points in order; stops (if any) after them
+                # would break the drawing, so they keep Google's order only without via.
+                directions_kwargs["waypoints"] = (
+                    [f"via:{p['lat']},{p['lng']}" for p in day_via]
+                    + [f"{w['lat']},{w['lng']}" for w in day_wps])
+            elif day_wps:
                 directions_kwargs["waypoints"] = [f"{w['lat']},{w['lng']}" for w in day_wps]
                 directions_kwargs["optimize_waypoints"] = True
 
@@ -911,6 +952,13 @@ def plan_route(
                 "color": wp.get("color", "#001E50"),
                 "category_label": wp.get("category_label", "Punkt na trasie"),
                 "notes": wp.get("notes"),
+            })
+
+        for p in (day_via if via else []):
+            # Kept so a later recalculation of the day follows the drawing (never shown).
+            day_schedule_waypoints.append({
+                "order": len(day_schedule_waypoints) + 1,
+                "type": "via", "label": "via", "lat": p["lat"], "lng": p["lng"],
             })
 
         if overnight_camping:
@@ -1067,7 +1115,7 @@ def plan_route(
 
 
 def _compute_total_route(origin, destination, round_trip=False, waypoints=None,
-                         return_waypoints=None, ordered=False):
+                         return_waypoints=None, ordered=False, via_points=None):
     """
     Compute the total route between origin and destination
     using Google Maps Directions API.
@@ -1084,6 +1132,8 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None,
         wp_list = [f"{wp['lat']},{wp['lng']}" for wp in normalized_wps]
         # ordered: the user's order (start form), Google must not reorder the stops
         optimize = len(wp_list) > 1 and not ordered
+        # A drawn line: pass-through points ("via:" = no stop, no extra leg).
+        wp_list += [f"via:{p['lat']},{p['lng']}" for p in (via_points or [])]
 
         if round_trip:
             # Add destination to waypoints as the turnaround point if it's different from origin

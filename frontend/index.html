@@ -336,6 +336,14 @@
                     <span class="btn-label" data-i18n="map_btn_attractions">Atrakcje</span>
                     <span class="attractions-badge" id="attractions-count-badge" style="display:none;">0</span>
                 </button>
+                <!-- Touch screens only: draw the route with a finger (app.js: initDrawRoute) -->
+                <button class="map-control-btn" id="btn-draw-route" aria-label="Draw a route" title="Draw a route with your finger" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                    </svg>
+                    <span class="btn-label">Draw</span>
+                </button>
                 <button class="map-control-btn btn-top-attractions-btn" id="btn-top-attractions" aria-label="Top 8 Atrakcji" title="Zobacz Top 8 Must-See Atrakcji na trasie">
                     <span style="font-size: 1.1rem; line-height: 1;">🌟</span>
                     <span class="btn-label" style="font-weight: 700; color: #E65100;" data-i18n="map_btn_top5">Top 8</span>
@@ -352,6 +360,33 @@
                 <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span>📍 Place on the route</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
+            </div>
+
+            <!-- Drawing a route with a finger (touch screens): layer over the map + panel -->
+            <div class="draw-layer" id="draw-layer" hidden></div>
+            <div class="draw-route-panel" id="draw-route-panel" hidden>
+                <button type="button" class="draw-route-close" id="btn-draw-cancel" aria-label="Stop drawing">×</button>
+                <div class="draw-route-hint" id="draw-route-hint">✏️ Draw your route with one finger, from the start to the destination.</div>
+                <div class="draw-route-summary" id="draw-route-summary" hidden>
+                    <div class="draw-route-ends"><strong id="draw-from">…</strong> → <strong id="draw-to">…</strong></div>
+                    <div class="draw-route-note" id="draw-route-note"></div>
+                    <div class="tf-row">
+                        <label class="tf-field tf-field-small"><span>Start</span><input type="date" id="draw-start"></label>
+                        <label class="tf-field tf-field-small"><span>Days in total</span><input type="number" id="draw-days" min="1" max="60" placeholder="Auto"></label>
+                        <label class="tf-field tf-field-small"><span>Days at destination</span>
+                            <select id="draw-dest-days">
+                                <option value="0">None</option><option value="1">1 day</option><option value="2">2 days</option>
+                                <option value="3">3 days</option><option value="4">4 days</option><option value="5">5 days</option>
+                                <option value="7">7 days</option><option value="10">10 days</option><option value="14">14 days</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="tf-error" id="draw-error" role="alert" hidden></div>
+                    <div class="draw-route-actions">
+                        <button type="button" class="draw-route-redo" id="btn-draw-redo">Redraw</button>
+                        <button type="button" class="tf-submit" id="btn-draw-plan">Plan this route</button>
+                    </div>
+                </div>
             </div>
 
             <!-- After planning: the route is shown first, campsites on request -->

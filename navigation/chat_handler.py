@@ -315,6 +315,8 @@ def _for_model(result):
     for d in result["daily_schedules"]:
         day = {k: v for k, v in d.items()
                if k not in ("route_polyline", "overnight_options", "overnight_camping", "weather")}
+        if day.get("waypoints"):
+            day["waypoints"] = [w for w in day["waypoints"] if w.get("type") != "via"]
         camp = d.get("overnight_camping") or {}
         if camp:
             day["overnight_camping"] = {k: camp.get(k) for k in (
@@ -347,7 +349,8 @@ def _compact_trip(result):
             "hours": d.get("driving_hours"),
             "stay": bool(d.get("stay")) or all(
                 w.get("type") == "stay" for w in (d.get("waypoints") or [{"type": ""}])),
-            "stops": [f"{w.get('type')}: {w.get('label')}" for w in d.get("waypoints") or []],
+            "stops": [f"{w.get('type')}: {w.get('label')}" for w in d.get("waypoints") or []
+                      if w.get("type") != "via"],
             "campsite": camp.get("name"),
             "campsite_options": [
                 {"name": o.get("name"), "source": o.get("source"),
