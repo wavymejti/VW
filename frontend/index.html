@@ -371,12 +371,13 @@
                     <div class="draw-route-ends"><strong id="draw-from">…</strong> → <strong id="draw-to">…</strong></div>
                     <div class="draw-mode" id="draw-mode" role="radiogroup" aria-label="What the line does" hidden>
                         <button type="button" class="draw-mode-btn" data-mode="reshape" role="radio">Change this part</button>
+                        <button type="button" class="draw-mode-btn" data-mode="extend" role="radio">Extend the trip</button>
                         <button type="button" class="draw-mode-btn" data-mode="new" role="radio">New route</button>
                     </div>
                     <div class="draw-route-note" id="draw-route-note"></div>
                     <div class="tf-row" id="draw-new-fields">
-                        <label class="tf-field tf-field-small"><span>Start</span><input type="date" id="draw-start"></label>
-                        <label class="tf-field tf-field-small"><span>Days in total</span><input type="number" id="draw-days" min="1" max="60" placeholder="Auto"></label>
+                        <label class="tf-field tf-field-small" id="draw-start-wrap"><span>Start</span><input type="date" id="draw-start"></label>
+                        <label class="tf-field tf-field-small"><span id="draw-days-label">Days in total</span><input type="number" id="draw-days" min="1" max="60" placeholder="Auto"></label>
                         <label class="tf-field tf-field-small"><span>Days at destination</span>
                             <select id="draw-dest-days">
                                 <option value="0">None</option><option value="1">1 day</option><option value="2">2 days</option>

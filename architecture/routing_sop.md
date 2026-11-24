@@ -64,6 +64,14 @@ through (older `via` points of the stretch are dropped, stops are kept), and onl
 days are recalculated. Campsites and the other days stay; a day over 8 h gets a warning.
 Saved (logged-in) trips only; the chat gets a system note about the change.
 
+## Extending a saved trip (`POST /api/extend_route`)
+
+A drawn line that starts within 20 km of the trip's end and ends away from the route adds
+days (`navigation/route_extend.py`): if the last day ended without a night, a campsite near
+the end is put on it first; then `plan_route` plans the new part from there (start = the day
+after the last day, the line's points as `via_points`, optional days at the new destination)
+and its days are appended. The trip's destination, end date and title follow the new end.
+
 ## Output Schema
 
 ```json

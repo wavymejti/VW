@@ -899,6 +899,43 @@ def api_reshape_route():
     return jsonify(result)
 
 
+@app.route("/api/extend_route", methods=["POST"])
+def api_extend_route():
+    """
+    Add days to the saved trip along a line drawn from its end to a new destination.
+
+    Body: {"trip_id", "stroke": [{"lat", "lng"}, ...], "end_label", "extra_days" (optional),
+           "dest_days", "conversation_id"}.
+    """
+    from navigation.route_extend import extend_route
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to extend a saved route."}), 401
+    stroke = data.get("stroke") or []
+    if not isinstance(stroke, list) or len(stroke) > 40:
+        return jsonify({"status": "error", "code": "bad_line", "message": "Invalid line."}), 400
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    try:
+        result = extend_route(trip_id, stroke, end_label=data.get("end_label"),
+                              extra_days=data.get("extra_days"), dest_days=data.get("dest_days") or 0)
+    except Exception as e:
+        return jsonify({"status": "error", "code": "failed",
+                        "message": f"The trip could not be extended: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": (
+        f"[SYSTEM NOTE] The user extended the trip by drawing on the map. {result['message']} "
+        + " ".join(result.get("warnings") or []))})
+    chat["active_trip_id"] = trip_id
+    return jsonify(result)
+
+
 @app.route("/api/add_attraction", methods=["POST"])
 def api_add_attraction():
     """

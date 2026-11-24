@@ -2954,6 +2954,7 @@ const drawState = { active: false, pointerId: null, px: [], line: null, projecti
     mode: 'new' };
 // A line whose two ends are this close (km) to the saved route changes only that stretch.
 const RESHAPE_SNAP_KM = 20;
+const DRAW_BUTTON_TEXT = { reshape: 'Change the route', extend: 'Extend the trip', new: 'Plan this route' };
 
 function _drawEl(id) { return document.getElementById(id); }
 
@@ -3174,13 +3175,24 @@ function _kmToRoute(point, pts) {
     return best;
 }
 
-// Can the line change part of the current route? Only a saved trip, both ends on the route.
-function _canReshape(d) {
+// What the line can do with the current (saved) trip:
+// both ends on the route -> change that part; from the trip's end to somewhere new -> extend.
+function _drawModes(d) {
     const trip = state.currentTrip;
-    if (!trip || !trip.trip || !trip.trip.id) return false;
+    if (!trip || !trip.trip || !trip.trip.id) return ['new'];
     const pts = _currentRoutePoints();
-    if (!pts.length) return false;
-    return _kmToRoute(d.start, pts) <= RESHAPE_SNAP_KM && _kmToRoute(d.end, pts) <= RESHAPE_SNAP_KM;
+    if (!pts.length) return ['new'];
+    const startOn = _kmToRoute(d.start, pts) <= RESHAPE_SNAP_KM;
+    const endOn = _kmToRoute(d.end, pts) <= RESHAPE_SNAP_KM;
+    if (startOn && endOn) return ['reshape', 'new'];
+    const days = trip.daily_schedules || [];
+    const lastWps = days.length ? (days[days.length - 1].waypoints || []) : [];
+    const tripEnd = lastWps.length ? lastWps[lastWps.length - 1] : null;
+    if (tripEnd && tripEnd.lat != null && !endOn
+            && _distKm({ lat: Number(tripEnd.lat), lng: Number(tripEnd.lng) }, d.start) <= RESHAPE_SNAP_KM) {
+        return ['extend', 'new'];
+    }
+    return ['new'];
 }
 
 function setDrawMode(mode) {
@@ -3193,15 +3205,21 @@ function setDrawMode(mode) {
     const d = drawState.drawn;
     const fields = _drawEl('draw-new-fields');
     if (fields) fields.hidden = mode === 'reshape';
+    const startWrap = _drawEl('draw-start-wrap');
+    if (startWrap) startWrap.hidden = mode === 'extend';     // the new days follow the trip
+    const daysLabel = _drawEl('draw-days-label');
+    if (daysLabel) daysLabel.textContent = mode === 'extend' ? 'Extra days' : 'Days in total';
     const note = _drawEl('draw-route-note');
     if (note && d) {
         note.textContent = mode === 'reshape'
             ? 'Only the stretch between the two ends follows your line · campsites and other days stay'
+            : mode === 'extend'
+            ? 'From the end of your trip along the line · new days are added, the planned days stay'
             : `Along your line · ${d.via.length} pass-through point${d.via.length === 1 ? '' : 's'}`
               + (state.currentTrip ? ' · replaces the current route' : '');
     }
     const btn = _drawEl('btn-draw-plan');
-    if (btn) btn.textContent = mode === 'reshape' ? 'Change the route' : 'Plan this route';
+    if (btn) btn.textContent = DRAW_BUTTON_TEXT[mode];
     _drawEl('draw-error').hidden = true;
 }
 
@@ -3217,9 +3235,12 @@ async function _showDrawSummary() {
     _drawEl('draw-error').hidden = true;
     _drawEl('draw-from').textContent = '…';
     _drawEl('draw-to').textContent = '…';
-    const canReshape = _canReshape(d);
-    _drawEl('draw-mode').hidden = !canReshape;
-    setDrawMode(canReshape ? 'reshape' : 'new');
+    const modes = _drawModes(d);
+    _drawEl('draw-mode').hidden = modes.length < 2;
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(b => {
+        b.hidden = !modes.includes(b.dataset.mode);
+    });
+    setDrawMode(modes[0]);
     const start = _drawEl('draw-start');
     if (start && !start.value) {
         const today = new Date();
@@ -3234,23 +3255,32 @@ async function _showDrawSummary() {
     _drawEl('draw-to').textContent = to;
 }
 
-async function reshapeDrawnRoute() {
+// "Change this part" (/api/reshape_route) or "Extend the trip" (/api/extend_route).
+async function changeTripWithLine(mode) {
     const d = drawState.drawn;
     const btn = _drawEl('btn-draw-plan');
     btn.disabled = true;
-    btn.textContent = 'Changing…';
-    const result = await apiCall('reshape_route', {
+    btn.textContent = mode === 'extend' ? 'Extending…' : 'Changing…';
+    const payload = {
         trip_id: state.currentTrip.trip.id,
         stroke: [d.start, ...d.via, d.end],
         conversation_id: CHAT_CONVERSATION_ID,
-    });
+    };
+    if (mode === 'extend') {
+        payload.end_label = d.endLabel;
+        payload.extra_days = _drawEl('draw-days').value || null;
+        payload.dest_days = parseInt(_drawEl('draw-dest-days').value, 10) || 0;
+        showTyping(true, true);
+    }
+    const result = await apiCall(mode === 'extend' ? 'extend_route' : 'reshape_route', payload);
+    if (mode === 'extend') showTyping(false);
     btn.disabled = false;
     if (result.status !== 'success' || !result.trip_data) {
-        btn.textContent = 'Change the route';
+        btn.textContent = DRAW_BUTTON_TEXT[mode];
         const err = _drawEl('draw-error');
         err.textContent = result.message || 'The route could not be changed.';
         err.hidden = false;
-        if (result.code === 'not_saved' || result.code === 'off_route') {
+        if (['not_saved', 'off_route', 'off_end'].includes(result.code)) {
             // Offer the whole route along the line instead.
             _drawEl('draw-mode').hidden = true;
             setDrawMode('new');
@@ -3269,7 +3299,7 @@ async function reshapeDrawnRoute() {
 async function planDrawnRoute() {
     const d = drawState.drawn;
     if (!d || state.isTyping) return;
-    if (drawState.mode === 'reshape') return reshapeDrawnRoute();
+    if (drawState.mode === 'reshape' || drawState.mode === 'extend') return changeTripWithLine(drawState.mode);
     const form = {
         mode: 'drawn',
         origin: { label: d.startLabel || 'Start', lat: d.start.lat, lng: d.start.lng },

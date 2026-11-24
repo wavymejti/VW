@@ -4641,7 +4641,9 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
 }
 
 /* Drawn line: change part of the route or plan a new one */
-.draw-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.draw-mode { display: flex; gap: 6px; }
+.draw-mode-btn { flex: 1; }
+.draw-mode-btn[hidden], #draw-start-wrap[hidden] { display: none; }
 .draw-mode[hidden], #draw-new-fields[hidden] { display: none; }
 .draw-mode-btn {
     padding: 8px;
