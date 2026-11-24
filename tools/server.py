@@ -862,6 +862,43 @@ def api_select_camping():
     return jsonify({"status": "success", "message": "Camping selected and route updated.", "trip_data": trip_data})
 
 
+@app.route("/api/reshape_route", methods=["POST"])
+def api_reshape_route():
+    """
+    Change part of the saved route to follow a line drawn on the map (touch screens).
+
+    Body: {"trip_id", "stroke": [{"lat", "lng"}, ...] (drawing order, ends included),
+           "conversation_id"}. Only the days the stretch runs through are recalculated.
+    """
+    from navigation.route_reshape import reshape_route
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to change part of a saved route."}), 401
+    stroke = data.get("stroke") or []
+    if not isinstance(stroke, list) or len(stroke) > 40:
+        return jsonify({"status": "error", "code": "bad_line", "message": "Invalid line."}), 400
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    try:
+        result = reshape_route(trip_id, stroke)
+    except Exception as e:
+        return jsonify({"status": "error", "code": "failed",
+                        "message": f"The route could not be changed: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+
+    # Tell the chat, so the next messages know the route changed.
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": (
+        f"[SYSTEM NOTE] The user redrew part of the route on the map. {result['message']} "
+        + " ".join(result.get("warnings") or []))})
+    chat["active_trip_id"] = trip_id
+    return jsonify(result)
+
+
 @app.route("/api/add_attraction", methods=["POST"])
 def api_add_attraction():
     """

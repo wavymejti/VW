@@ -55,6 +55,15 @@ no waypoint optimisation. Each day gets the via points between its start and end
 stored on the day as waypoints of type `via` (never shown) so a recalculation of the day
 (`_recalculate_day_route`) still follows the drawing.
 
+## Changing part of a saved route (`POST /api/reshape_route`)
+
+A drawn line whose two ends lie within 20 km of the saved route changes only that stretch
+(`navigation/route_reshape.py`): the drawn points get a place along the trip in proportion
+to how far along the line they are, become `via` waypoints of the days that stretch runs
+through (older `via` points of the stretch are dropped, stops are kept), and only those
+days are recalculated. Campsites and the other days stay; a day over 8 h gets a warning.
+Saved (logged-in) trips only; the chat gets a system note about the change.
+
 ## Output Schema
 
 ```json

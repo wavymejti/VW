@@ -369,8 +369,12 @@
                 <div class="draw-route-hint" id="draw-route-hint">✏️ Draw your route with one finger, from the start to the destination.</div>
                 <div class="draw-route-summary" id="draw-route-summary" hidden>
                     <div class="draw-route-ends"><strong id="draw-from">…</strong> → <strong id="draw-to">…</strong></div>
+                    <div class="draw-mode" id="draw-mode" role="radiogroup" aria-label="What the line does" hidden>
+                        <button type="button" class="draw-mode-btn" data-mode="reshape" role="radio">Change this part</button>
+                        <button type="button" class="draw-mode-btn" data-mode="new" role="radio">New route</button>
+                    </div>
                     <div class="draw-route-note" id="draw-route-note"></div>
-                    <div class="tf-row">
+                    <div class="tf-row" id="draw-new-fields">
                         <label class="tf-field tf-field-small"><span>Start</span><input type="date" id="draw-start"></label>
                         <label class="tf-field tf-field-small"><span>Days in total</span><input type="number" id="draw-days" min="1" max="60" placeholder="Auto"></label>
                         <label class="tf-field tf-field-small"><span>Days at destination</span>

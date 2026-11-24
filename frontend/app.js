@@ -2947,7 +2947,10 @@ function isTouchScreen() {
         || (navigator.maxTouchPoints || 0) > 0);
 }
 const MAX_DRAWN_VIA = 10;
-const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null };
+const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null,
+    mode: 'new' };
+// A line whose two ends are this close (km) to the saved route changes only that stretch.
+const RESHAPE_SNAP_KM = 20;
 
 function _drawEl(id) { return document.getElementById(id); }
 
@@ -3119,6 +3122,63 @@ async function _onDrawUp(e) {
     await _showDrawSummary();
 }
 
+// Points of the current trip's driving days (polylines when the geometry library is there).
+function _currentRoutePoints() {
+    const trip = state.currentTrip;
+    if (!trip || !Array.isArray(trip.daily_schedules)) return [];
+    const pts = [];
+    trip.daily_schedules.forEach(day => {
+        if (day.route_polyline && window.google && google.maps && google.maps.geometry) {
+            try {
+                google.maps.geometry.encoding.decodePath(day.route_polyline)
+                    .forEach(p => pts.push({ lat: p.lat(), lng: p.lng() }));
+                return;
+            } catch (e) { /* fall back to the waypoints */ }
+        }
+        (day.waypoints || []).forEach(w => {
+            if (w.lat != null && w.lng != null) pts.push({ lat: Number(w.lat), lng: Number(w.lng) });
+        });
+    });
+    return pts;
+}
+
+function _kmToRoute(point, pts) {
+    let best = Infinity;
+    pts.forEach(p => { best = Math.min(best, _distKm(p, point)); });
+    return best;
+}
+
+// Can the line change part of the current route? Only a saved trip, both ends on the route.
+function _canReshape(d) {
+    const trip = state.currentTrip;
+    if (!trip || !trip.trip || !trip.trip.id) return false;
+    const pts = _currentRoutePoints();
+    if (!pts.length) return false;
+    return _kmToRoute(d.start, pts) <= RESHAPE_SNAP_KM && _kmToRoute(d.end, pts) <= RESHAPE_SNAP_KM;
+}
+
+function setDrawMode(mode) {
+    drawState.mode = mode;
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(btn => {
+        const on = btn.dataset.mode === mode;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const d = drawState.drawn;
+    const fields = _drawEl('draw-new-fields');
+    if (fields) fields.hidden = mode === 'reshape';
+    const note = _drawEl('draw-route-note');
+    if (note && d) {
+        note.textContent = mode === 'reshape'
+            ? 'Only the stretch between the two ends follows your line · campsites and other days stay'
+            : `Along your line · ${d.via.length} pass-through point${d.via.length === 1 ? '' : 's'}`
+              + (state.currentTrip ? ' · replaces the current route' : '');
+    }
+    const btn = _drawEl('btn-draw-plan');
+    if (btn) btn.textContent = mode === 'reshape' ? 'Change the route' : 'Plan this route';
+    _drawEl('draw-error').hidden = true;
+}
+
 async function _placeName(point) {
     const res = await apiCall('location/reverse', { lat: point.lat, lng: point.lng });
     return (res && (res.city || res.name)) || `${point.lat.toFixed(3)}, ${point.lng.toFixed(3)}`;
@@ -3131,8 +3191,9 @@ async function _showDrawSummary() {
     _drawEl('draw-error').hidden = true;
     _drawEl('draw-from').textContent = '…';
     _drawEl('draw-to').textContent = '…';
-    _drawEl('draw-route-note').textContent = `Along your line · ${d.via.length} pass-through point${d.via.length === 1 ? '' : 's'}`
-        + (state.currentTrip ? ' · replaces the current route' : '');
+    const canReshape = _canReshape(d);
+    _drawEl('draw-mode').hidden = !canReshape;
+    setDrawMode(canReshape ? 'reshape' : 'new');
     const start = _drawEl('draw-start');
     if (start && !start.value) {
         const today = new Date();
@@ -3147,9 +3208,42 @@ async function _showDrawSummary() {
     _drawEl('draw-to').textContent = to;
 }
 
+async function reshapeDrawnRoute() {
+    const d = drawState.drawn;
+    const btn = _drawEl('btn-draw-plan');
+    btn.disabled = true;
+    btn.textContent = 'Changing…';
+    const result = await apiCall('reshape_route', {
+        trip_id: state.currentTrip.trip.id,
+        stroke: [d.start, ...d.via, d.end],
+        conversation_id: CHAT_CONVERSATION_ID,
+    });
+    btn.disabled = false;
+    if (result.status !== 'success' || !result.trip_data) {
+        btn.textContent = 'Change the route';
+        const err = _drawEl('draw-error');
+        err.textContent = result.message || 'The route could not be changed.';
+        err.hidden = false;
+        if (result.code === 'not_saved' || result.code === 'off_route') {
+            // Offer the whole route along the line instead.
+            _drawEl('draw-mode').hidden = true;
+            setDrawMode('new');
+            err.hidden = false;
+        }
+        return;
+    }
+    stopDrawing();
+    state.currentTrip = result.trip_data;
+    displayTripOnMap(result.trip_data);
+    const text = [result.message, ...(result.warnings || [])].join(' ');
+    addMessage('assistant', text);
+    if (window.snifferAVW) window.snifferAVW.say(text, { mood: 'happy', reaction: 'ears_up' });
+}
+
 async function planDrawnRoute() {
     const d = drawState.drawn;
     if (!d || state.isTyping) return;
+    if (drawState.mode === 'reshape') return reshapeDrawnRoute();
     const form = {
         mode: 'drawn',
         origin: { label: d.startLabel || 'Start', lat: d.start.lat, lng: d.start.lng },
@@ -3207,6 +3301,8 @@ function initDrawRoute() {
         _setDrawHint('✏️ Draw your route with one finger, from the start to the destination.');
     });
     _drawEl('btn-draw-plan').addEventListener('click', planDrawnRoute);
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => setDrawMode(b.dataset.mode)));
 }
 
 // ── Event Listeners ──────────────────────────────────────────
