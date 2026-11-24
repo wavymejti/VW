@@ -1897,7 +1897,8 @@ async function sendMessage(text) {
             routePlanned = true;
         }
 
-        // Auto-redirect to map if a route was just planned AND trigger Camping Selection Modal
+        // A new or changed route: show the map with the whole trip first; the campsites
+        // open from the bar on the map (they used to pop up over the route right away).
         if (routePlanned) {
             setTimeout(() => {
                 // Without the interactive map (GOOGLE_MAPS_MODE != full) stay in the chat.
@@ -1905,7 +1906,8 @@ async function sendMessage(text) {
                     switchView('map');
                 }
                 if (state.currentTrip) {
-                    openCampingSelectionModal(state.currentTrip, 0);
+                    fitMapToTrip();
+                    showCampsiteReviewBar(state.currentTrip);
                 }
             }, 1200);
         }
@@ -4617,6 +4619,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     checkAuth();
 });
+
+// ── Campsite review bar (map) ─────────────────────────────────
+function showCampsiteReviewBar(tripData) {
+    const bar = document.getElementById('campsite-review-bar');
+    if (!bar) return;
+    const nights = (tripData && tripData.daily_schedules || []).filter(d =>
+        (d.waypoints || []).some(w => w.type === 'camping')).length;
+    if (!nights) { bar.hidden = true; return; }
+    const text = document.getElementById('campsite-review-text');
+    if (text) {
+        text.textContent = `🏕️ ${nights} ${nights === 1 ? 'night' : 'nights'} planned — campsites are picked`;
+    }
+    const review = document.getElementById('btn-review-campsites');
+    if (review) review.onclick = () => {
+        bar.hidden = true;
+        if (state.currentTrip) openCampingSelectionModal(state.currentTrip, 0);
+    };
+    const dismiss = document.getElementById('btn-dismiss-campsite-bar');
+    if (dismiss) dismiss.onclick = () => { bar.hidden = true; };
+    bar.hidden = false;
+}
 
 // ── Camping Selection Modal Functions ─────────────────────────
 function park4nightBadgeHtml(camp) {

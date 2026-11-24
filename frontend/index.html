@@ -293,7 +293,15 @@
                 <div class="legend-item"><span class="legend-stage-dot">D1</span> <span data-i18n="legend_day_stages">Etapy dni (D1, D2...)</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#00875A"></span> <span data-i18n="legend_camping">Kemping</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
+                <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span>📍 Place on the route</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
+            </div>
+
+            <!-- After planning: the route is shown first, campsites on request -->
+            <div class="campsite-review-bar" id="campsite-review-bar" hidden>
+                <span id="campsite-review-text">🏕️ Campsites are picked for your nights</span>
+                <button type="button" class="campsite-review-btn" id="btn-review-campsites">Review campsites</button>
+                <button type="button" class="campsite-review-close" id="btn-dismiss-campsite-bar" aria-label="Close">×</button>
             </div>
 
             <!-- Floating Chat Bubble on Map -->

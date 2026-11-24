@@ -4450,3 +4450,42 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     background: #fff;
     color: #001E50;
 }
+
+/* Bar on the map after planning: open the campsites when the user wants to */
+.campsite-review-bar {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 10px 16px;
+    background: #fff;
+    color: #001E50;
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0, 30, 80, 0.18);
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.campsite-review-bar[hidden] { display: none; }
+.campsite-review-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    background: #001E50;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+}
+.campsite-review-btn:hover { background: #00437A; }
+.campsite-review-close {
+    border: none;
+    background: transparent;
+    color: #718096;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+}
