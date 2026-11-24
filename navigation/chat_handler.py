@@ -318,10 +318,11 @@ def _for_model(result):
         camp = d.get("overnight_camping") or {}
         if camp:
             day["overnight_camping"] = {k: camp.get(k) for k in (
-                "name", "source", "spot_type", "price_info", "cost_per_night_eur",
+                "name", "source", "spot_type", "price_label", "price_info", "cost_per_night_eur",
                 "has_power", "has_water", "has_showers", "has_toilets", "rating") if camp.get(k) is not None}
         day["overnight_options"] = [
-            {k: o.get(k) for k in ("name", "source", "spot_type", "price_info", "cost_per_night_eur")
+            {k: o.get(k) for k in ("name", "source", "spot_type", "price_label", "price_info",
+                                   "cost_per_night_eur")
              if o.get(k) is not None}
             for o in (d.get("overnight_options") or [])[:6]
         ]
@@ -350,7 +351,7 @@ def _compact_trip(result):
             "campsite": camp.get("name"),
             "campsite_options": [
                 {"name": o.get("name"), "source": o.get("source"),
-                 "price": o.get("price_info") or o.get("cost_per_night_eur")}
+                 "price": o.get("price_label") or o.get("price_info") or o.get("cost_per_night_eur")}
                 for o in (d.get("overnight_options") or [])[:6]
             ],
         })

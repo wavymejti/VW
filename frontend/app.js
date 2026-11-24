@@ -913,21 +913,21 @@ async function loadCampingsOnMap() {
             }
 
             // Build badges for amenities and CEE power
-            let badgesHtml = '<div class="camping-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">';
+            let badgesHtml = '<div class="camping-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">' + campPriceBadgeHtml(camp);
             if (camp.shore_power_hookup || camp.has_power || camp.hookup_type === '230V CEE' || (camp.amenities && camp.amenities.includes('power'))) {
-                badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+                badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
             }
             if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-                badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:2px 6px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+                badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:2px 6px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
             }
             if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-                badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:2px 6px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+                badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:2px 6px; border-radius:4px; font-size:11px;">🚰 Water</span>';
             }
             if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
                 badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:2px 6px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
             }
             if (camp.has_toilets) {
-                badgesHtml += '<span class="camping-badge toilet-badge" style="background:#FFF3E0; color:#E65100; padding:2px 6px; border-radius:4px; font-size:11px;">🚽 Toaleta</span>';
+                badgesHtml += '<span class="camping-badge toilet-badge" style="background:#FFF3E0; color:#E65100; padding:2px 6px; border-radius:4px; font-size:11px;">🚽 Toilets</span>';
             }
             badgesHtml += '</div>';
 
@@ -935,7 +935,6 @@ async function loadCampingsOnMap() {
                 <div class="camping-infowindow" style="padding:6px; max-width:220px;">
                     <h4 style="margin:0 0 4px 0; color:#001E50; font-size:14px;">${camp.name}</h4>
                     ${camp.rating ? `<div style="font-size:12px; color:#555;">⭐ ${camp.rating}</div>` : ''}
-                    ${camp.cost_per_night_eur ? `<div style="font-size:12px; color:#333; font-weight:bold; margin-top:2px;">€${camp.cost_per_night_eur}/noc</div>` : ''}
                     ${badgesHtml}
                 </div>
             `;
@@ -4848,6 +4847,24 @@ function showCampsiteReviewBar(tripData) {
 }
 
 // ── Camping Selection Modal Functions ─────────────────────────
+// Free or paid, on every place to stay (backend: tools/camping_price.py).
+function campPriceBadgeHtml(camp) {
+    let kind = camp && camp.price_kind;
+    let label = camp && camp.price_label;
+    if (!kind) {
+        const cost = camp ? Number(camp.cost_per_night_eur) : NaN;
+        if (camp && camp.cost_per_night_eur != null && !Number.isNaN(cost)) {
+            kind = cost > 0 ? 'paid' : 'free';
+            label = cost > 0 ? `Paid · €${cost}/night` : 'Free';
+        } else {
+            kind = 'unknown';
+            label = 'Price not listed';
+        }
+    }
+    const icon = kind === 'free' ? '🆓' : kind === 'paid' ? '💶' : '❔';
+    return `<span class="camping-badge price-badge price-${kind}">${icon} ${escapeCampText(label)}</span>`;
+}
+
 function park4nightBadgeHtml(camp) {
     if (!camp || camp.source !== 'park4night') return '';
     const p4nLabel = escapeCampText(camp.spot_type ? `park4night · ${camp.spot_type}` : 'park4night');
@@ -4990,15 +5007,15 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         `;
 
         // Build badges
-        let badgesHtml = '<div class="camping-card-badges">';
+        let badgesHtml = '<div class="camping-card-badges">' + campPriceBadgeHtml(camp);
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
-            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
         if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
         }
         if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Water</span>';
         }
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
@@ -5019,7 +5036,6 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
                 ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : (camp.price_info ? `<span class="camping-card-cost">${escapeCampText(camp.price_info)}</span>` : '')}
                 </div>
                 ${badgesHtml}
             </div>
@@ -5284,15 +5300,15 @@ function openCampingSearchModal(campingsList, locationTitle = 'Places to stay ne
             </div>
         `;
 
-        let badgesHtml = '<div class="camping-card-badges">';
+        let badgesHtml = '<div class="camping-card-badges">' + campPriceBadgeHtml(camp);
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
-            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
         if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
         }
         if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Water</span>';
         }
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
@@ -5307,7 +5323,6 @@ function openCampingSearchModal(campingsList, locationTitle = 'Places to stay ne
                 ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : (camp.price_info ? `<span class="camping-card-cost">${escapeCampText(camp.price_info)}</span>` : '')}
                 </div>
                 ${badgesHtml}
             </div>

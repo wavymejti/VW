@@ -4570,3 +4570,9 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
 .tf-submit:hover { background: var(--vw-accent); }
 .tf-submit:disabled { opacity: 0.6; cursor: wait; }
 .tf-or { text-align: center; font-size: 0.8rem; color: var(--vw-text-muted); }
+
+/* Free / paid on every place to stay */
+.camping-badge.price-badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.camping-badge.price-free { background: #E6F4EA; color: #00875A; }
+.camping-badge.price-paid { background: #EDF1F7; color: #001E50; }
+.camping-badge.price-unknown { background: #F4F6F9; color: #4A5568; }

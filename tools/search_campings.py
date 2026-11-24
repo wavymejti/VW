@@ -17,6 +17,7 @@ from sqlalchemy import text
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message, places_nearby_basic
 from tools import park4night_client
+from tools.camping_price import with_price
 
 
 def search_campings(
@@ -96,6 +97,15 @@ def search_campings(
     # Trim to limit
     final_results = db_results[:limit]
 
+    # park4night spots cached before their type/price were stored: fetch them once more.
+    if any(c.get("source") == "park4night" and not c.get("spot_code") for c in final_results) \
+            and park4night_client.is_enabled():
+        _refresh_park4night_details(final_results, lat, lng, radius_km)
+
+    # Free or paid, for every result.
+    for camp in final_results:
+        with_price(camp)
+
     return {
         "status": "success",
         "results": final_results,
@@ -158,6 +168,7 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
                has_toilets, has_waste_disposal,
                shore_power_hookup, max_vehicle_length_m,
                level_ground, rating, review_count, source,
+               spot_code, price_info,
                ST_Distance(
                    location,
                    ST_SetSRID(ST_MakePoint(:lng, :lat),
@@ -179,6 +190,7 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
         params["max_cost_eur"] = max_cost_eur
 
     try:
+        _ensure_price_columns()
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(text(query), params)
@@ -301,6 +313,39 @@ def _search_park4night(lat, lng, radius_km, amenities):
     return [s for s in spots if all(s.get(col) for col in required)]
 
 
+_PRICE_COLUMNS_READY = False
+
+
+def _ensure_price_columns():
+    """Add spot_code / price_info to campings if migration 008 hasn't run yet (idempotent)."""
+    global _PRICE_COLUMNS_READY
+    if _PRICE_COLUMNS_READY:
+        return
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE campings ADD COLUMN IF NOT EXISTS spot_code VARCHAR(16)"))
+            conn.execute(text("ALTER TABLE campings ADD COLUMN IF NOT EXISTS price_info TEXT"))
+        _PRICE_COLUMNS_READY = True
+    except Exception as e:
+        print(f"  ⚠️  Could not add price columns to campings: {e}")
+
+
+def _refresh_park4night_details(campings, lat, lng, radius_km):
+    """Fill spot type and price of cached park4night spots from a fresh park4night search."""
+    fresh = {c["place_id"]: c for c in _search_park4night(lat, lng, radius_km, []) if c.get("place_id")}
+    found = []
+    for camp in campings:
+        f = fresh.get(camp.get("place_id"))
+        if camp.get("source") == "park4night" and not camp.get("spot_code") and f:
+            camp["spot_code"] = f.get("spot_code")
+            camp["spot_type"] = f.get("spot_type")
+            camp["price_info"] = camp.get("price_info") or f.get("price_info")
+            found.append(f)
+    if found:
+        _cache_maps_results(found)  # existing rows: fills spot_code / price_info
+
+
 def _cache_maps_results(campings):
     """
     Cache external results (Google Maps, park4night) into the local database.
@@ -312,6 +357,7 @@ def _cache_maps_results(campings):
         return
 
     try:
+        _ensure_price_columns()
         engine = get_engine()
         with engine.connect() as conn:
             for camp in campings:
@@ -328,6 +374,13 @@ def _cache_maps_results(campings):
                 ).fetchone()
 
                 if existing:
+                    if camp.get("spot_code") or camp.get("price_info"):
+                        # Older cache rows have no spot type / price yet.
+                        conn.execute(text(
+                            "UPDATE campings SET spot_code = COALESCE(spot_code, :code), "
+                            "price_info = COALESCE(price_info, :price) WHERE id = :id"),
+                            {"code": camp.get("spot_code"), "price": camp.get("price_info"),
+                             "id": existing[0]})
                     continue
 
                 # Insert new camping
@@ -339,7 +392,7 @@ def _cache_maps_results(campings):
                              photos, source,
                              has_power, has_water, has_wifi, has_showers,
                              has_toilets, has_waste_disposal,
-                             shore_power_hookup)
+                             shore_power_hookup, spot_code, price_info)
                         VALUES
                             (:name, :lat, :lng,
                              ST_SetSRID(ST_MakePoint(:lng, :lat),
@@ -348,7 +401,7 @@ def _cache_maps_results(campings):
                              :review_count, :photos, :source,
                              :has_power, :has_water, :has_wifi, :has_showers,
                              :has_toilets, :has_waste_disposal,
-                             :shore_power_hookup)
+                             :shore_power_hookup, :spot_code, :price_info)
                     """),
                     {
                         "name": camp["name"],
@@ -368,6 +421,8 @@ def _cache_maps_results(campings):
                         "has_toilets": bool(camp.get("has_toilets")),
                         "has_waste_disposal": bool(camp.get("has_waste_disposal")),
                         "shore_power_hookup": bool(camp.get("shore_power_hookup")),
+                        "spot_code": camp.get("spot_code"),
+                        "price_info": camp.get("price_info"),
                     },
                 )
 
