@@ -824,6 +824,9 @@ def _recalculate_day_route(conn, schedule_id, waypoints):
         }
         
         if len(waypoints) > 2:
+            from tools.plan_route import thin_via
+            waypoints = [waypoints[0], *thin_via(waypoints[1:-1]), waypoints[-1]]
+            dest_wp = waypoints[-1]
             intermediates = waypoints[1:-1]
             # "via" points come from a line drawn on the map: pass through them in order.
             directions_kwargs["waypoints"] = [

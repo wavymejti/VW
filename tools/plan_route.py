@@ -389,6 +389,20 @@ def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
 
 
 MAX_VIA_POINTS = 20
+# Google Directions takes at most 25 waypoints per request (pass-through ones included).
+MAX_DIRECTIONS_WAYPOINTS = 23
+
+
+def thin_via(waypoints, limit=MAX_DIRECTIONS_WAYPOINTS):
+    """Drop every other pass-through point until the waypoints fit Google's limit; stops stay."""
+    out = list(waypoints)
+    while len(out) > limit:
+        vias = [i for i, w in enumerate(out) if (w.get("type") == "via" if isinstance(w, dict) else False)]
+        if len(vias) < 2:
+            break
+        drop = set(vias[1::2])
+        out = [w for i, w in enumerate(out) if i not in drop]
+    return out
 
 
 def _via_for_day(via, legs, day_start, day_end):
@@ -894,6 +908,9 @@ def plan_route(
                 "traffic_model": "best_guess",
             }
             day_via = _via_for_day(via, legs, day_start, target_end)
+            if len(day_via) + len(day_wps) > MAX_DIRECTIONS_WAYPOINTS:
+                day_via = [p for p in thin_via([{**p, "type": "via"} for p in day_via],
+                                               MAX_DIRECTIONS_WAYPOINTS - len(day_wps))]
             if day_via:
                 # Drawn line: pass through its points in order; stops (if any) after them
                 # would break the drawing, so they keep Google's order only without via.

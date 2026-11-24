@@ -2946,7 +2946,10 @@ function isTouchScreen() {
     return !!((window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)
         || (navigator.maxTouchPoints || 0) > 0);
 }
-const MAX_DRAWN_VIA = 10;
+// Pass-through points every VIA_STEP_KM along the line (more apart on long lines, at most
+// MAX_DRAWN_VIA): close enough that the route can't cut a corner past a town the line crosses.
+const MAX_DRAWN_VIA = 20;
+const VIA_STEP_KM = 10;
 const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null,
     mode: 'new' };
 // A line whose two ends are this close (km) to the saved route changes only that stretch.
@@ -3020,6 +3023,30 @@ function samplePassThrough(points, count) {
             walked += l;
             seg++;
         }
+    }
+    return out;
+}
+
+// Points along the drawn line (as lat/lng, finger wobble included) every VIA_STEP_KM km,
+// without the two ends; the step grows on long lines so there are at most MAX_DRAWN_VIA.
+function passThroughByKm(line) {
+    if (line.length < 2) return [];
+    const cum = [0];
+    for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + _distKm(line[i - 1], line[i]));
+    const total = cum[cum.length - 1];
+    const step = Math.max(VIA_STEP_KM, total / (MAX_DRAWN_VIA + 1));
+    const count = Math.min(MAX_DRAWN_VIA, Math.floor(total / step));
+    const out = [];
+    let seg = 1;
+    for (let k = 1; k <= count; k++) {
+        const target = total * k / (count + 1);
+        while (seg < line.length - 1 && cum[seg] < target) seg++;
+        const l = cum[seg] - cum[seg - 1];
+        const f = l ? (target - cum[seg - 1]) / l : 0;
+        out.push({
+            lat: line[seg - 1].lat + (line[seg].lat - line[seg - 1].lat) * f,
+            lng: line[seg - 1].lng + (line[seg].lng - line[seg - 1].lng) * f,
+        });
     }
     return out;
 }
@@ -3109,12 +3136,11 @@ async function _onDrawUp(e) {
         _setDrawHint('✏️ Draw a longer line, from the start to the destination.');
         return;
     }
-    const simple = simplifyStroke(px, 6);
-    const count = Math.min(MAX_DRAWN_VIA, Math.round(strokeLength(simple) / 120));
+    const simple = simplifyStroke(px, 3);
     const toLL = pts => pts.map(p => _pxToLatLng(...p)).filter(Boolean);
     const [start] = toLL([px[0]]);
     const [end] = toLL([px[px.length - 1]]);
-    const via = toLL(samplePassThrough(simple, count));
+    const via = passThroughByKm(toLL(px));
     if (!start || !end) return;
     // Show the simplified line: that's what the planner follows.
     drawState.line.setPath(toLL(simple).map(p => new google.maps.LatLng(p.lat, p.lng)));

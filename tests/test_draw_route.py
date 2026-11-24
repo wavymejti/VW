@@ -106,3 +106,16 @@ def test_drawing_ui_is_touch_only():
         js = f.read()
     assert "pointerType" in js and "any-pointer: coarse" in js
     assert "if (wp.type === 'via') return;" in js
+
+
+def test_drawn_line_is_sampled_by_kilometres_not_pixels():
+    with open(os.path.join(ROOT, "frontend", "app.js"), encoding="utf-8") as f:
+        js = f.read()
+    assert "const VIA_STEP_KM = 10;" in js and "passThroughByKm(toLL(px))" in js
+
+
+def test_too_many_points_for_google_are_thinned_but_stops_stay():
+    from tools.plan_route import thin_via
+    wps = [{"type": "via", "n": i} for i in range(30)] + [{"type": "attraction"}]
+    out = thin_via(wps)
+    assert len(out) <= 23 and {"type": "attraction"} in out
