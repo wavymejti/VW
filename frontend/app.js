@@ -1846,6 +1846,10 @@ async function sendMessage(text) {
 
         // Process tool calls (like plan_route, modify_route, add_attraction)
         let routePlanned = false;
+        // A search followed by set_overnight in the same turn already moved the night:
+        // no list to pick from then.
+        const nightAlreadyChanged = (result.tool_calls || []).some(tc =>
+            tc.function_name === 'set_overnight' && tc.result && tc.result.status === 'success');
         if (result.tool_calls) {
             result.tool_calls.forEach(tc => {
                 // Full route plan or route modification → redraw entire map
@@ -1859,7 +1863,7 @@ async function sendMessage(text) {
 
                 // Camping search tool call → pop up recommendation modal with Google Places photos
                 if (
-                    tc.function_name === 'search_campings' &&
+                    tc.function_name === 'search_campings' && !nightAlreadyChanged &&
                     tc.result && tc.result.status === 'success' &&
                     tc.result.results && tc.result.results.length > 0
                 ) {
@@ -4963,7 +4967,54 @@ async function renderDayAttractionsForModal(tripData, dayNumber) {
 }
 window.renderDayAttractionsForModal = renderDayAttractionsForModal;
 
-function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kempingi') {
+// Nights of a trip that can get another campsite: driving days except the last
+// (stay days follow the night before them, so they are not listed separately).
+function tripNights(trip) {
+    if (!trip || !trip.trip || !trip.trip.id || !Array.isArray(trip.daily_schedules)) return [];
+    const days = trip.daily_schedules;
+    return days
+        .filter((d, i) => i < days.length - 1 &&
+            !(d.waypoints || []).every(w => w.type === 'stay'))
+        .map(d => ({
+            day: d.day_number,
+            label: `Night after day ${d.day_number}` + (d.date ? ` (${d.date})` : ''),
+        }));
+}
+
+function _distKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLat / 2) ** 2 +
+        Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// The night whose day's route passes closest to `place` (polyline points when the
+// geometry library is loaded, otherwise the day's waypoints).
+function nearestNight(trip, nights, place) {
+    if (!nights.length) return null;
+    if (!place || place.lat == null || place.lng == null) return nights[0].day;
+    const target = { lat: Number(place.lat), lng: Number(place.lng) };
+    let best = { day: nights[0].day, km: Infinity };
+    nights.forEach(n => {
+        const day = trip.daily_schedules.find(d => d.day_number === n.day);
+        let pts = (day.waypoints || []).filter(w => w.lat != null && w.lng != null)
+            .map(w => ({ lat: Number(w.lat), lng: Number(w.lng) }));
+        if (day.route_polyline && window.google && google.maps && google.maps.geometry) {
+            try {
+                pts = pts.concat(google.maps.geometry.encoding.decodePath(day.route_polyline)
+                    .map(p => ({ lat: p.lat(), lng: p.lng() })));
+            } catch (e) { /* keep the waypoints */ }
+        }
+        pts.forEach(p => {
+            const km = _distKm(p, target);
+            if (km < best.km) best = { day: n.day, km };
+        });
+    });
+    return best.day;
+}
+
+function openCampingSearchModal(campingsList, locationTitle = 'Places to stay nearby') {
     const modal = document.getElementById('camping-selection-modal');
     const grid = document.getElementById('camping-cards-grid');
     const titleEl = document.getElementById('camping-modal-title');
@@ -4972,16 +5023,22 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
     if (!modal || !grid) return;
 
     if (tabsContainer) tabsContainer.innerHTML = '';
-    if (badgeEl) badgeEl.textContent = 'Szukaj noclegu';
+    if (badgeEl) badgeEl.textContent = 'Places to stay';
     if (titleEl) titleEl.textContent = `🏕️ ${locationTitle}`;
 
     grid.innerHTML = '';
     modal.style.display = 'flex';
 
     if (!campingsList || campingsList.length === 0) {
-        grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096;">Brak kempingów spełniających wybrane kryteria w tym obszarze.</div>`;
+        grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096;">No places to stay match these filters in this area.</div>`;
         return;
     }
+
+    // Nights of the current trip this search can fill; the one whose route passes
+    // closest to the results is preselected ("sleep near Wolfgangsee" -> day 2).
+    const trip = state.currentTrip;
+    const nights = tripNights(trip);
+    const defaultNight = nearestNight(trip, nights, campingsList[0]);
 
     campingsList.forEach((camp) => {
         const card = document.createElement('div');
@@ -5026,24 +5083,47 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
                 ${badgesHtml}
             </div>
             <div class="camping-card-action">
-                <button class="btn-select-camping">Zatwierdź ten kemping</button>
+                ${nights.length ? `
+                <select class="camping-night-select" aria-label="Night">
+                    ${nights.map(n => `<option value="${n.day}" ${n.day === defaultNight ? 'selected' : ''}>${escapeCampText(n.label)}</option>`).join('')}
+                </select>` : ''}
+                <button class="btn-select-camping">${nights.length ? 'Sleep here' : 'Show on map'}</button>
             </div>
         `;
 
         const btn = card.querySelector('.btn-select-camping');
-        btn.addEventListener('click', () => {
-            btn.textContent = '✓ Wybrano kemping';
-            btn.style.background = '#00875A';
-            btn.disabled = true;
-            card.classList.add('selected');
-
-            if (state.mapInitialized && camp.lat && camp.lng) {
-                addMarker(camp.lat, camp.lng, camp.name, null, '🏕️');
-                state.map.panTo({ lat: camp.lat, lng: camp.lng });
-            }
-            setTimeout(() => {
+        btn.addEventListener('click', async () => {
+            const select = card.querySelector('.camping-night-select');
+            if (!select) {
+                // No trip yet: only show the place on the map.
+                if (state.mapInitialized && camp.lat && camp.lng) {
+                    addMarker(camp.lat, camp.lng, camp.name, null, '🏕️');
+                    state.map.panTo({ lat: camp.lat, lng: camp.lng });
+                }
                 modal.style.display = 'none';
-            }, 800);
+                return;
+            }
+            const dayNumber = parseInt(select.value, 10);
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            const res = await apiCall('select_camping', {
+                trip_id: trip.trip.id,
+                day_number: dayNumber,
+                camping: camp,
+            });
+            if (res.status === 'success' && res.trip_data) {
+                state.currentTrip = res.trip_data;
+                displayTripOnMap(res.trip_data);
+                modal.style.display = 'none';
+            } else if (res.status === 'error' && /authenticated|not saved|not found/i.test(res.message || '')) {
+                // A trip that is not saved (not logged in): let the planner move the night.
+                modal.style.display = 'none';
+                sendMessage(`Sleep at ${camp.name} (lat ${camp.lat}, lng ${camp.lng}) on the night after day ${dayNumber}.`);
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Sleep here';
+                alert(res.message || 'Could not change the night.');
+            }
         });
 
         grid.appendChild(card);

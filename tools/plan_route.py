@@ -387,6 +387,43 @@ def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
     return found
 
 
+# A day end this close to a place on the route moves to that place (km; also at most a
+# quarter of an average driving day, so short days are not stretched).
+SNAP_MAX_KM = 60.0
+
+
+def _snap_day_ends_to_waypoints(points, waypoints, avg_day_km):
+    """
+    Move a day end onto a nearby waypoint so the night is spent where the user is visiting.
+
+    Day ends the user fixed (overnight stops, stays, the turnaround) are kept. Each waypoint
+    takes at most one night. Snapped points carry `night_near` (the waypoint's label).
+    """
+    if not points or not waypoints:
+        return points
+    limit = min(SNAP_MAX_KM, 0.25 * (avg_day_km or 0))
+    used, out = set(), []
+    for pt in points:
+        if pt.get("requested_overnight") or pt.get("stay_days") or pt.get("turnaround"):
+            out.append(pt)
+            continue
+        best = None
+        for i, wp in enumerate(waypoints):
+            if i in used or wp.get("lat") is None or wp.get("lng") is None:
+                continue
+            d = _haversine_distance(pt["lat"], pt["lng"], wp["lat"], wp["lng"])
+            if d <= limit and (best is None or d < best[0]):
+                best = (d, i)
+        if best is None:
+            out.append(pt)
+            continue
+        used.add(best[1])
+        wp = waypoints[best[1]]
+        out.append({**pt, "label": wp.get("label") or pt.get("label"),
+                    "lat": wp["lat"], "lng": wp["lng"], "night_near": wp.get("label")})
+    return out
+
+
 def plan_route(
     origin,
     destination,
@@ -648,6 +685,12 @@ def plan_route(
     num_days = best[1]
     intermediate_points, extra_after = best[2][0], best[2][1]
 
+    # A place to visit close to where a day would end becomes that night's place
+    # (Wolfgangsee 50 km before Teisendorf: sleep by the lake, not 50 km further on).
+    intermediate_points = _snap_day_ends_to_waypoints(
+        intermediate_points, normalized_waypoints,
+        total_distance_km / max(1, num_days))
+
     day_offset, offset = {}, 0
     for d in range(1, num_days + 1):
         day_offset[d] = offset
@@ -871,6 +914,17 @@ def plan_route(
             "weather": weather if weather["status"] == "success" else None,
             "is_return": is_return_leg
         }
+        if day_end.get("night_near"):
+            schedule["night_near"] = day_end["night_near"]
+        if overnight_camping and ordered_day_wps:
+            # How far the night is from the day's places, so a reply never calls a
+            # campsite 50 km away "near" one of them.
+            schedule["campsite_km_from_stops"] = [
+                {"stop": wp.get("label"),
+                 "km": round(_haversine_distance(overnight_camping["lat"], overnight_camping["lng"],
+                                                 wp["lat"], wp["lng"]), 1)}
+                for wp in ordered_day_wps
+            ]
 
         # Remember this day's actual end point to be the start point of the next day
         if overnight_camping:

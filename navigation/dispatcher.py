@@ -1125,7 +1125,8 @@ OPENAI_TOOL_DEFINITIONS = [
                             "CONCRETE named place (e.g. 'Neuschwanstein Castle', 'Medjugorje') — never a "
                             "category or area ('largest castles', 'wooden churches in Saxony'). For a "
                             "category, plan the route first, then call suggest_attractions and add the "
-                            "places the user picks. Places far off the route are skipped with a warning."
+                            "places the user picks. Places far off the route are skipped with a warning. "
+                            "A place where the user wants to SLEEP goes to overnight_stops, not here (a place close to where a day ends becomes that night's place anyway)."
                         ),
                     },
                     "num_days": {
@@ -1252,7 +1253,9 @@ OPENAI_TOOL_DEFINITIONS = [
                 "somewhere else on a given night (a free spot, a campsite they picked, one from "
                 "search_campings results or the day's overnight options). For a stay of several days "
                 "the whole stay moves to the new campsite. Prefer this over modify_route for "
-                "changing a night."
+                "changing a night. For 'sleep near X': call search_campings near X first, then "
+                "this in the same turn with the closest proper campsite, on the day whose route "
+                "passes X."
             ),
             "parameters": {
                 "type": "object",
@@ -1314,6 +1317,7 @@ OPENAI_TOOL_DEFINITIONS = [
                             "CONCRETE named places only, never categories ('castles', 'wooden churches') — "
                             "use suggest_attractions to find those. Places already on the trip are kept "
                             "automatically; list only the ones to add."
+                            " A place where the user wants to SLEEP goes to overnight_stops, not here (a place close to where a day ends becomes that night's place anyway)."
                         ),
                     },
                     "exclude_places": {

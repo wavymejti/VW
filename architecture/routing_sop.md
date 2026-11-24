@@ -35,6 +35,10 @@ daily schedules respectful of user driving limits.
    for origin → destination to get total distance and duration.
 3. **Divide into daily segments** — split total driving by `max_daily_drive_hours`.
    Ensure each day's driving does not exceed the limit.
+   A day end within `SNAP_MAX_KM` (60 km, at most a quarter of an average day) of a
+   waypoint moves onto that waypoint, so the night is spent where the user visits
+   (`night_near` on the day). Overnight stops, stays and the turnaround never move;
+   each waypoint takes at most one night.
 4. **Find overnight campings** — for each day's endpoint, call `search_campings`
    to find a suitable campground near the stopping point.
 5. **Compute daily routes** — for each day, call Routes API with that day's
@@ -58,6 +62,8 @@ daily schedules respectful of user driving limits.
 
 - Daily driving MUST NOT exceed `max_daily_drive_hours`.
 - Each overnight stop MUST have a campground (auto-selected or user-chosen).
+- A day with places to visit lists `campsite_km_from_stops`; replies call a campsite
+  "near X" only when it is within ~15 km of X.
 - Route waypoints must be geographically logical (no backtracking).
 
 ## Error Handling

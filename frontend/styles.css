@@ -4438,3 +4438,15 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
     background: #fff; color: #001e50; border-radius: 14px; text-align: center;
     box-shadow: 0 10px 30px rgba(0, 30, 80, 0.15); font-size: 14px; line-height: 1.4; z-index: 5;
 }
+
+/* Camping search results: which night to put the place on */
+.camping-card-action .camping-night-select {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    background: #fff;
+    color: #001E50;
+}
