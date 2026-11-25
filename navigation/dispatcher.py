@@ -250,7 +250,8 @@ def _handle_find_route_stops(arguments):
     if not schedules:
         return {"status": "error", "code": "not_saved", "message": "No planned route to search along."}
     result = plan_route_stops(schedules, arguments.get("kind"), arguments.get("vehicle") or "diesel",
-                              arguments.get("departure") or "09:00", arguments.get("day_number"))
+                              arguments.get("departure") or "09:00", arguments.get("day_number"),
+                              query=arguments.get("query"))
     if result.get("status") == "success":
         result["saved_trip"] = bool(data)
     return result
@@ -1714,6 +1715,10 @@ OPENAI_TOOL_DEFINITIONS = [
                     "vehicle": {"type": "string", "enum": ["diesel", "phev", "ev"],
                                 "description": "diesel = California T6.1, phev = California eHybrid, ev = ID. Buzz."},
                     "departure": {"type": "string", "description": "Departure time HH:MM (default 09:00)."},
+                    "query": {"type": "string", "description": (
+                        "A name, brand or cuisine the user asked for, e.g. \"McDonald's\", \"Shell\", "
+                        "\"IONITY\", \"pizza\". Pass it whenever the user names one; then only matching "
+                        "places are returned (up to 30 km from the stop point).")},
                 },
                 "required": ["kind"],
             },

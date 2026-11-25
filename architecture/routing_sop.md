@@ -93,6 +93,9 @@ charging when the battery reaches 20% (full each morning, fast charge to 80%; ID
 380 km), lunch where the clock reaches 12:45. Places come from Google Places API (New),
 Nearby Search with basic "Pro" fields only (`tools/google_stops.py`, one call per stop point,
 cached 24 h; no hours, ratings, EV/fuel options, which are billed as Enterprise/Atmosphere). A chosen
+stop can be asked for by name, brand or cuisine (`query`, e.g. "McDonald's", "Shell"): then
+Text Search (New) with the same Pro fields runs instead of Nearby Search (5, 15, then 30 km
+around the stop point); a name found in some results keeps only those, a cuisine keeps all. A
 place can show a street-level photo from Mapillary (`tools/mapillary_client.py`,
 `POST /api/place_photo`; free, CC BY-SA credit shown; only with `MAPILLARY_TOKEN`): a panorama or
 an image facing the place, nearer and newer first, within 60 m, then 150 m. Attractions

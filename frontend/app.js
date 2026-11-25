@@ -1141,27 +1141,30 @@ async function loadAttractionsOnMap(tripId, preferences = null) {
             });
         });
 
-        // Ensure any attraction saved in current trip schedules is present in allAttrs
+        // Ensure every place saved on the trip is present in allAttrs: attractions and the
+        // 'waypoint' items (places on the route, fuel / charging / lunch stops), which were
+        // dropped here and vanished from the map a moment after it was drawn.
         if (state.currentTrip && state.currentTrip.daily_schedules) {
             state.currentTrip.daily_schedules.forEach(day => {
                 (day.waypoints || []).forEach(wp => {
-                    if (wp.type === 'attraction') {
+                    if (wp.type === 'attraction' || wp.type === 'waypoint') {
                         const exists = allAttrs.some(a =>
                             (wp.place_id && a.place_id && a.place_id === wp.place_id) ||
                             (a.name && wp.label && a.name.trim().toLowerCase() === wp.label.trim().toLowerCase())
                         );
                         if (!exists) {
+                            const isWaypoint = wp.type === 'waypoint';
                             allAttrs.unshift({
-                                name: wp.label || wp.name || 'Atrakcja',
+                                name: wp.label || wp.name || (isWaypoint ? 'Punkt na trasie' : 'Atrakcja'),
                                 lat: wp.lat,
                                 lng: wp.lng,
                                 place_id: wp.place_id,
                                 photo_url: wp.photo_url,
                                 rating: wp.rating,
                                 address: wp.address || '',
-                                emoji: wp.emoji || '⭐',
-                                color: wp.color || '#F9A825',
-                                category_label: wp.category_label || 'Atrakcja',
+                                emoji: wp.emoji || (isWaypoint ? '📍' : '⭐'),
+                                color: wp.color || (isWaypoint ? '#001E50' : '#F9A825'),
+                                category_label: wp.category_label || (isWaypoint ? 'Punkt na trasie' : 'Atrakcja'),
                                 day_number: day.day_number,
                                 is_in_route: true
                             });

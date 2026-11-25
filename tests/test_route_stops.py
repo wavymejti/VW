@@ -68,7 +68,7 @@ def test_no_lunch_on_a_short_morning_day():
 def test_candidates_nearest_to_the_route_first(monkeypatch):
     calls = []
 
-    def fake_find(kind, points, radius_m=5000):
+    def fake_find(kind, points, radius_m=5000, query=None):
         calls.append((kind, len(points), radius_m))
         p = points[0]
         return [
@@ -116,7 +116,7 @@ def test_chat_tool_uses_the_route_planned_in_the_chat(monkeypatch):
     from types import SimpleNamespace
     import json as _json
 
-    monkeypatch.setattr(google_stops, "find_places", lambda kind, points, radius_m=5000: [
+    monkeypatch.setattr(google_stops, "find_places", lambda kind, points, radius_m=5000, query=None: [
         {"place_id": "p9", "name": "Aral", "lat": points[0]["lat"], "lng": points[0]["lng"], "kind": kind}])
     monkeypatch.setattr("tools.trip_store.get_trip_data", lambda tid: None)
     rows = [(d["day_number"], d["waypoints"], d["route_polyline"]) for d in _trip()]
@@ -195,3 +195,63 @@ def test_chat_add_stop_returns_the_trip_totals(monkeypatch):
                                              "name": "EssEck", "lat": 51.27, "lng": 7.22})
     assert res["total_driving_km"] == 819.4 and res["total_driving_hours"] == 8.8
     assert res["daily_schedules"] and "trip_data" not in res
+
+
+
+def test_named_place_is_searched_by_text_up_to_30_km(monkeypatch):
+    """'I want McDonald's on day 2': the brand is searched, wider than the usual 15 km."""
+    calls = []
+
+    def fake_find(kind, points, radius_m=5000, query=None):
+        calls.append((radius_m, query))
+        if radius_m < 30000:
+            return []
+        p = points[0]
+        return [{"place_id": "mc", "name": "McDonald's", "kind": kind, "lat": p["lat"] + 0.15, "lng": p["lng"]}]
+
+    monkeypatch.setattr(google_stops, "find_places", fake_find)
+    res = rs.plan_route_stops(_trip(), "restaurant", day_number=2, query="McDonald's")
+    assert calls == [(5000, "McDonald's"), (15000, "McDonald's"), (30000, "McDonald's")]
+    assert res["query"] == "McDonald's"
+    assert res["targets"][0]["candidates"][0]["name"] == "McDonald's"
+
+
+def test_nothing_named_found_is_said_per_stop(monkeypatch):
+    monkeypatch.setattr(google_stops, "find_places", lambda *a, **k: [])
+    res = rs.plan_route_stops(_trip(), "restaurant", day_number=2, query="Nando's")
+    assert res["targets"][0]["candidates"] == [] and "Nando's" in res["targets"][0]["note"]
+
+
+def test_text_search_keeps_the_brand_but_not_for_a_cuisine(monkeypatch):
+    sent = {}
+
+    class Resp:
+        status_code, content = 200, b"x"
+
+        def json(self):
+            return {"places": [
+                {"id": "a", "displayName": {"text": "Burger King"}, "primaryType": "fast_food_restaurant",
+                 "location": {"latitude": 51.0, "longitude": 7.0}},
+                {"id": "b", "displayName": {"text": "McDonald's Wuppertal"}, "primaryType": "fast_food_restaurant",
+                 "location": {"latitude": 51.01, "longitude": 7.0}},
+                {"id": "c", "displayName": {"text": "Da Luigi"}, "primaryType": "italian_restaurant",
+                 "location": {"latitude": 51.02, "longitude": 7.0}},
+            ]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.update(url=url, body=json, mask=headers["X-Goog-FieldMask"])
+        return Resp()
+
+    monkeypatch.setattr(google_stops.requests, "post", fake_post)
+    found = google_stops.find_places("restaurant", [{"lat": 51.0, "lng": 7.0}], 5000, query="mcdonalds")
+    assert [p["name"] for p in found] == ["McDonald's Wuppertal"]
+    assert sent["url"].endswith("places:searchText") and sent["body"]["textQuery"] == "mcdonalds"
+    assert "rectangle" in sent["body"]["locationRestriction"] and "rating" not in sent["mask"]
+    found = google_stops.find_places("restaurant", [{"lat": 51.0, "lng": 7.0}], 5000, query="pizza")
+    assert len(found) == 3                                   # a cuisine is rarely in the name
+
+
+def test_chat_tool_offers_query():
+    from navigation import dispatcher
+    tool = next(t for t in dispatcher.OPENAI_TOOL_DEFINITIONS if t["function"]["name"] == "find_route_stops")
+    assert "query" in tool["function"]["parameters"]["properties"]

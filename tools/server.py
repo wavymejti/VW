@@ -982,7 +982,8 @@ def api_route_stops():
     from tools.user_memory import remembered_vehicle
     vehicle = data.get("vehicle") or remembered_vehicle(session.get("user_id")) or "diesel"
     result = plan_route_stops(schedules, data.get("kind"), vehicle,
-                              data.get("departure") or "09:00", data.get("day_number"))
+                              data.get("departure") or "09:00", data.get("day_number"),
+                              query=data.get("query"))
     result["saved_trip"] = bool(trip)
     from tools import mapillary_client
     result["photos"] = mapillary_client.available()
@@ -1191,16 +1192,16 @@ def api_get_attractions(trip_id):
     Query params:
         preferences (str): Comma-separated keywords, e.g. 'zamki,natura'.
         limit_per_day (int): Max results per day (default 8).
-        sample_every_km (int): Sampling interval in km (default 80).
+        sample_every_km (int): Sampling interval in km (default 50).
     """
     preferences = request.args.get("preferences", None)
     limit_per_day = int(request.args.get("limit_per_day", 8))
-    # Default sample interval raised to 80 km to reduce API call count
-    sample_every_km = float(request.args.get("sample_every_km", 80))
+    # 50 km samples with a 25 km search radius cover the whole route corridor
+    sample_every_km = float(request.args.get("sample_every_km", 50))
 
     # Build a cache key. It includes a fingerprint of the route: a trip changed in place
     # (extended, part redrawn, a night moved) keeps its id but needs new attractions.
-    cache_key = (f"{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}:"
+    cache_key = (f"v2:{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}:"
                  f"{_route_fingerprint(trip_id)}")
     if cache_key in _ATTRACTIONS_CACHE:
         print(f"[api_get_attractions] RAM Cache HIT for {cache_key}", flush=True)

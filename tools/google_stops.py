@@ -81,6 +81,47 @@ def _main_type_fits(kind, primary_type):
     return primary_type in KIND_TYPES[kind]
 
 
+def _bounds(point, radius_m):
+    """Rectangle around a circle (Text Search accepts only a rectangle as a hard limit)."""
+    import math
+    dlat = radius_m / 111320
+    dlng = radius_m / (111320 * max(0.2, math.cos(math.radians(point["lat"]))))
+    return {"rectangle": {"low": {"latitude": point["lat"] - dlat, "longitude": point["lng"] - dlng},
+                          "high": {"latitude": point["lat"] + dlat, "longitude": point["lng"] + dlng}}}
+
+
+def _text_search(query, point, radius_m):
+    """Text Search (New), Pro fields only (billed as Text Search Pro, its own 5,000 free a month)."""
+    body = {"textQuery": query, "pageSize": MAX_RESULTS, "locationRestriction": _bounds(point, radius_m)}
+    resp = requests.post(
+        f"{maps_client.PLACES_NEW_URL}/places:searchText",
+        json=body,
+        headers={"X-Goog-Api-Key": maps_client.GOOGLE_MAPS_API_KEY or "",
+                 "X-Goog-FieldMask": ",".join(f"places.{f}" for f in FIELDS)},
+        timeout=TIMEOUT_S,
+    )
+    data = resp.json() if resp.content else {}
+    if resp.status_code != 200:
+        msg = (data.get("error") or {}).get("message") or resp.text[:200]
+        raise GooglePlacesError(f"Google Places {resp.status_code}: {msg}")
+    return data.get("places") or []
+
+
+def _norm(text_value):
+    import re
+    return re.sub(r"[^0-9a-ząćęłńóśźżäöüß]", "", (text_value or "").lower())
+
+
+def _named(places, query):
+    """
+    A brand or a name ("McDonald's", "Shell") keeps only places carrying it; a cuisine
+    ("pizza", "Italian") usually is not in the name, so then everything Google found stays.
+    """
+    q = _norm(query)
+    named = [p for p in places if q and q in _norm(p["name"])]
+    return named or places
+
+
 def to_place(p, kind):
     loc = p.get("location") or {}
     if loc.get("latitude") is None or loc.get("longitude") is None:
@@ -141,9 +182,10 @@ def _one_per_address(places, kind):
     return kept
 
 
-def find_places(kind, points, radius_m=5000):
+def find_places(kind, points, radius_m=5000, query=None):
     """
-    Places of `kind` near each of `points` ([{"lat", "lng"}]): one Nearby Search call per point.
+    Places of `kind` near each of `points` ([{"lat", "lng"}]): one call per point, Nearby
+    Search by type, or Text Search when the user asked for a name, brand or cuisine (`query`).
 
     Raises:
         GooglePlacesError: when Google is not configured or a call fails.
@@ -154,16 +196,18 @@ def find_places(kind, points, radius_m=5000):
         raise GooglePlacesError("Google Places is not available (no key or GOOGLE_MAPS_MODE).")
     seen, places = set(), []
     for pt in points:
-        key = (kind, int(radius_m), round(pt["lat"], 2), round(pt["lng"], 2))
+        key = (kind, int(radius_m), round(pt["lat"], 2), round(pt["lng"], 2), (query or "").lower())
         hit = _cache.get(key)
         if hit and time.time() - hit[0] < CACHE_TTL_S:
             found = hit[1]
         else:
             try:
-                raw = _nearby(kind, pt, radius_m)
+                raw = _text_search(query, pt, radius_m) if query else _nearby(kind, pt, radius_m)
             except requests.RequestException as e:
                 raise GooglePlacesError(f"Google Places: {e}") from e
             found = _one_per_address([x for x in (to_place(p, kind) for p in raw) if x], kind)
+            if query:
+                found = _named(found, query)
             _cache[key] = (time.time(), found)
         for p in found:
             if p["place_id"] not in seen:

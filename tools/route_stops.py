@@ -29,6 +29,7 @@ LUNCH_AT = (12, 45)
 LUNCH_EARLIEST = (12, 30)
 BREAK_EVERY_H, BREAK_MIN = 2.0, 15
 SEARCH_RADIUS_M, WIDER_RADIUS_M = 5000, 15000
+QUERY_RADIUS_M = 30000        # a named place (McDonald's, Shell) is worth a longer detour
 LUNCH_MIN_LEFT_H = 0.5        # lunch this close to the day's end -> eat at the destination
 CANDIDATES_PER_TARGET = 3
 FALLBACK_KMH = 75.0
@@ -186,19 +187,26 @@ def _off_route_km(place, line):
     return min(_km(place, p) for p in line)
 
 
-def _search(kind, targets):
-    """Places near the targets: 5 km first, then 15 km around the targets left empty."""
-    found = google_stops.find_places(kind, [t["point"] for t in targets], SEARCH_RADIUS_M)
-    missing = [t for t in targets if not any(_km(t["point"], p) <= SEARCH_RADIUS_M / 1000 + 0.5 for p in found)]
-    if missing:
-        found += google_stops.find_places(kind, [t["point"] for t in missing], WIDER_RADIUS_M)
+def _radii(query):
+    return (SEARCH_RADIUS_M, WIDER_RADIUS_M, QUERY_RADIUS_M) if query else (SEARCH_RADIUS_M, WIDER_RADIUS_M)
+
+
+def _search(kind, targets, query=None):
+    """Places near the targets: 5 km first, then wider around the targets still left empty."""
+    found, left = [], list(targets)
+    for radius in _radii(query):
+        if not left:
+            break
+        found += google_stops.find_places(kind, [t["point"] for t in left], radius, query=query)
+        left = [t for t in left if not any(_km(t["point"], p) <= radius / 1000 + 0.5 for p in found)]
     return found
 
 
 def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT_DEPARTURE,
-                     day_number=None):
+                     day_number=None, query=None):
     """
     Targets with up to CANDIDATES_PER_TARGET places each (nearest to the route first).
+    `query`: a name, brand or cuisine the user wants ("McDonald's", "Shell", "pizza").
 
     Returns:
         dict: {"status": "success", "kind", "vehicle", "departure", "targets": [...]}
@@ -206,10 +214,13 @@ def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT
     """
     if kind not in KIND_LABELS:
         return {"status": "error", "message": f"Unknown stop type '{kind}' (fuel, ev_charging, restaurant)."}
+    query = (query or "").strip()[:60] or None
     targets = find_targets(schedules, kind, vehicle, departure, day_number)
     base = {"status": "success", "kind": kind, "vehicle": vehicle if vehicle in VEHICLES else DEFAULT_VEHICLE,
             "vehicle_label": (VEHICLES.get(vehicle) or VEHICLES[DEFAULT_VEHICLE])["label"],
             "departure": "%02d:%02d" % _departure(departure), "targets": targets}
+    if query:
+        base["query"] = query
     if not targets:
         base["message"] = {"fuel": "No fuel stop needed on these days.",
                            "ev_charging": "No charging stop needed on these days.",
@@ -221,14 +232,14 @@ def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT
         return {"status": "error", "message": "Place search needs Google Places (GOOGLE_MAPS_API_KEY and "
                                               "GOOGLE_MAPS_MODE basic or full)."}
     try:
-        found = _search(kind, targets)
+        found = _search(kind, targets, query)
     except google_stops.GooglePlacesError as e:
         print(f"[route_stops] {e}")
         return {"status": "error", "message": "Place search is not available right now. Try again in a moment."}
 
     for t in targets:
         line = lines[t["day_number"]]
-        near = [p for p in found if _km(t["point"], p) <= WIDER_RADIUS_M / 1000]
+        near = [p for p in found if _km(t["point"], p) <= _radii(query)[-1] / 1000]
         ranked = []
         for p in near:
             off = _off_route_km(p, line)
@@ -244,6 +255,8 @@ def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT
             if len(cands) == CANDIDATES_PER_TARGET:
                 break
         t["candidates"] = cands
+        if query and not cands:
+            t["note"] = f"No {query} within {QUERY_RADIUS_M // 1000} km of this point."
     return base
 
 

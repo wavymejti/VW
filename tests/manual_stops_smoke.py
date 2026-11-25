@@ -33,11 +33,12 @@ TRIP = [
      "waypoints": [{"type": "start"}, {"type": "camping"}]},
 ]
 
-for kind, veh in [("fuel", "diesel"), ("ev_charging", "ev"), ("restaurant", "diesel")]:
+for kind, veh, query in [("fuel", "diesel", None), ("ev_charging", "ev", None), ("restaurant", "diesel", None),
+                         ("restaurant", "diesel", "McDonald's")]:
     google_stops._cache.clear()
     t0 = time.time()
-    res = rs.plan_route_stops(TRIP, kind, veh, "09:00")
-    print(f"\n== {kind} ({veh})  {res.get('status')}  {time.time() - t0:.1f}s  {res.get('message', '')}")
+    res = rs.plan_route_stops(TRIP, kind, veh, "09:00", query=query)
+    print(f"\n== {kind} ({veh}){' ' + query if query else ''}  {res.get('status')}  {time.time() - t0:.1f}s  {res.get('message', '')}")
     for t in res.get("targets", []):
         print(f"  day {t['day_number']}  km {t['km']}  {t['eta']}  ({t['after_driving']})  {t['reason']}"
               f"  @ {t['point']['lat']:.4f},{t['point']['lng']:.4f}")
@@ -46,4 +47,4 @@ for kind, veh in [("fuel", "diesel"), ("ev_charging", "ev"), ("restaurant", "die
                                        if c.get(k) not in (None, [], False)}
             print(f"     - {c['name']}  [{c['off_route_km']} km off route]  {json.dumps(extra, ensure_ascii=False)}")
         if not t.get("candidates"):
-            print("     (no candidates)")
+            print("     (no candidates)", t.get("note") or "")
