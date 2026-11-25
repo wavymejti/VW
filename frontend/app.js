@@ -1697,7 +1697,7 @@ function addMessage(role, text) {
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
-                            <span class="sniffer-name">🐶 Volkswagen Sniffer</span>
+                            <span class="sniffer-name">Volkswagen Sniffer</span>
                             <span class="sniffer-badge-pill">${rolePillText}</span>
                         </div>
                         <div class="message-actions-right">
@@ -1734,7 +1734,7 @@ function addMessage(role, text) {
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
-                            <span class="sniffer-name">🐶 VW Sniffer</span>
+                            <span class="sniffer-name">VW Sniffer</span>
                         </div>
                         <div class="message-meta">${timeStr}</div>
                     </div>

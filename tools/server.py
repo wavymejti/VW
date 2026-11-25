@@ -33,7 +33,6 @@ from tools.generate_summary import generate_summary
 from tools.db import get_engine
 from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message, place_details_basic, strip_paid_photos
 from tools.openai_client import get_client
-from tools.sniffer_line import make_sniffer_line
 from tools.suggest_attractions import suggest_attractions
 from tools.attractions_cache import (
     get_trip_attractions_cache,
@@ -694,10 +693,6 @@ def api_chat():
             _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
             session["active_trip_id"] = chat["active_trip_id"]
 
-    # What the 3D Sniffer reads aloud: the reply itself in English (+ mood); None if unavailable.
-    if result.get("text") and result.get("status") in ("success", "partial"):
-        result["sniffer"] = make_sniffer_line(user_message, result["text"], lang=lang)
-
     return jsonify(result)
 
 
@@ -724,8 +719,6 @@ def api_plan_form():
         _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
         session["active_trip_id"] = chat["active_trip_id"]
 
-    if result.get("text") and result.get("status") in ("success", "partial"):
-        result["sniffer"] = make_sniffer_line(result.get("summary") or "", result["text"], lang=lang)
     status = 400 if result.get("status") == "error" and not result.get("tool_calls") else 200
     return jsonify(result), status
 

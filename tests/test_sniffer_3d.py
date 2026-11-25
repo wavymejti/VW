@@ -72,25 +72,6 @@ def test_tts_proxy_reports_unreachable_headtts(monkeypatch):
     assert "HeadTTS" in res.get_json()["error"]
 
 
-def test_page_mounts_3d_sniffer_and_drops_2d_avatar():
-    with open(os.path.join(BASE_DIR, "frontend", "index.html"), encoding="utf-8") as f:
-        html = f.read()
-    assert "/static/sniffer-avw/sniffer-avw.js" in html
-    assert "mountSnifferWidget" in html
-    assert "sniffer_avatar.js" not in html and "sniffer_voice.js" not in html
-
-    with open(os.path.join(BASE_DIR, "frontend", "app.js"), encoding="utf-8") as f:
-        app_js = f.read()
-    assert "window.snifferAVW" in app_js
-    assert "snifferVoice" not in app_js and "SnifferAvatar" not in app_js
-
-
-def test_exported_module_and_model_are_present():
-    root = os.path.join(BASE_DIR, "frontend", "sniffer-avw")
-    for rel in ("sniffer-avw.js", "VERSION", "models/sniffer_avatar_v15_lite.glb", "models/sniffer_lids_v3.json"):
-        assert os.path.isfile(os.path.join(root, rel)), f"missing {rel} — run 'npm run export:vw' in AVW"
-
-
 def test_google_maps_cost_switch(monkeypatch):
     import tools.maps_client as mc
 

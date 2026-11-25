@@ -16,8 +16,8 @@
         "chat_sub": "Dokąd chcesz pojechać swoim VW California?",
 
         // Welcome Overlay
-        "welcome_badge": "🐶 Volkswagen Sniffer — AI Trip Planner",
-        "welcome_sniffer_badge": "🐶 Volkswagen Sniffer",
+        "welcome_badge": "Volkswagen Sniffer — AI Trip Planner",
+        "welcome_sniffer_badge": "Volkswagen Sniffer",
         "sniffer_role_tag": "Przewodnik VW",
         "sniffer_voice_toggle_on": "Głos Sniffera: Włączony",
         "sniffer_voice_toggle_off": "Głos Sniffera: Wyciszony",
@@ -321,8 +321,8 @@
         "chat_sub": "Wohin möchtest du mit deinem VW California fahren?",
 
         // Welcome Overlay
-        "welcome_badge": "🐶 Volkswagen Sniffer — AI Trip Planner",
-        "welcome_sniffer_badge": "🐶 Volkswagen Sniffer",
+        "welcome_badge": "Volkswagen Sniffer — AI Trip Planner",
+        "welcome_sniffer_badge": "Volkswagen Sniffer",
         "sniffer_role_tag": "VW Reisebegleiter",
         "sniffer_voice_toggle_on": "Sniffer Stimme: An",
         "sniffer_voice_toggle_off": "Sniffer Stimme: Stumm",
@@ -626,8 +626,8 @@
         "chat_sub": "Where would you like to travel with your VW California?",
 
         // Welcome Overlay
-        "welcome_badge": "🐶 Volkswagen Sniffer — AI Trip Planner",
-        "welcome_sniffer_badge": "🐶 Volkswagen Sniffer",
+        "welcome_badge": "Volkswagen Sniffer — AI Trip Planner",
+        "welcome_sniffer_badge": "Volkswagen Sniffer",
         "sniffer_role_tag": "VW Travel Guide",
         "sniffer_voice_toggle_on": "Sniffer Voice: On",
         "sniffer_voice_toggle_off": "Sniffer Voice: Muted",

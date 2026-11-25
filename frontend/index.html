@@ -25,7 +25,6 @@
         <!-- VW & Sniffer Logo -->
         <div class="nav-logo" title="Volkswagen Sniffer">
             <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="nav-logo-img">
-            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="nav-sniffer-avatar" title="Volkswagen Sniffer">
         </div>
 
         <!-- View Buttons -->
@@ -228,7 +227,6 @@
 
                 <!-- Typing Indicator -->
                 <div class="typing-indicator" id="typing-indicator" aria-live="polite" aria-label="Sniffer pisze...">
-                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar">
                     <div class="typing-dots-wrap">
                         <span class="typing-dot"></span>
                         <span class="typing-dot"></span>
@@ -238,7 +236,6 @@
 
                 <!-- Planning Route Indicator -->
                 <div class="planning-indicator" id="planning-indicator" aria-live="polite" aria-label="Tworzenie trasy...">
-                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="planning-sniffer-avatar">
                     <span class="planning-text" data-i18n="planning_route_indicator">Sniffer węszy najlepszą trasę...</span>
                 </div>
             </div>
@@ -442,14 +439,12 @@
                 <div class="map-chat-panel" id="map-chat-panel" style="display:none;">
                     <div class="map-chat-header">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" style="width:20px; height:20px; border-radius:50%; border:1px solid #FFFFFF;">
                             <span data-i18n="map_chat_header">Volkswagen Sniffer</span>
                         </div>
                         <button class="map-chat-close" id="map-chat-close" aria-label="Zamknij czat">✕</button>
                     </div>
                     <div class="map-chat-messages" id="map-chat-messages">
                         <div class="typing-indicator" id="map-typing-indicator">
-                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar" style="width:20px; height:20px;">
                             <div class="typing-dots-wrap">
                                 <div class="typing-dot"></div>
                                 <div class="typing-dot"></div>
@@ -982,7 +977,6 @@
             <div class="travel-suggestions-header">
                 <div class="travel-suggestions-header-left">
                     <div class="suggestions-badge-pill">
-                        <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="suggestions-sniffer-pill-icon">
                         <span data-i18n="suggestions_vw_badge">Wywęszone przez Sniffera</span>
                     </div>
                     <h2 id="travel-suggestions-title" class="travel-suggestions-title" data-i18n="suggestions_title">Dokąd dzisiaj zmierzasz?</h2>
@@ -1033,10 +1027,7 @@
 <!-- ─── Welcome Overlay (Dark Blue Brand Greeting) ──────────────── -->
 <div id="welcome-overlay" class="welcome-overlay" style="display: none;">
     <div class="welcome-content">
-        <div class="welcome-overlay-mascot">
-            <img src="/static/assets/sniffer-avatar.png" alt="Volkswagen Sniffer" class="welcome-overlay-avatar">
-        </div>
-        <div class="welcome-badge" data-i18n="welcome_badge">🐶 Volkswagen Sniffer — AI Trip Planner</div>
+        <div class="welcome-badge" data-i18n="welcome_badge"></div>
         <h1 class="welcome-title" id="welcome-user-name" data-i18n="welcome_title">Witaj!</h1>
         <p class="welcome-subtitle" data-i18n="welcome_subtitle">Dokąd dzisiaj zmierzamy?</p>
     </div>
@@ -1060,19 +1051,6 @@
 <!-- Internationalization & Application Logic -->
 <script src="/static/i18n.js"></script>
 <script src="/static/app.js"></script>
-<!-- 3D Sniffer: built in the AVW repo (npm run export:vw), see architecture/sniffer_speech_sop.md -->
-<script type="module">
-    import { mountSnifferWidget } from '/static/sniffer-avw/sniffer-avw.js';
-    window.snifferAVW = mountSnifferWidget({
-        modelUrl: '/static/sniffer-avw/models/sniffer_avatar_v15_lite.glb',
-        lidsUrl: '/static/sniffer-avw/models/sniffer_lids_v3.json',
-        ttsUrl: '/tts',
-        fallbackImage: '/static/sniffer-avw/sniffer_fallback.webp',
-        title: 'Sniffer · VW California',
-        greeting: "Hi, I'm Sniffer, your camper co-pilot! Where shall we drive?",
-    });
-</script>
-
 <!-- Google Maps JavaScript SDK -->
 {% if google_maps_key %}
 <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>

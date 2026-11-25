@@ -21,7 +21,6 @@ def test_chat_sends_english_to_the_model(monkeypatch):
     monkeypatch.setattr(server, "create_chat_session",
                         lambda **k: {"history": [], "lang": k.get("lang"), "active_trip_id": None})
     monkeypatch.setattr(server, "send_message", fake_send)
-    monkeypatch.setattr(server, "make_sniffer_line", lambda *a, **k: None)
     server._CHAT_SESSIONS.clear()
     with server.app.test_client() as c:
         c.post("/api/chat", json={"message": "Cześć", "lang": "pl", "conversation_id": "x"})
