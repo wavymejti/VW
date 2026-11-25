@@ -21,9 +21,10 @@ Meet **Sniffer** — your AI-powered camper companion dog, always ready to sniff
 
 ## ✨ Key Features
 
-### 🐶 Volkswagen Sniffer Mascot & AI Companion
-- **Friendly Vanlife Persona**: Sniffer assists with conversational itinerary building, shares tips for campervan packing, shore power, and camping etiquette.
-- **Dynamic Mascot States**: Visual mascot integration throughout the navigation rail, chat bubbles, thinking/planning indicators, and modal headers.
+### 🐶 Volkswagen Sniffer — 3D Talking Co-Pilot
+- **3D avatar in a floating window**: Sniffer (built in the separate [AVW](https://github.com/wavymejti/AVW) repo with TalkingHead + three.js) sits in a draggable, resizable window, listens while you type, thinks while the planner works and says a short line about every reply.
+- **Voice & lip-sync**: English speech via local HeadTTS (Kokoro, voice `am_echo`) with word and viseme timings; works with the UI in any language.
+- **Friendly Vanlife Persona**: tips on campervan packing, shore power and camping etiquette. Details: `architecture/sniffer_speech_sop.md`.
 
 ### 🧠 Personalized Long-Term Memory (RAG)
 - **Camper Preference Learning**: Automatic extraction and vectorization of user preferences (travel pace, wild vs. luxury camping, hookup needs, preferred road types).
@@ -162,7 +163,18 @@ SECRET_KEY=dev_secret_key_vw_planner
 python apply_migration.py
 ```
 
-### 5. Start the Application
+### 5. (Optional) Start Sniffer's Voice
+
+Sniffer speaks through the HeadTTS server from the AVW repo (first start downloads the Kokoro model, ~330 MB):
+
+```bash
+~/Documents/GitHub/avw/tts/setup.sh   # once
+~/Documents/GitHub/avw/tts/start.sh   # http://127.0.0.1:8882, proxied by Flask at /tts
+```
+
+Without it the planner works and Sniffer only moves. To update the avatar, run `npm run export:vw` in `avw/web`.
+
+### 6. Start the Application
 
 ```bash
 python main.py

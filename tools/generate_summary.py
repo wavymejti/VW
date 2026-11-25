@@ -437,7 +437,8 @@ def _fetch_static_map(center_lat, center_lng, zoom, width=640, height=360, scale
         except Exception:
             pass
 
-    key = os.getenv("GOOGLE_MAPS_API_KEY")
+    from tools.maps_client import maps_allows
+    key = os.getenv("GOOGLE_MAPS_API_KEY") if maps_allows("static") else None
     if key:
         try:
             url = (
@@ -2072,7 +2073,7 @@ def _generate_pdf_report(trip_data, include_photos=True, lang="pl"):
         waypoint_labels = [
             wp.get("label", "Unknown")
             for wp in day.get("waypoints", [])
-            if isinstance(wp, dict)
+            if isinstance(wp, dict) and wp.get("type") != "via"
         ]
         if waypoint_labels:
             route_text = " → ".join(waypoint_labels)
@@ -2145,6 +2146,9 @@ def _download_image(url):
     """Download an image from a URL and save it to a temporary file."""
     if not url or not url.startswith("http"):
         return None
+    from tools.maps_client import maps_allows, is_paid_photo_url
+    if is_paid_photo_url(url) and not maps_allows("places_rich"):
+        return None  # billed Google Place Photo; off unless GOOGLE_MAPS_MODE=full
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:

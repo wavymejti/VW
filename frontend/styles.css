@@ -4430,3 +4430,303 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
 
 
 
+
+/* Google Maps switched off (GOOGLE_MAPS_MODE != full) */
+.maps-off-note {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; gap: 6px; max-width: 360px; padding: 18px 22px;
+    background: #fff; color: #001e50; border-radius: 14px; text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 30, 80, 0.15); font-size: 14px; line-height: 1.4; z-index: 5;
+}
+
+/* Camping search results: which night to put the place on */
+.camping-card-action .camping-night-select {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border: 1px solid #CBD5E0;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    background: #fff;
+    color: #001E50;
+}
+
+/* Bar on the map after planning: open the campsites when the user wants to */
+.campsite-review-bar {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 10px 16px;
+    background: #fff;
+    color: #001E50;
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0, 30, 80, 0.18);
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.campsite-review-bar[hidden] { display: none; }
+.campsite-review-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    background: #001E50;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+}
+.campsite-review-btn:hover { background: #00437A; }
+.campsite-review-close {
+    border: none;
+    background: transparent;
+    color: #718096;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+/* ── Start form (Direct / Point-to-point / Turnaround) ─────────── */
+.trip-form {
+    max-width: 560px;
+    margin: 20px auto 0;
+    padding: 18px;
+    background: var(--vw-bg);
+    border: 1px solid var(--vw-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 18px rgba(0, 30, 80, 0.08);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.tf-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tf-mode {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 10px 6px;
+    border: 1.5px solid var(--vw-border);
+    border-radius: var(--radius);
+    background: var(--vw-bg-alt);
+    color: var(--vw-primary);
+    cursor: pointer;
+    font: inherit;
+}
+.tf-mode:hover { border-color: var(--vw-accent); }
+.tf-mode.active { border-color: var(--vw-primary); background: var(--vw-primary); color: var(--vw-text-light); }
+.tf-mode-name { font-weight: 700; font-size: 0.9rem; }
+.tf-mode-hint { font-size: 0.75rem; opacity: 0.8; }
+.tf-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.tf-field { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; font-weight: 600; color: var(--vw-text-secondary); }
+.tf-field-small { flex: 1 1 130px; }
+.tf-field input, .tf-field select, .tf-stop input, .tf-stop select {
+    padding: 9px 10px;
+    border: 1px solid var(--vw-border);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--vw-text);
+    background: var(--vw-bg);
+    min-width: 0;
+}
+.tf-field input:focus, .tf-field select:focus, .tf-stop input:focus, .tf-stop select:focus {
+    outline: 2px solid var(--vw-accent);
+    outline-offset: -1px;
+}
+.tf-stops { display: flex; flex-direction: column; gap: 6px; }
+.tf-stops[hidden], .tf-field[hidden], .tf-error[hidden] { display: none; }
+.tf-stops-title { font-size: 0.78rem; font-weight: 600; color: var(--vw-text-secondary); }
+.tf-stop-list { display: flex; flex-direction: column; gap: 6px; }
+.tf-stop { display: grid; grid-template-columns: 1fr 160px 32px; gap: 6px; align-items: center; }
+.tf-stop-remove {
+    width: 32px; height: 32px;
+    border: none; border-radius: 50%;
+    background: transparent; color: var(--vw-text-muted);
+    font-size: 1.2rem; cursor: pointer;
+}
+.tf-stop-remove:hover { background: var(--vw-bg-alt); color: var(--vw-error); }
+.tf-add-stop {
+    align-self: flex-start;
+    border: none; background: none; padding: 2px 0;
+    color: var(--vw-accent); font: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.tf-error { color: var(--vw-error); font-size: 0.85rem; font-weight: 600; }
+.tf-submit {
+    padding: 12px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--vw-primary);
+    color: var(--vw-text-light);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.tf-submit:hover { background: var(--vw-accent); }
+.tf-submit:disabled { opacity: 0.6; cursor: wait; }
+.tf-or { text-align: center; font-size: 0.8rem; color: var(--vw-text-muted); }
+
+/* Free / paid on every place to stay: text next to the rating */
+.camping-card-price { font-weight: 700; }
+.camping-card-price.price-free { color: #00875A; }
+.camping-card-price.price-paid { color: #001E50; }
+.camping-card-price.price-unknown { color: #8896A7; font-weight: 600; }
+.camping-card-meta .camping-card-rating + .camping-card-price::before {
+    content: "·";
+    margin-right: 12px;
+    color: #8896A7;
+    font-weight: 400;
+}
+
+/* ── Drawing a route with a finger (touch screens) ─────────────── */
+.map-control-btn[hidden] { display: none; }
+.draw-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;                 /* above the map, below the map buttons and the panel */
+    touch-action: none;         /* the finger draws instead of scrolling or zooming */
+    cursor: crosshair;
+    background: rgba(0, 30, 80, 0.04);
+}
+.draw-layer[hidden], .draw-route-panel[hidden], .draw-route-summary[hidden], .draw-route-hint[hidden] { display: none; }
+.draw-route-panel {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 7;
+    width: min(520px, calc(100% - 140px));
+    padding: 14px 44px 14px 16px;
+    background: var(--vw-bg);
+    color: var(--vw-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 6px 24px rgba(0, 30, 80, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.draw-route-hint { font-weight: 600; font-size: 0.95rem; }
+.draw-route-summary { display: flex; flex-direction: column; gap: 10px; }
+.draw-route-ends { font-size: 1.05rem; }
+.draw-route-note { font-size: 0.8rem; color: var(--vw-text-secondary); }
+.draw-route-actions { display: flex; gap: 8px; }
+.draw-route-actions .tf-submit { flex: 1; }
+.draw-route-redo {
+    padding: 12px 16px;
+    border: 1.5px solid var(--vw-border);
+    border-radius: var(--radius);
+    background: var(--vw-bg);
+    color: var(--vw-primary);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.draw-route-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--vw-text-muted);
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+
+/* Drawn line: change part of the route or plan a new one */
+.draw-mode { display: flex; gap: 6px; }
+.draw-mode-btn { flex: 1; }
+.draw-mode-btn[hidden], #draw-start-wrap[hidden] { display: none; }
+.draw-mode[hidden], #draw-new-fields[hidden] { display: none; }
+.draw-mode-btn {
+    padding: 8px;
+    border: 1.5px solid var(--vw-border);
+    border-radius: var(--radius);
+    background: var(--vw-bg-alt);
+    color: var(--vw-primary);
+    font: inherit;
+    font-weight: 700;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.draw-mode-btn.active { background: var(--vw-primary); border-color: var(--vw-primary); color: var(--vw-text-light); }
+
+/* ── Fuel / charging / lunch stops panel ─────────────────────── */
+.stops-panel {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 7;
+    width: min(520px, calc(100% - 140px));
+    max-height: calc(100% - 140px);
+    overflow-y: auto;
+    padding: 14px 16px;
+    background: var(--vw-bg);
+    color: var(--vw-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 6px 24px rgba(0, 30, 80, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.stops-panel[hidden] { display: none; }
+.stops-title { font-weight: 700; font-size: 1.05rem; padding-right: 32px; }
+.stops-results { display: flex; flex-direction: column; gap: 10px; }
+.stops-target { border-top: 1px solid var(--vw-border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.stops-when { display: flex; flex-direction: column; gap: 2px; }
+.stops-when span { font-size: 0.78rem; color: var(--vw-text-secondary); }
+.stops-place { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; background: var(--vw-bg-alt); border-radius: var(--radius); }
+.stops-name { font-weight: 700; font-size: 0.9rem; }
+.stops-extra { font-size: 0.75rem; color: var(--vw-text-secondary); }
+.stops-add { border: none; border-radius: 999px; padding: 6px 14px; background: var(--vw-primary); color: #fff; font: inherit; font-weight: 700; font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
+.stops-add:disabled { background: var(--vw-success); cursor: default; }
+.stops-empty { font-size: 0.85rem; color: var(--vw-text-secondary); }
+.stops-credit { font-size: 0.7rem; color: var(--vw-text-muted); text-align: right; }
+
+/* ── App version: deliberately quiet footer in the nav rail ── */
+.app-version {
+    font-size: 9px;
+    line-height: 1.25;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.55);
+    text-align: center;
+    user-select: text;
+    font-variant-numeric: tabular-nums;
+}
+
+.app-version span {
+    display: block;
+}
+
+.app-version[hidden] {
+    display: none;
+}
+
+/* Stops of one day inside the campsite window (app.js: renderDayStopsForModal) */
+.day-stops-modal-section { margin: 20px 0 8px; display: flex; flex-direction: column; gap: 10px; }
+.day-stops-modal-section[hidden] { display: none; }
+.day-stops-modal-title { margin: 0; color: #001E50; font-size: 1.05rem; font-weight: 700; }
+.day-stops-kinds { max-width: 460px; }
+.day-stops-note { font-size: 0.78rem; color: var(--vw-text-secondary); }
+.day-stops-list { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+
+/* Mapillary photo of a stop (app.js: _loadStopPhotos) */
+.stops-photo { flex: 0 0 96px; height: 64px; border-radius: 6px; overflow: hidden; background: var(--vw-border); }
+.stops-photo a, .stops-photo img { display: block; width: 100%; height: 100%; }
+.stops-photo img { object-fit: cover; }
+.stops-text { flex: 1; min-width: 0; }
+.stops-photo-credit { font-size: 0.68rem; color: var(--vw-text-secondary); margin-top: 2px; }
+.stops-photo-credit:empty { display: none; }
+
+/* Credit on a free attraction photo (app.js: _fillPlacePhoto) */
+.place-photo-credit { position: absolute; left: 4px; bottom: 4px; max-width: calc(100% - 8px); padding: 1px 5px; border-radius: 4px;
+    background: rgba(0, 0, 0, 0.55); color: #fff !important; font-size: 0.58rem; line-height: 1.4; text-decoration: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 2; }

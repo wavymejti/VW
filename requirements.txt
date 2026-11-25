@@ -13,6 +13,8 @@ googlemaps>=4.10.0
 
 # PostgreSQL driver with PostGIS support
 psycopg2-binary>=2.9.9
+# SQLAlchemy 2.1+ uses psycopg 3 for plain postgresql:// URLs
+psycopg[binary]>=3.2
 SQLAlchemy>=2.0.0
 GeoAlchemy2>=0.14.0
 
@@ -37,3 +39,4 @@ flask-cors>=4.0.0
 # Audio DSP & procedural music generation
 numpy>=2.0.0
 scipy>=1.13.0
+certifi

@@ -2,18 +2,22 @@
 Camping search tool for the VW California AI Trip Planner.
 
 Searches for campgrounds matching user filters near a given location.
-Uses PostGIS database first, falls back to Google Maps Places API
-if insufficient results are found.
+Uses PostGIS database first; if insufficient results are found, queries
+Google Maps Places API and park4night (unofficial app endpoint, POC) in parallel.
 
 See: architecture/camping_search_sop.md
 """
 
 import os
 import sys
+from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import text
 
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message, places_nearby_basic
+from tools import park4night_client
+from tools.camping_price import with_price
 
 
 def search_campings(
@@ -58,22 +62,49 @@ def search_campings(
         vw_compatible, limit,
     )
 
-    # Step 2: If insufficient results, fall back to Google Maps
+    # Step 2: If insufficient results, ask Google Maps and park4night in parallel
     if len(db_results) < 3:
-        maps_results = _search_google_maps(lat, lng, radius_km)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            maps_future = pool.submit(_search_google_maps, lat, lng, radius_km)
+            p4n_future = pool.submit(
+                _search_park4night, lat, lng, radius_km, amenities
+            )
+            maps_results = maps_future.result()
+            p4n_results = p4n_future.result()
+
         # Cache new results in the database
         _cache_maps_results(maps_results)
-        # Merge results, avoiding duplicates by place_id
+        _cache_maps_results(p4n_results)
+
+        # Merge external results nearest-first, avoiding duplicates by place_id
+        external = maps_results + p4n_results
+        for camp in external:
+            if camp.get("distance_km") is None and camp.get("lat") is not None:
+                camp["distance_km"] = round(park4night_client.haversine_km(
+                    lat, lng, camp["lat"], camp["lng"]), 1)
+        external.sort(key=lambda c: (c.get("distance_km") is None,
+                                     c.get("distance_km") or 0))
+
         existing_ids = {c["place_id"] for c in db_results if c["place_id"]}
-        for camp in maps_results:
+        for camp in external:
             if camp["place_id"] not in existing_ids:
                 db_results.append(camp)
-        source = "mixed" if maps_results else "database"
+                existing_ids.add(camp["place_id"])
+        source = "mixed" if external else "database"
     else:
         source = "database"
 
     # Trim to limit
     final_results = db_results[:limit]
+
+    # park4night spots cached before their type/price were stored: fetch them once more.
+    if any(c.get("source") == "park4night" and not c.get("spot_code") for c in final_results) \
+            and park4night_client.is_enabled():
+        _refresh_park4night_details(final_results, lat, lng, radius_km)
+
+    # Free or paid, for every result.
+    for camp in final_results:
+        with_price(camp)
 
     return {
         "status": "success",
@@ -137,6 +168,7 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
                has_toilets, has_waste_disposal,
                shore_power_hookup, max_vehicle_length_m,
                level_ground, rating, review_count, source,
+               spot_code, price_info,
                ST_Distance(
                    location,
                    ST_SetSRID(ST_MakePoint(:lng, :lat),
@@ -158,6 +190,7 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
         params["max_cost_eur"] = max_cost_eur
 
     try:
+        _ensure_price_columns()
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(text(query), params)
@@ -169,6 +202,11 @@ def _search_database(lat, lng, radius_km, amenities, max_cost_eur,
                 camping = dict(zip(columns, row))
                 # Convert UUID to string for JSON
                 camping["id"] = str(camping["id"])
+                # NUMERIC columns come back as Decimal, which json.dumps can't write
+                # (it broke saving every trip that used a campsite from the DB).
+                for key, value in camping.items():
+                    if isinstance(value, Decimal):
+                        camping[key] = float(value)
                 # Round distance for readability
                 camping["distance_km"] = round(
                     camping["distance_m"] / 1000, 1
@@ -190,16 +228,23 @@ def _search_google_maps(lat, lng, radius_km):
     Returns:
         list: List of camping dictionaries from Google Maps.
     """
+    if not maps_allows("places"):
+        print(f"[search_campings] Google Places skipped: {disabled_message()}")
+        return []
     try:
-        client = get_maps_client()
-        # Use Places API nearby search for campgrounds
-        result = client.places_nearby(
-            location=(lat, lng),
-            radius=min(radius_km * 1000, 50000),  # Max 50km
-            type="campground",
-        )
+        if maps_allows("places_rich"):
+            client = get_maps_client()
+            # Legacy Places nearby search (adds photos, ratings, contact data — paid extras)
+            result = client.places_nearby(
+                location=(lat, lng),
+                radius=min(radius_km * 1000, 50000),  # Max 50km
+                type="campground",
+            )
+        else:
+            # Places API (New) with basic fields only (no photos/ratings/contact)
+            result = places_nearby_basic(lat, lng, radius_km * 1000, "campground")
 
-        key = os.getenv("GOOGLE_MAPS_API_KEY")
+        key = os.getenv("GOOGLE_MAPS_API_KEY") if maps_allows("places_rich") else None
         campings = []
         for place in result.get("results", []):
             location = place.get("geometry", {}).get("location", {})
@@ -245,17 +290,74 @@ def _search_google_maps(lat, lng, radius_km):
         return []
 
 
+def _search_park4night(lat, lng, radius_km, amenities):
+    """
+    Overnight spots from park4night (POC). Required amenities are
+    applied locally; price and VW-compatibility filters are not (no data).
+
+    Returns:
+        list: List of camping dictionaries with source 'park4night'.
+    """
+    if not park4night_client.is_enabled():
+        return []
+    amenity_map = {
+        "power": "has_power",
+        "water": "has_water",
+        "wifi": "has_wifi",
+        "showers": "has_showers",
+        "toilets": "has_toilets",
+        "waste_disposal": "has_waste_disposal",
+    }
+    required = [amenity_map[a.lower()] for a in amenities if a.lower() in amenity_map]
+    spots = park4night_client.search_spots(lat, lng, radius_km=radius_km)
+    return [s for s in spots if all(s.get(col) for col in required)]
+
+
+_PRICE_COLUMNS_READY = False
+
+
+def _ensure_price_columns():
+    """Add spot_code / price_info to campings if migration 008 hasn't run yet (idempotent)."""
+    global _PRICE_COLUMNS_READY
+    if _PRICE_COLUMNS_READY:
+        return
+    try:
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE campings ADD COLUMN IF NOT EXISTS spot_code VARCHAR(16)"))
+            conn.execute(text("ALTER TABLE campings ADD COLUMN IF NOT EXISTS price_info TEXT"))
+        _PRICE_COLUMNS_READY = True
+    except Exception as e:
+        print(f"  ⚠️  Could not add price columns to campings: {e}")
+
+
+def _refresh_park4night_details(campings, lat, lng, radius_km):
+    """Fill spot type and price of cached park4night spots from a fresh park4night search."""
+    fresh = {c["place_id"]: c for c in _search_park4night(lat, lng, radius_km, []) if c.get("place_id")}
+    found = []
+    for camp in campings:
+        f = fresh.get(camp.get("place_id"))
+        if camp.get("source") == "park4night" and not camp.get("spot_code") and f:
+            camp["spot_code"] = f.get("spot_code")
+            camp["spot_type"] = f.get("spot_type")
+            camp["price_info"] = camp.get("price_info") or f.get("price_info")
+            found.append(f)
+    if found:
+        _cache_maps_results(found)  # existing rows: fills spot_code / price_info
+
+
 def _cache_maps_results(campings):
     """
-    Cache Google Maps results into the local database for future queries.
+    Cache external results (Google Maps, park4night) into the local database.
 
     Args:
-        campings (list): List of camping dicts from Google Maps.
+        campings (list): List of camping dicts from an external source.
     """
     if not campings:
         return
 
     try:
+        _ensure_price_columns()
         engine = get_engine()
         with engine.connect() as conn:
             for camp in campings:
@@ -272,6 +374,13 @@ def _cache_maps_results(campings):
                 ).fetchone()
 
                 if existing:
+                    if camp.get("spot_code") or camp.get("price_info"):
+                        # Older cache rows have no spot type / price yet.
+                        conn.execute(text(
+                            "UPDATE campings SET spot_code = COALESCE(spot_code, :code), "
+                            "price_info = COALESCE(price_info, :price) WHERE id = :id"),
+                            {"code": camp.get("spot_code"), "price": camp.get("price_info"),
+                             "id": existing[0]})
                     continue
 
                 # Insert new camping
@@ -279,13 +388,20 @@ def _cache_maps_results(campings):
                     text("""
                         INSERT INTO campings
                             (name, lat, lng, location, place_id,
-                             address, rating, review_count, photos, source)
+                             address, country, rating, review_count,
+                             photos, source,
+                             has_power, has_water, has_wifi, has_showers,
+                             has_toilets, has_waste_disposal,
+                             shore_power_hookup, spot_code, price_info)
                         VALUES
                             (:name, :lat, :lng,
                              ST_SetSRID(ST_MakePoint(:lng, :lat),
                              4326)::geography,
-                             :place_id, :address, :rating,
-                             :review_count, :photos, 'google_maps')
+                             :place_id, :address, :country, :rating,
+                             :review_count, :photos, :source,
+                             :has_power, :has_water, :has_wifi, :has_showers,
+                             :has_toilets, :has_waste_disposal,
+                             :shore_power_hookup, :spot_code, :price_info)
                     """),
                     {
                         "name": camp["name"],
@@ -293,9 +409,20 @@ def _cache_maps_results(campings):
                         "lng": camp["lng"],
                         "place_id": camp["place_id"],
                         "address": camp.get("address"),
+                        "country": camp.get("country"),
                         "rating": camp.get("rating"),
                         "review_count": camp.get("review_count", 0),
                         "photos": camp.get("photos", []),
+                        "source": camp.get("source") or "google_maps",
+                        "has_power": bool(camp.get("has_power")),
+                        "has_water": bool(camp.get("has_water")),
+                        "has_wifi": bool(camp.get("has_wifi")),
+                        "has_showers": bool(camp.get("has_showers")),
+                        "has_toilets": bool(camp.get("has_toilets")),
+                        "has_waste_disposal": bool(camp.get("has_waste_disposal")),
+                        "shore_power_hookup": bool(camp.get("shore_power_hookup")),
+                        "spot_code": camp.get("spot_code"),
+                        "price_info": camp.get("price_info"),
                     },
                 )
 

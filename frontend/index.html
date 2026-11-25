@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -11,7 +11,7 @@
 
     <link rel="manifest" href="/static/manifest.json">
     <!-- VW Brand Design System -->
-    <link rel="stylesheet" href="/static/styles.css?v=2.2">
+    <link rel="stylesheet" href="/static/styles.css?v=2.3">
 </head>
 <body>
 
@@ -25,7 +25,6 @@
         <!-- VW & Sniffer Logo -->
         <div class="nav-logo" title="Volkswagen Sniffer">
             <img src="/static/vw-logo-2x.png" alt="Volkswagen" class="nav-logo-img">
-            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="nav-sniffer-avatar" title="Volkswagen Sniffer">
         </div>
 
         <!-- View Buttons -->
@@ -87,6 +86,7 @@
                     <button class="lang-btn" data-lang="en" role="menuitem"><span class="lang-flag">🇬🇧</span> English</button>
                 </div>
             </div>
+            <div class="app-version" id="app-version" aria-hidden="true" hidden></div>
         </div>
     </nav>
 
@@ -106,20 +106,6 @@
                         <p class="chat-header-sub" data-i18n="chat_sub">Dokąd chcesz pojechać swoim VW California?</p>
                     </div>
                     <div class="chat-header-actions">
-                        <!-- Sniffer Talking Avatar & Voice Toggle Widget -->
-                        <div class="sniffer-speech-widget" id="sniffer-speech-widget">
-                            <div class="sniffer-widget-avatar-box" id="sniffer-header-avatar-box" title="Volkswagen Sniffer">
-                                <!-- Dynamic SnifferAvatar mounted here -->
-                            </div>
-                            <button class="btn-sniffer-voice-toggle active" id="btn-toggle-sniffer-voice" role="switch" aria-checked="true" title="Głos Sniffera: Włączony" aria-label="Przełącznik głosu Sniffera" data-i18n-title="sniffer_voice_tooltip_on">
-                                <span class="voice-soundwave-wrap" id="voice-soundwave-wrap">
-                                    <span class="soundwave-bar bar-1"></span>
-                                    <span class="soundwave-bar bar-2"></span>
-                                    <span class="soundwave-bar bar-3"></span>
-                                </span>
-                                <span class="voice-status-icon" id="voice-status-icon">🔊</span>
-                            </button>
-                        </div>
                         <button class="btn-location-toggle active" id="btn-toggle-location" role="switch" aria-checked="true" title="Automatyczna geolokalizacja (włączona)" aria-label="Przełącznik lokalizacji" data-i18n-title="location_tooltip_on">
                             <span class="location-pulse-dot" id="location-pulse-dot"></span>
                             <span class="location-icon" id="location-icon">📍</span>
@@ -179,17 +165,69 @@
 
                 <!-- Welcome Screen with Onboarding -->
                 <div class="chat-welcome" id="chat-welcome">
-                    <div class="welcome-sniffer-container">
-                        <div class="welcome-sniffer-badge" data-i18n="welcome_sniffer_badge">🐶 Volkswagen Sniffer</div>
-                        <img src="/static/assets/sniffer-sitting.png" alt="Volkswagen Sniffer" class="welcome-sniffer-mascot">
-                    </div>
                     <h2 class="welcome-heading" id="welcome-chat-heading" data-i18n="chat_welcome_heading">Dokąd dzisiaj zmierzamy?</h2>
                     <p class="welcome-sub" data-i18n="chat_welcome_sub">Zaprojektuj trasę dla swojego VW California lub skorzystaj z rekomendacji AI dopasowanych do Twojego stylu podróży.</p>
+
+                    <!-- Start form: the first route from structured fields, the chat takes over after it -->
+                    <form class="trip-form" id="trip-form" novalidate>
+                        <div class="tf-modes" role="radiogroup" aria-label="Trip type">
+                            <button type="button" class="tf-mode active" data-mode="direct" role="radio" aria-checked="true">
+                                <span class="tf-mode-name">Direct</span><span class="tf-mode-hint">A → B</span>
+                            </button>
+                            <button type="button" class="tf-mode" data-mode="p2p" role="radio" aria-checked="false">
+                                <span class="tf-mode-name">Point-to-point</span><span class="tf-mode-hint">A → stops → B</span>
+                            </button>
+                            <button type="button" class="tf-mode" data-mode="turnaround" role="radio" aria-checked="false">
+                                <span class="tf-mode-name">Turnaround</span><span class="tf-mode-hint">A → B → A</span>
+                            </button>
+                        </div>
+
+                        <div class="tf-row">
+                            <label class="tf-field">
+                                <span>From</span>
+                                <input type="text" id="tf-origin" placeholder="City or place" autocomplete="off" maxlength="120">
+                            </label>
+                            <label class="tf-field">
+                                <span>To</span>
+                                <input type="text" id="tf-destination" placeholder="City or place" autocomplete="off" maxlength="120">
+                            </label>
+                        </div>
+
+                        <div class="tf-stops" id="tf-stops-wrap" hidden>
+                            <div class="tf-stops-title" id="tf-stops-title">Stops on the way</div>
+                            <div class="tf-stop-list" id="tf-stops"></div>
+                            <button type="button" class="tf-add-stop" data-list="tf-stops">+ Add stop</button>
+                        </div>
+
+                        <div class="tf-stops" id="tf-back-wrap" hidden>
+                            <div class="tf-stops-title">Stops on the way back</div>
+                            <div class="tf-stop-list" id="tf-back-stops"></div>
+                            <button type="button" class="tf-add-stop" data-list="tf-back-stops">+ Add stop</button>
+                        </div>
+
+                        <div class="tf-row">
+                            <label class="tf-field tf-field-small">
+                                <span>Start</span>
+                                <input type="date" id="tf-start">
+                            </label>
+                            <label class="tf-field tf-field-small">
+                                <span>Days in total</span>
+                                <input type="number" id="tf-days" min="1" max="60" placeholder="Auto">
+                            </label>
+                            <label class="tf-field tf-field-small">
+                                <span>Days at destination</span>
+                                <select id="tf-dest-stay"></select>
+                            </label>
+                        </div>
+
+                        <div class="tf-error" id="tf-error" role="alert" hidden></div>
+                        <button type="submit" class="tf-submit" id="tf-submit">Plan the route</button>
+                        <div class="tf-or">or just tell Sniffer below</div>
+                    </form>
                 </div>
 
                 <!-- Typing Indicator -->
                 <div class="typing-indicator" id="typing-indicator" aria-live="polite" aria-label="Sniffer pisze...">
-                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar">
                     <div class="typing-dots-wrap">
                         <span class="typing-dot"></span>
                         <span class="typing-dot"></span>
@@ -199,7 +237,6 @@
 
                 <!-- Planning Route Indicator -->
                 <div class="planning-indicator" id="planning-indicator" aria-live="polite" aria-label="Tworzenie trasy...">
-                    <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="planning-sniffer-avatar">
                     <span class="planning-text" data-i18n="planning_route_indicator">Sniffer węszy najlepszą trasę...</span>
                 </div>
             </div>
@@ -265,6 +302,12 @@
 
             <!-- Map -->
             <div id="map"></div>
+            {% if not google_maps_key %}
+            <div class="maps-off-note" role="status">
+                <strong>🗺️ Map is switched off</strong>
+                <span>Google Maps is disabled to save costs (GOOGLE_MAPS_MODE). Routes are still planned in the chat.</span>
+            </div>
+            {% endif %}
 
             <!-- Map Overlay Controls -->
             <div class="map-overlay" id="map-overlay">
@@ -291,6 +334,19 @@
                     <span class="btn-label" data-i18n="map_btn_attractions">Atrakcje</span>
                     <span class="attractions-badge" id="attractions-count-badge" style="display:none;">0</span>
                 </button>
+                <!-- Fuel / EV charging / lunch stops along the route (Google Places basic fields; app.js: initRouteStops) -->
+                <button class="map-control-btn" id="btn-route-stops" aria-label="Stops on the way" title="Fuel, charging and lunch stops" hidden>
+                    <span style="font-size: 1.1rem; line-height: 1;">⛽</span>
+                    <span class="btn-label">Stops</span>
+                </button>
+                <!-- Touch screens only: draw the route with a finger (app.js: initDrawRoute) -->
+                <button class="map-control-btn" id="btn-draw-route" aria-label="Draw a route" title="Draw a route with your finger" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                    </svg>
+                    <span class="btn-label">Draw</span>
+                </button>
                 <button class="map-control-btn btn-top-attractions-btn" id="btn-top-attractions" aria-label="Top 8 Atrakcji" title="Zobacz Top 8 Must-See Atrakcji na trasie">
                     <span style="font-size: 1.1rem; line-height: 1;">🌟</span>
                     <span class="btn-label" style="font-weight: 700; color: #E65100;" data-i18n="map_btn_top5">Top 8</span>
@@ -305,7 +361,72 @@
                 <div class="legend-item"><span class="legend-stage-dot">D1</span> <span data-i18n="legend_day_stages">Etapy dni (D1, D2...)</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#00875A"></span> <span data-i18n="legend_camping">Kemping</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#F9A825"></span> <span data-i18n="legend_attraction">⭐ Atrakcja</span></div>
+                <div class="legend-item"><span class="legend-dot" style="background:#001E50"></span> <span>📍 Place on the route</span></div>
                 <div class="legend-item"><span class="legend-dot" style="background:#C62828"></span> <span data-i18n="legend_photo">Zdjęcie</span></div>
+            </div>
+
+            <!-- Fuel / charging / lunch stops panel -->
+            <div class="stops-panel" id="stops-panel" hidden>
+                <button type="button" class="draw-route-close" id="btn-stops-close" aria-label="Close">×</button>
+                <div class="stops-title">Stops on the way</div>
+                <div class="draw-mode" id="stops-kinds" role="radiogroup" aria-label="Stop type">
+                    <button type="button" class="draw-mode-btn" data-kind="fuel" role="radio">⛽ Fuel</button>
+                    <button type="button" class="draw-mode-btn" data-kind="ev_charging" role="radio">🔌 Charging</button>
+                    <button type="button" class="draw-mode-btn" data-kind="restaurant" role="radio">🍽️ Lunch</button>
+                </div>
+                <div class="tf-row">
+                    <label class="tf-field tf-field-small"><span>Vehicle</span>
+                        <select id="stops-vehicle">
+                            <option value="diesel">California T6.1 (diesel)</option>
+                            <option value="phev">California eHybrid</option>
+                            <option value="ev">ID. Buzz (electric)</option>
+                        </select>
+                    </label>
+                    <label class="tf-field tf-field-small"><span>Departure</span><input type="time" id="stops-departure" value="09:00"></label>
+                </div>
+                <button type="button" class="tf-submit" id="btn-stops-find">Find stops</button>
+                <div class="tf-error" id="stops-error" role="alert" hidden></div>
+                <div class="stops-results" id="stops-results"></div>
+                <div class="stops-credit">Places: Google</div>
+            </div>
+
+            <!-- Drawing a route with a finger (touch screens): layer over the map + panel -->
+            <div class="draw-layer" id="draw-layer" hidden></div>
+            <div class="draw-route-panel" id="draw-route-panel" hidden>
+                <button type="button" class="draw-route-close" id="btn-draw-cancel" aria-label="Stop drawing">×</button>
+                <div class="draw-route-hint" id="draw-route-hint">✏️ Draw your route with one finger, from the start to the destination.</div>
+                <div class="draw-route-summary" id="draw-route-summary" hidden>
+                    <div class="draw-route-ends"><strong id="draw-from">…</strong> → <strong id="draw-to">…</strong></div>
+                    <div class="draw-mode" id="draw-mode" role="radiogroup" aria-label="What the line does" hidden>
+                        <button type="button" class="draw-mode-btn" data-mode="reshape" role="radio">Change this part</button>
+                        <button type="button" class="draw-mode-btn" data-mode="extend" role="radio">Extend the trip</button>
+                        <button type="button" class="draw-mode-btn" data-mode="new" role="radio">New route</button>
+                    </div>
+                    <div class="draw-route-note" id="draw-route-note"></div>
+                    <div class="tf-row" id="draw-new-fields">
+                        <label class="tf-field tf-field-small" id="draw-start-wrap"><span>Start</span><input type="date" id="draw-start"></label>
+                        <label class="tf-field tf-field-small"><span id="draw-days-label">Days in total</span><input type="number" id="draw-days" min="1" max="60" placeholder="Auto"></label>
+                        <label class="tf-field tf-field-small"><span>Days at destination</span>
+                            <select id="draw-dest-days">
+                                <option value="0">None</option><option value="1">1 day</option><option value="2">2 days</option>
+                                <option value="3">3 days</option><option value="4">4 days</option><option value="5">5 days</option>
+                                <option value="7">7 days</option><option value="10">10 days</option><option value="14">14 days</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="tf-error" id="draw-error" role="alert" hidden></div>
+                    <div class="draw-route-actions">
+                        <button type="button" class="draw-route-redo" id="btn-draw-redo">Redraw</button>
+                        <button type="button" class="tf-submit" id="btn-draw-plan">Plan this route</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- After planning: the route is shown first, campsites on request -->
+            <div class="campsite-review-bar" id="campsite-review-bar" hidden>
+                <span id="campsite-review-text">🏕️ Campsites are picked for your nights</span>
+                <button type="button" class="campsite-review-btn" id="btn-review-campsites">Review campsites</button>
+                <button type="button" class="campsite-review-close" id="btn-dismiss-campsite-bar" aria-label="Close">×</button>
             </div>
 
             <!-- Floating Chat Bubble on Map -->
@@ -319,14 +440,12 @@
                 <div class="map-chat-panel" id="map-chat-panel" style="display:none;">
                     <div class="map-chat-header">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" style="width:20px; height:20px; border-radius:50%; border:1px solid #FFFFFF;">
                             <span data-i18n="map_chat_header">Volkswagen Sniffer</span>
                         </div>
                         <button class="map-chat-close" id="map-chat-close" aria-label="Zamknij czat">✕</button>
                     </div>
                     <div class="map-chat-messages" id="map-chat-messages">
                         <div class="typing-indicator" id="map-typing-indicator">
-                            <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="typing-sniffer-avatar" style="width:20px; height:20px;">
                             <div class="typing-dots-wrap">
                                 <div class="typing-dot"></div>
                                 <div class="typing-dot"></div>
@@ -797,6 +916,18 @@
                 <!-- Cards rendered dynamically -->
             </div>
 
+            <!-- Fuel / charging / lunch stops of this day (app.js: renderDayStopsForModal) -->
+            <div class="day-stops-modal-section" id="day-stops-modal-section" hidden>
+                <h4 id="day-stops-modal-title" class="day-stops-modal-title">🛣️ Stops on the way</h4>
+                <div class="draw-mode day-stops-kinds" id="day-stops-kinds" role="radiogroup" aria-label="Stop type">
+                    <button type="button" class="draw-mode-btn" data-kind="fuel" role="radio">⛽ Fuel</button>
+                    <button type="button" class="draw-mode-btn" data-kind="ev_charging" role="radio">🔌 Charging</button>
+                    <button type="button" class="draw-mode-btn" data-kind="restaurant" role="radio">🍽️ Lunch</button>
+                </div>
+                <div class="day-stops-note" id="day-stops-note"></div>
+                <div class="day-stops-list" id="day-stops-list"></div>
+            </div>
+
             <!-- Day Attractions Section -->
             <div class="day-attractions-modal-section" id="day-attractions-modal-section">
                 <h4 id="day-attractions-modal-title" style="margin: 0 0 12px 0; color: #001E50; font-size: 1.05rem; font-weight: 700;">⭐ Rekomendowane atrakcje na ten dzień trasy:</h4>
@@ -859,7 +990,6 @@
             <div class="travel-suggestions-header">
                 <div class="travel-suggestions-header-left">
                     <div class="suggestions-badge-pill">
-                        <img src="/static/assets/sniffer-avatar.png" alt="Sniffer" class="suggestions-sniffer-pill-icon">
                         <span data-i18n="suggestions_vw_badge">Wywęszone przez Sniffera</span>
                     </div>
                     <h2 id="travel-suggestions-title" class="travel-suggestions-title" data-i18n="suggestions_title">Dokąd dzisiaj zmierzasz?</h2>
@@ -910,10 +1040,7 @@
 <!-- ─── Welcome Overlay (Dark Blue Brand Greeting) ──────────────── -->
 <div id="welcome-overlay" class="welcome-overlay" style="display: none;">
     <div class="welcome-content">
-        <div class="welcome-overlay-mascot">
-            <img src="/static/assets/sniffer-avatar.png" alt="Volkswagen Sniffer" class="welcome-overlay-avatar">
-        </div>
-        <div class="welcome-badge" data-i18n="welcome_badge">🐶 Volkswagen Sniffer — AI Trip Planner</div>
+        <div class="welcome-badge" data-i18n="welcome_badge"></div>
         <h1 class="welcome-title" id="welcome-user-name" data-i18n="welcome_title">Witaj!</h1>
         <p class="welcome-subtitle" data-i18n="welcome_subtitle">Dokąd dzisiaj zmierzamy?</p>
     </div>
@@ -936,12 +1063,11 @@
 
 <!-- Internationalization & Application Logic -->
 <script src="/static/i18n.js"></script>
-<script src="/static/components/sniffer_avatar.js"></script>
-<script src="/static/components/sniffer_voice.js"></script>
 <script src="/static/app.js"></script>
-
 <!-- Google Maps JavaScript SDK -->
+{% if google_maps_key %}
 <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places,geometry&callback=initMap" async defer></script>
+{% endif %}
 
 </body>
 </html>

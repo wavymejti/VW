@@ -15,6 +15,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
+import subprocess
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response, Response
 from flask_cors import CORS
@@ -24,13 +26,13 @@ import uuid
 
 from tools import audius_service
 
-from navigation.chat_handler import create_chat_session, send_message
+from navigation.chat_handler import create_chat_session, send_message, send_form
 from tools.search_campings import search_campings
 from tools.plan_route import plan_route
 from tools.extract_exif import store_photo, pin_photo_location, generate_thumbnail
 from tools.generate_summary import generate_summary
 from tools.db import get_engine
-from tools.maps_client import get_client as get_maps_client
+from tools.maps_client import get_client as get_maps_client, maps_allows, disabled_message as maps_disabled_message, place_details_basic, strip_paid_photos
 from tools.openai_client import get_client
 from tools.suggest_attractions import suggest_attractions
 from tools.attractions_cache import (
@@ -47,7 +49,7 @@ from tools.location_service import (
     reverse_geocode_coordinates,
     sanitize_coordinates,
 )
-from navigation.dispatcher import _recalculate_day_route
+from navigation.dispatcher import _recalculate_day_route, apply_campsite_change
 
 # Load environment variables
 load_dotenv()
@@ -67,6 +69,25 @@ app = Flask(
 )
 CORS(app)
 
+
+@app.after_request
+def _strip_paid_google_photos(response):
+    """Unless GOOGLE_MAPS_MODE=full, remove billed Place Photo URLs from every JSON response
+    (they may come from caches filled while photos were on). See tools/maps_client.py."""
+    if maps_allows("places_rich") or not response.is_json or response.direct_passthrough:
+        return response
+    raw = response.get_data(as_text=True)
+    if "/place/photo" not in raw and "/photos/" not in raw:
+        return response
+    try:
+        data, removed = strip_paid_photos(json.loads(raw))
+    except ValueError:
+        return response
+    if removed:
+        response.set_data(json.dumps(data, ensure_ascii=False))
+        print(f"[maps] stripped {removed} paid Google photo URL(s) from {request.path}")
+    return response
+
 # In-memory per-user chat sessions, keyed by user_id.
 # We deliberately keep the full conversation history HERE (server memory)
 # rather than in the Flask `session` cookie — the history (system prompt +
@@ -81,6 +102,9 @@ _ATTRACTIONS_CACHE = {}
 
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret_key_vw_planner")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+# index.html changes show up on reload, without restarting the server (debug is off).
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 # --- Authentication ---
 
@@ -341,7 +365,7 @@ def api_get_travel_suggestions():
     duration filtering (all, weekend, week, expedition).
     """
     user_id = session.get("user_id")
-    lang = request.args.get("lang", "pl")
+    lang = _lang(request.args.get("lang"))
     duration = request.args.get("duration", "all")
     if duration not in ("all", "weekend", "week", "expedition"):
         duration = "all"
@@ -421,127 +445,17 @@ def api_select_travel_suggestion():
 
 
 
-def _sanitize_for_json(obj):
-    import decimal
-    if isinstance(obj, decimal.Decimal):
-        return float(obj)
-    if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_for_json(item) for item in obj]
-    return obj
+from tools.trip_store import _sanitize_for_json, _get_trip_data  # noqa: E402
+
+# English-only for now (UI, chat replies, Sniffer). APP_ENGLISH_ONLY=0 brings PL/DE back.
+ENGLISH_ONLY = os.getenv("APP_ENGLISH_ONLY", "1") != "0"
 
 
-def _get_trip_data(trip_id):
-    """Fetch trip and schedules from DB to return to frontend."""
-    import json
-    engine = get_engine()
-    with engine.connect() as conn:
-        trip_row = conn.execute(
-            text("SELECT id, user_id, title, origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng, start_date, end_date, status FROM trips WHERE id = :tid"),
-            {"tid": trip_id}
-        ).fetchone()
-
-        if not trip_row:
-            return None
-
-        trip = {
-            "id": str(trip_row[0]),
-            "user_id": str(trip_row[1]) if trip_row[1] else None,
-            "title": trip_row[2],
-            "origin": {"label": trip_row[3], "lat": float(trip_row[4]) if trip_row[4] is not None else 0.0, "lng": float(trip_row[5]) if trip_row[5] is not None else 0.0},
-            "destination": {"label": trip_row[6], "lat": float(trip_row[7]) if trip_row[7] is not None else 0.0, "lng": float(trip_row[8]) if trip_row[8] is not None else 0.0},
-            "start_date": str(trip_row[9]) if trip_row[9] else "",
-            "end_date": str(trip_row[10]) if trip_row[10] else "",
-            "status": trip_row[11]
-        }
-
-        schedules_rows = conn.execute(
-            text("SELECT id, day_number, schedule_date, driving_hours, driving_km, waypoints, route_polyline FROM daily_schedules WHERE trip_id = :tid ORDER BY day_number ASC"),
-            {"tid": trip_id}
-        ).fetchall()
-
-        is_round_trip = (
-            (trip.get("origin", {}).get("label") and trip.get("destination", {}).get("label") and trip["origin"]["label"] == trip["destination"]["label"]) or
-            (trip.get("origin", {}).get("lat") == trip.get("destination", {}).get("lat") and trip.get("origin", {}).get("lng") == trip.get("destination", {}).get("lng"))
-        )
-
-        schedules = []
-        num_schedules = len(schedules_rows)
-        for r in schedules_rows:
-            wps = r[5] if isinstance(r[5], list) else json.loads(r[5] or "[]")
-            overnight = next((w for w in reversed(wps) if w.get("type") == "camping"), None)
-            day_num = r[1]
-            is_return = is_round_trip and num_schedules > 1 and (day_num > (num_schedules / 2))
-            
-            overnight_opts = []
-            if day_num < num_schedules:
-                target_point = overnight or (wps[-1] if wps else None)
-                if target_point and target_point.get("lat") and target_point.get("lng"):
-                    c_res = search_campings(
-                        lat=target_point["lat"],
-                        lng=target_point["lng"],
-                        radius_km=30,
-                        limit=3
-                    )
-                    if c_res.get("results"):
-                        overnight_opts = c_res["results"]
-
-            schedules.append({
-                "id": str(r[0]),
-                "day_number": day_num,
-                "date": str(r[2]) if r[2] else "",
-                "driving_hours": float(r[3]) if r[3] is not None else 0.0,
-                "driving_km": float(r[4]) if r[4] is not None else 0.0,
-                "waypoints": wps,
-                "overnight_camping": overnight,
-                "overnight_options": overnight_opts,
-                "route_polyline": r[6],
-                "is_return": is_return
-            })
-
-        # Fetch photos associated with this trip
-        photo_rows = conn.execute(
-            text("""
-                SELECT id, file_url, thumbnail_url, lat, lng,
-                       caption, original_filename, tagged_day_schedule_id, created_at
-                FROM photos
-                WHERE trip_id = :trip_id
-                ORDER BY created_at ASC
-            """),
-            {"trip_id": trip_id}
-        ).fetchall()
-
-        photos = []
-        seen_keys = set()
-        for pr in photo_rows:
-            p_url = pr[1]
-            p_fname = pr[6]
-            dedup_key = p_url or p_fname or str(pr[0])
-            if dedup_key in seen_keys:
-                continue
-            seen_keys.add(dedup_key)
-            photos.append({
-                "id": str(pr[0]),
-                "file_url": pr[1],
-                "thumbnail_url": pr[2],
-                "lat": float(pr[3]) if pr[3] is not None else None,
-                "lng": float(pr[4]) if pr[4] is not None else None,
-                "caption": pr[5],
-                "original_filename": pr[6],
-                "tagged_day_schedule_id": str(pr[7]) if pr[7] else None,
-                "created_at": str(pr[8]) if pr[8] else None,
-            })
-
-        result_payload = {
-            "trip": trip,
-            "daily_schedules": schedules,
-            "photos": photos,
-            "total_driving_hours": sum(float(s["driving_hours"] or 0) for s in schedules),
-            "total_driving_km": sum(float(s["driving_km"] or 0) for s in schedules)
-        }
-
-        return _sanitize_for_json(result_payload)
+def _lang(requested):
+    """The language to answer in: always English while ENGLISH_ONLY is on."""
+    if ENGLISH_ONLY:
+        return "en"
+    return requested or "pl"
 
 
 @app.route("/api/trip/<trip_id>", methods=["GET"])
@@ -558,38 +472,90 @@ def api_get_trip(trip_id):
     return jsonify({"status": "success", "trip_data": trip_data})
 
 
-def get_chat_session(user_id=None, trip_id=None, lang="pl"):
+_MAX_CHAT_SESSIONS = 200
+
+
+def get_chat_session(user_id=None, trip_id=None, lang="pl", conversation_id=None):
     """
-    Get or create a per-user chat session held in SERVER memory
-    (`_CHAT_SESSIONS`). The conversation history + slot_state live here
-    (never in the Flask cookie), so multi-turn chat works reliably.
+    Get or create a chat session held in SERVER memory (`_CHAT_SESSIONS`).
+    The conversation history + slot_state live here (never in the Flask cookie).
+
+    With `conversation_id` (the frontend makes a new one on every page load) each
+    page load is its own fresh chat: no history from the DB and no active trip
+    carried over from the cookie. Without it (older clients) one session per user
+    is kept, as before.
 
     Returns:
         dict: Active chat session (with live client/tools attached).
     """
-    if not user_id:
-        # Anonymous/MVP usage: fall back to a single transient key.
-        user_id = "anon"
-
-    print(f"[get_chat_session] user_id={user_id!r} lang={lang!r} known={user_id in _CHAT_SESSIONS} keys={list(_CHAT_SESSIONS.keys())}", flush=True)
-
-    if user_id not in _CHAT_SESSIONS:
-        sess = create_chat_session(trip_id=trip_id, lang=lang)
-        sess["user_id"] = user_id
-        sess["slot_state"] = None
-        sess["active_trip_id"] = session.get("active_trip_id")
-        _CHAT_SESSIONS[user_id] = sess
+    uid = user_id or "anon"
+    if conversation_id:
+        key = f"{uid}:{conversation_id}"
+    elif user_id:
+        key = uid
     else:
-        sess = _CHAT_SESSIONS[user_id]
-        sess["user_id"] = user_id
-        sess["lang"] = lang or sess.get("lang", "pl")
-        if trip_id:
-            sess["trip_id"] = trip_id
-        # Re-sync the active_trip_id from the Flask session if present.
-        if session.get("active_trip_id"):
-            sess["active_trip_id"] = session["active_trip_id"]
+        # Anonymous client without a conversation id (older frontend): one shared
+        # session, as before. The current frontend always sends a conversation id.
+        key = "anon"
 
+    known = key in _CHAT_SESSIONS
+    print(f"[get_chat_session] key={key!r} lang={lang!r} known={known} sessions={len(_CHAT_SESSIONS)}", flush=True)
+
+    if not known:
+        fresh = bool(conversation_id)
+        sess = create_chat_session(
+            user_id=user_id,
+            trip_id=None if fresh else trip_id,
+            lang=lang,
+            load_history=not fresh,
+        )
+        sess["user_id"] = uid
+        sess["slot_state"] = None
+        sess["active_trip_id"] = None if fresh else session.get("active_trip_id")
+        sess["conversation_id"] = conversation_id
+        _CHAT_SESSIONS[key] = sess
+        # Drop the oldest sessions so page reloads don't grow memory forever.
+        while len(_CHAT_SESSIONS) > _MAX_CHAT_SESSIONS:
+            _CHAT_SESSIONS.pop(next(iter(_CHAT_SESSIONS)))
+    else:
+        sess = _CHAT_SESSIONS[key]
+        sess["lang"] = lang or sess.get("lang", "pl")
+        if not conversation_id:
+            if trip_id:
+                sess["trip_id"] = trip_id
+            # Re-sync the active_trip_id from the Flask session if present.
+            if session.get("active_trip_id"):
+                sess["active_trip_id"] = session["active_trip_id"]
+
+    sess["_key"] = key
     return sess
+
+
+# ── App version (shown subtly in the nav rail) ────────────────
+def _read_app_version():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    version = "dev"
+    try:
+        with open(os.path.join(root, "package.json"), encoding="utf-8") as f:
+            version = json.load(f).get("version", version)
+    except (OSError, ValueError):
+        pass
+    commit = "unknown"
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=root, stderr=subprocess.DEVNULL, timeout=5
+        ).decode().strip() or commit
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"version": version, "commit": commit}
+
+
+APP_VERSION = _read_app_version()
+
+
+@app.route("/api/version", methods=["GET"])
+def get_app_version():
+    return jsonify(APP_VERSION)
 
 
 # ── Frontend Route ────────────────────────────────────────────
@@ -598,7 +564,8 @@ def index():
     """Serve the main dashboard."""
     return render_template(
         "index.html",
-        google_maps_key=os.getenv("GOOGLE_MAPS_API_KEY", ""),
+        # The interactive map (Maps JS) loads only when GOOGLE_MAPS_MODE=full.
+        google_maps_key=os.getenv("GOOGLE_MAPS_API_KEY", "") if maps_allows("map") else "",
     )
 
 
@@ -699,7 +666,7 @@ def api_reverse_location():
     data = request.get_json() or {}
     lat = data.get("lat")
     lng = data.get("lng")
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
 
     result = reverse_geocode_coordinates(lat, lng, lang=lang)
     return jsonify(result)
@@ -715,7 +682,7 @@ def api_chat():
     """
     data = request.get_json() or {}
     user_message = data.get("message", "").strip()
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
     user_location = data.get("user_location") or data.get("location")
 
     if not user_message:
@@ -727,9 +694,14 @@ def api_chat():
     # Pass the logged-in user_id (and active trip, if known) into a
     # per-user chat session so messages persist and trips are linked.
     user_id = session.get("user_id")
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
     active_trip_id = session.get("active_trip_id")
-    print(f"[api_chat] user_id={user_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r} loc={user_location!r}")
-    chat = get_chat_session(user_id=user_id, trip_id=active_trip_id, lang=lang)
+    chat = get_chat_session(user_id=user_id, trip_id=active_trip_id, lang=lang,
+                            conversation_id=conversation_id)
+    if conversation_id:
+        # A fresh conversation only knows the trips planned in it.
+        active_trip_id = chat.get("active_trip_id")
+    print(f"[api_chat] user_id={user_id!r} conv={conversation_id!r} lang={lang!r} active_trip_id={active_trip_id!r} msg={user_message[:30]!r} loc={user_location!r}")
     chat["lang"] = lang
     result = send_message(
         chat,
@@ -742,14 +714,41 @@ def api_chat():
     # (never the cookie) so the next request can merge with it and the
     # route stays in context. Also mirror active_trip_id into the Flask
     # session for cross-endpoint use (e.g. /api/trip lookups).
-    uid = user_id or "anon"
-    if uid in _CHAT_SESSIONS:
-        _CHAT_SESSIONS[uid]["slot_state"] = result.get("slot_state")
+    key = chat.get("_key")
+    if key in _CHAT_SESSIONS:
+        _CHAT_SESSIONS[key]["slot_state"] = result.get("slot_state")
         if chat.get("active_trip_id"):
-            _CHAT_SESSIONS[uid]["active_trip_id"] = chat["active_trip_id"]
+            _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
             session["active_trip_id"] = chat["active_trip_id"]
 
     return jsonify(result)
+
+
+@app.route("/api/plan_form", methods=["POST"])
+def api_plan_form():
+    """
+    Plan the first route from the start form (Direct / Point-to-point / Turnaround).
+
+    Same chat session as /api/chat (conversation_id), so the user can change the trip
+    in the chat afterwards. Response like /api/chat, plus `summary` (the form as a message).
+    """
+    data = request.get_json() or {}
+    form = data.get("form") or {}
+    lang = _lang(data.get("lang"))
+    user_id = session.get("user_id")
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=user_id, trip_id=None, lang=lang,
+                            conversation_id=conversation_id)
+    chat["lang"] = lang
+    result = send_form(chat, form, user_location=data.get("user_location"))
+
+    key = chat.get("_key")
+    if key in _CHAT_SESSIONS and chat.get("active_trip_id"):
+        _CHAT_SESSIONS[key]["active_trip_id"] = chat["active_trip_id"]
+        session["active_trip_id"] = chat["active_trip_id"]
+
+    status = 400 if result.get("status") == "error" and not result.get("tool_calls") else 200
+    return jsonify(result), status
 
 
 @app.route("/api/chat/history", methods=["GET"])
@@ -877,67 +876,182 @@ def api_select_camping():
     if not all([trip_id, day_number, camping]):
         return jsonify({"status": "error", "message": "trip_id, day_number, and camping are required"}), 400
 
+    result = apply_campsite_change(trip_id, day_number, camping)
+    if result.get("status") != "success":
+        return jsonify(result), result.pop("http_status", 400)
+    trip_data = _get_trip_data(trip_id)
+    return jsonify({"status": "success", "message": "Camping selected and route updated.", "trip_data": trip_data})
+
+
+@app.route("/api/reshape_route", methods=["POST"])
+def api_reshape_route():
+    """
+    Change part of the saved route to follow a line drawn on the map (touch screens).
+
+    Body: {"trip_id", "stroke": [{"lat", "lng"}, ...] (drawing order, ends included),
+           "conversation_id"}. Only the days the stretch runs through are recalculated.
+    """
+    from navigation.route_reshape import reshape_route
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to change part of a saved route."}), 401
+    stroke = data.get("stroke") or []
+    if not isinstance(stroke, list) or len(stroke) > 40:
+        return jsonify({"status": "error", "code": "bad_line", "message": "Invalid line."}), 400
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
     try:
-        engine = get_engine()
-        with engine.begin() as conn:
-            schedule_row = conn.execute(
-                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                {"tid": trip_id, "day": day_number}
-            ).fetchone()
-
-            if not schedule_row:
-                return jsonify({"status": "error", "message": "Day schedule not found"}), 404
-
-            schedule_id = schedule_row[0]
-            waypoints = schedule_row[1] or []
-
-            if not waypoints:
-                return jsonify({"status": "error", "message": "No waypoints found for this day"}), 400
-
-            # Replace the last waypoint (which is the overnight camping or destination)
-            new_wp = {
-                "order": len(waypoints) - 1,
-                "type": "camping",
-                "label": camping.get("name", "Camping"),
-                "lat": camping.get("lat"),
-                "lng": camping.get("lng"),
-                "place_id": camping.get("place_id"),
-                "notes": "User selected camping"
-            }
-            waypoints[-1] = new_wp
-
-            # Update db and recalculate
-            update_done = _recalculate_day_route(conn, schedule_id, waypoints)
-            if not update_done:
-                conn.execute(
-                    text("UPDATE daily_schedules SET waypoints = CAST(:wps AS jsonb), overnight_camping_id = :cid WHERE id = :sid"),
-                    {"wps": json.dumps(waypoints), "cid": camping.get("id"), "sid": str(schedule_id)}
-                )
-
-            # Update start location of next day if day_number + 1 exists
-            next_day_row = conn.execute(
-                text("SELECT id, waypoints FROM daily_schedules WHERE trip_id = :tid AND day_number = :day"),
-                {"tid": trip_id, "day": day_number + 1}
-            ).fetchone()
-            if next_day_row:
-                next_sid = next_day_row[0]
-                next_wps = next_day_row[1] or []
-                if isinstance(next_wps, str):
-                    next_wps = json.loads(next_wps)
-                if next_wps:
-                    next_wps[0] = {
-                        "order": 0,
-                        "type": "start",
-                        "label": camping.get("name", "Start"),
-                        "lat": camping.get("lat"),
-                        "lng": camping.get("lng")
-                    }
-                    _recalculate_day_route(conn, next_sid, next_wps)
-
-        trip_data = _get_trip_data(trip_id)
-        return jsonify({"status": "success", "message": "Camping selected and route updated.", "trip_data": trip_data})
+        result = reshape_route(trip_id, stroke)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "code": "failed",
+                        "message": f"The route could not be changed: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+
+    # Tell the chat, so the next messages know the route changed.
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": (
+        f"[SYSTEM NOTE] The user redrew part of the route on the map. {result['message']} "
+        + " ".join(result.get("warnings") or []))})
+    chat["active_trip_id"] = trip_id
+    return jsonify(result)
+
+
+@app.route("/api/extend_route", methods=["POST"])
+def api_extend_route():
+    """
+    Add days to the saved trip along a line drawn from its end to a new destination.
+
+    Body: {"trip_id", "stroke": [{"lat", "lng"}, ...], "end_label", "extra_days" (optional),
+           "dest_days", "conversation_id"}.
+    """
+    from navigation.route_extend import extend_route
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to extend a saved route."}), 401
+    stroke = data.get("stroke") or []
+    if not isinstance(stroke, list) or len(stroke) > 40:
+        return jsonify({"status": "error", "code": "bad_line", "message": "Invalid line."}), 400
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    try:
+        result = extend_route(trip_id, stroke, end_label=data.get("end_label"),
+                              extra_days=data.get("extra_days"), dest_days=data.get("dest_days") or 0)
+    except Exception as e:
+        return jsonify({"status": "error", "code": "failed",
+                        "message": f"The trip could not be extended: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": (
+        f"[SYSTEM NOTE] The user extended the trip by drawing on the map. {result['message']} "
+        + " ".join(result.get("warnings") or []))})
+    chat["active_trip_id"] = trip_id
+    return jsonify(result)
+
+
+@app.route("/api/route_stops", methods=["POST"])
+def api_route_stops():
+    """
+    Where and when to stop for fuel / EV charging / lunch along the current trip.
+
+    Body: {"trip_id", "kind": "fuel" | "ev_charging" | "restaurant", "vehicle", "departure",
+           "day_number" (optional), "conversation_id"}. Places come from Google Places
+    (basic fields only). Unsaved trips use the route planned in this chat.
+    """
+    from tools.route_stops import plan_route_stops, schedules_from_rows
+
+    data = request.get_json() or {}
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    trip = _get_trip_data(trip_id) if trip_id else None
+    schedules = (trip or {}).get("daily_schedules")
+    if not schedules:
+        conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+        chat = get_chat_session(user_id=session.get("user_id"), trip_id=None,
+                                lang=_lang(data.get("lang")), conversation_id=conversation_id)
+        schedules = schedules_from_rows(chat.get("last_trip_rows"))
+    if not schedules:
+        return jsonify({"status": "error", "message": "Plan a route first."}), 400
+    from tools.user_memory import remembered_vehicle
+    vehicle = data.get("vehicle") or remembered_vehicle(session.get("user_id")) or "diesel"
+    result = plan_route_stops(schedules, data.get("kind"), vehicle,
+                              data.get("departure") or "09:00", data.get("day_number"),
+                              query=data.get("query"))
+    result["saved_trip"] = bool(trip)
+    from tools import mapillary_client
+    result["photos"] = mapillary_client.available()
+    return jsonify(result), (200 if result.get("status") == "success" else 400)
+
+
+@app.route("/api/vehicle", methods=["POST"])
+def api_vehicle():
+    """
+    The van the user travels in, kept in long-term memory (RAG, category vehicle).
+    {"vehicle": "diesel" | "phev" | "ev"} remembers it (logged-in users); {} reads it.
+    -> {"status", "vehicle" (None if unknown), "remembered" (saved for this user)}
+    """
+    from tools.user_memory import remember_vehicle, remembered_vehicle
+
+    data = request.get_json() or {}
+    user_id = session.get("user_id")
+    wanted = data.get("vehicle")
+    if wanted is not None and wanted not in ("diesel", "phev", "ev"):
+        return jsonify({"status": "error", "message": "vehicle must be diesel, phev or ev."}), 400
+    if wanted:
+        ok = remember_vehicle(user_id, wanted)
+        return jsonify({"status": "success", "vehicle": wanted, "remembered": ok})
+    return jsonify({"status": "success", "vehicle": remembered_vehicle(user_id), "remembered": bool(user_id)})
+
+
+@app.route("/api/place_photo", methods=["POST"])
+def api_place_photo():
+    """
+    Free photo of a place: {"lat", "lng", "kind", "name"} -> {"status", "photo"}.
+    kind "attraction": Wikimedia Commons, else Mapillary; stops: Mapillary street-level photo.
+    """
+    from tools import mapillary_client, place_photos
+
+    data = request.get_json() or {}
+    try:
+        lat, lng = float(data.get("lat")), float(data.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "lat and lng are required."}), 400
+    if data.get("kind") == "attraction":
+        photo = place_photos.attraction_photo(lat, lng, (data.get("name") or "")[:120])
+    else:
+        photo = mapillary_client.nearest_photo(lat, lng)
+    return jsonify({"status": "success" if photo else "none", "photo": photo})
+
+
+@app.route("/api/add_route_stop", methods=["POST"])
+def api_add_route_stop():
+    """Put a fuel / charging / lunch place on its day: {"trip_id", "day_number", "kind", "place", "eta"}."""
+    from navigation.route_stop_add import add_route_stop
+
+    data = request.get_json() or {}
+    if not session.get("user_id"):
+        return jsonify({"status": "error", "code": "not_saved",
+                        "message": "Log in to add stops to a saved route."}), 401
+    trip_id = data.get("trip_id") or session.get("active_trip_id")
+    try:
+        result = add_route_stop(trip_id, data.get("day_number"), data.get("place") or {},
+                                data.get("kind"), data.get("eta"))
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"The stop could not be added: {e}"}), 500
+    if result.get("status") != "success":
+        return jsonify(result), 400
+    conversation_id = (data.get("conversation_id") or "").strip()[:64] or None
+    chat = get_chat_session(user_id=session.get("user_id"), trip_id=trip_id,
+                            lang=_lang(data.get("lang")), conversation_id=conversation_id)
+    chat["history"].append({"role": "system", "content": f"[SYSTEM NOTE] The user added a stop on the map: {result['message']}"})
+    return jsonify(result)
 
 
 @app.route("/api/add_attraction", methods=["POST"])
@@ -1039,6 +1153,30 @@ def api_add_attraction():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _route_fingerprint(trip_id):
+    """
+    Short hash of the trip's shape: each day's end point (~1 km) and length (10 km steps).
+    New days, a moved night or a redrawn stretch change it; a fuel or lunch stop added to a
+    day doesn't, so it doesn't trigger new (paid) attraction searches.
+    """
+    import hashlib
+    import json as _json
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(
+                "SELECT day_number, driving_km, waypoints FROM daily_schedules "
+                "WHERE trip_id = :tid ORDER BY day_number"), {"tid": trip_id}).fetchall()
+    except Exception:
+        return ""
+    parts = []
+    for day, km, wps in rows:
+        wps = wps if isinstance(wps, list) else _json.loads(wps or "[]")
+        end = wps[-1] if wps else {}
+        parts.append(f"{day}:{round(float(km or 0) / 10)}:"
+                     f"{round(float(end.get('lat') or 0), 2)},{round(float(end.get('lng') or 0), 2)}")
+    return hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
+
+
 @app.route("/api/attractions/<trip_id>", methods=["GET"])
 def api_get_attractions(trip_id):
     """
@@ -1054,15 +1192,17 @@ def api_get_attractions(trip_id):
     Query params:
         preferences (str): Comma-separated keywords, e.g. 'zamki,natura'.
         limit_per_day (int): Max results per day (default 8).
-        sample_every_km (int): Sampling interval in km (default 80).
+        sample_every_km (int): Sampling interval in km (default 50).
     """
     preferences = request.args.get("preferences", None)
     limit_per_day = int(request.args.get("limit_per_day", 8))
-    # Default sample interval raised to 80 km to reduce API call count
-    sample_every_km = float(request.args.get("sample_every_km", 80))
+    # 50 km samples with a 25 km search radius cover the whole route corridor
+    sample_every_km = float(request.args.get("sample_every_km", 50))
 
-    # Build a cache key
-    cache_key = f"{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}"
+    # Build a cache key. It includes a fingerprint of the route: a trip changed in place
+    # (extended, part redrawn, a night moved) keeps its id but needs new attractions.
+    cache_key = (f"v2:{trip_id}:{preferences or ''}:{limit_per_day}:{int(sample_every_km)}:"
+                 f"{_route_fingerprint(trip_id)}")
     if cache_key in _ATTRACTIONS_CACHE:
         print(f"[api_get_attractions] RAM Cache HIT for {cache_key}", flush=True)
         return jsonify(_ATTRACTIONS_CACHE[cache_key])
@@ -1096,6 +1236,16 @@ def api_get_attractions(trip_id):
 @app.route("/api/place_details/<place_id>", methods=["GET"])
 def api_place_details(place_id):
     """Fetch details from Google Places API."""
+    if not maps_allows("places"):
+        return jsonify({"status": "error", "message": maps_disabled_message()}), 503
+    if not maps_allows("places_rich"):
+        # Basic fields only: no photos, rating, reviews, phone or website (cost switch)
+        try:
+            result = place_details_basic(place_id)
+            result["photo_urls"] = []
+            return jsonify({"status": "success", "details": result})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
     try:
         client = get_maps_client()
         details = client.place(
@@ -1364,7 +1514,7 @@ def api_generate_summary():
 
     format = data.get("format", "image_slideshow")
     music_track = data.get("music_track")
-    lang = data.get("lang", "pl")
+    lang = _lang(data.get("lang"))
 
     result = generate_summary(
         trip_id=trip_id,
@@ -1548,7 +1698,7 @@ def api_transcribe():
     Transcribe uploaded audio file (from MediaRecorder or voice input)
     using OpenAI Whisper API with graceful fallback.
     """
-    lang = request.form.get("lang", "pl")
+    lang = _lang(request.form.get("lang"))
 
     if "file" not in request.files and "audio" not in request.files:
         if lang == "de":
@@ -1653,7 +1803,7 @@ def api_tts_speak():
 
         data = request.get_json(silent=True) or {}
         text = data.get("text", "")
-        lang = data.get("lang", "pl")
+        lang = _lang(data.get("lang"))
         voice = data.get("voice", "onyx")
         eleven_voice_id = data.get("eleven_voice_id")
 
@@ -1673,6 +1823,36 @@ def api_tts_speak():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ── 3D Sniffer voice: proxy to the local HeadTTS server ────────
+# The AVW Sniffer module calls POST /tts/v1/synthesize on this origin (no CORS); HeadTTS
+# (Kokoro, English) runs next to Flask, see README "3D Sniffer".
+HEADTTS_URL = os.getenv("HEADTTS_URL", "http://127.0.0.1:8882").rstrip("/")
+
+
+@app.route("/tts/v1/synthesize", methods=["POST"])
+def tts_proxy():
+    """Forward a synthesis request to HeadTTS and return its JSON (audio + word/viseme timings)."""
+    import urllib.error
+    import urllib.request
+
+    body = request.get_data()
+    if len(body) > 20_000:
+        return jsonify({"error": "Request too large."}), 413
+    req = urllib.request.Request(
+        f"{HEADTTS_URL}/v1/synthesize",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as upstream:
+            return Response(upstream.read(), status=upstream.status, mimetype="application/json")
+    except urllib.error.HTTPError as e:
+        return Response(e.read(), status=e.code, mimetype="application/json")
+    except (urllib.error.URLError, TimeoutError) as e:
+        return jsonify({"error": f"HeadTTS is not reachable at {HEADTTS_URL}: {e}"}), 502
 
 
 @app.route("/assets/audio/<path:filename>")

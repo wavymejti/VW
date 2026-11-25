@@ -94,6 +94,371 @@ def _normalize_waypoints(waypoints, client=None):
     return normalized
 
 
+def _ensure_coords(place, client=None):
+    """
+    Return {label, lat, lng} for a place given as a dict or a plain name.
+    Geocodes via Google Maps when lat/lng are missing. Returns None if it can't.
+    """
+    if not place:
+        return None
+    if isinstance(place, str):
+        place = {"label": place}
+    if not isinstance(place, dict):
+        return None
+    label = place.get("label") or place.get("name")
+    lat, lng = place.get("lat"), place.get("lng")
+    if (lat is None or lng is None) and client and label:
+        try:
+            res = client.geocode(label)
+            if res:
+                loc = res[0]["geometry"]["location"]
+                lat, lng = loc["lat"], loc["lng"]
+        except Exception as e:
+            print(f"Failed to geocode '{label}': {e}")
+    if lat is None or lng is None:
+        return None
+    out = dict(place)
+    out["label"] = label or f"{float(lat):.4f},{float(lng):.4f}"
+    out["lat"], out["lng"] = float(lat), float(lng)
+    return out
+
+
+def _normalize_overnight_stops(overnight_stops, client=None):
+    """
+    Normalize the requested overnight places (in travel order).
+
+    Returns:
+        tuple: (resolved stops [{label, lat, lng}], labels that could not be located)
+    """
+    if not overnight_stops:
+        return [], []
+    if isinstance(overnight_stops, (str, dict)):
+        overnight_stops = [overnight_stops]
+    resolved, failed = [], []
+    for item in overnight_stops:
+        place = _ensure_coords(item, client)
+        if place:
+            resolved.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
+                             **({"seq": place["seq"]} if "seq" in place else {})})
+        else:
+            failed.append(item.get("label") if isinstance(item, dict) else str(item))
+    return resolved, failed
+
+
+def _apply_overnight_stops(points, stops):
+    """
+    Put the requested overnight places in place of the interpolated day ends.
+
+    Each stop (kept in the given travel order) replaces the nearest still-free
+    interpolated point, keeping days in order; leftover days stay interpolated.
+    Requires len(points) >= len(stops).
+    """
+    if not stops:
+        return points
+    points = list(points)
+    last = -1
+    for i, stop in enumerate(stops):
+        remaining = len(stops) - i - 1
+        candidates = range(last + 1, len(points) - remaining)
+        best = min(
+            candidates,
+            key=lambda k: _haversine_distance(
+                points[k]["lat"], points[k]["lng"], stop["lat"], stop["lng"]
+            ),
+        )
+        points[best] = {
+            "label": stop["label"],
+            "lat": stop["lat"],
+            "lng": stop["lng"],
+            "requested_overnight": True,
+        }
+        if stop.get("stay_days"):
+            points[best]["stay_days"] = stop["stay_days"]
+        last = best
+    return points
+
+
+def _normalize_stays(stays, client, destination):
+    """
+    Normalize requested stays (full days without driving at one place).
+
+    stays: list of {"label": str|None, "days": int} (or "nights"); a stay without a
+    label, or at the destination (same name or within 30 km), is a stay at the
+    destination / turnaround point.
+
+    Returns:
+        tuple: (destination_days, [intermediate stays {label, lat, lng, stay_days}], failed labels)
+    """
+    if not stays:
+        return 0, [], []
+    if isinstance(stays, (str, dict)):
+        stays = [stays]
+    dest_days, places, failed = 0, [], []
+    dest_label = (destination.get("label") or "").strip().casefold()
+    for item in stays:
+        if isinstance(item, str):
+            item = {"label": item}
+        if not isinstance(item, dict):
+            continue
+        try:
+            days = int(item.get("days") or item.get("nights") or 1)
+        except (TypeError, ValueError):
+            days = 1
+        days = max(1, min(days, 60))
+        label = (item.get("label") or "").strip()
+        if not label or label.casefold() == dest_label:
+            dest_days += days
+            continue
+        place = _ensure_coords(item if item.get("lat") is not None else label, client)
+        if place is None:
+            failed.append(label)
+            continue
+        if _haversine_distance(place["lat"], place["lng"], destination["lat"], destination["lng"]) <= 30:
+            dest_days += days
+            continue
+        places.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
+                       "stay_days": days, **({"seq": item["seq"]} if "seq" in item else {})})
+    return dest_days, places, failed
+
+
+def _route_position(legs, lat, lng):
+    """Index of the route step nearest to a point (orders stops along the route)."""
+    best_d, best_i, i = float("inf"), 0, 0
+    for leg in legs:
+        for step in leg.get("steps", []):
+            i += 1
+            loc = step.get("end_location") or {}
+            if loc.get("lat") is None:
+                continue
+            d = _haversine_distance(loc["lat"], loc["lng"], lat, lng)
+            if d < best_d:
+                best_d, best_i = d, i
+    return best_i
+
+
+_OFFICE_WORDS = ("siège", "siege social", "head office", "headquarters", "hauptsitz",
+                 "zentrale", "verwaltung", "biuro", "bureau", "office")
+_STAY_SPOT_CODES = {"C", "ACC_P", "ACC_PR"}  # park4night: campsite, paid / private motorhome area
+
+
+def _is_proper_campsite(option):
+    """A campsite / paid motorhome area, not a parking spot (park4night spots cached
+    in the DB lose their type code, so the name is checked too)."""
+    if option.get("source") != "park4night":
+        return True
+    if option.get("spot_code") in _STAY_SPOT_CODES:
+        return True
+    name = (option.get("name") or "").lower()
+    return any(w in name for w in ("camping", "campsite", "camp ", "kamp", "campingplatz",
+                                   "wohnmobilstellplatz", "aire de camping"))
+
+
+def _pick_campsite(options, long_stay=False):
+    """
+    Choose the night's campsite from search results (nearest first).
+
+    Company offices tagged as campgrounds are skipped. For a stay of one or more
+    days a real campsite / paid motorhome area beats a street parking spot.
+
+    Returns:
+        tuple: (campsite or None, True if a stay had to use a non-campsite spot)
+    """
+    if not options:
+        return None, False
+    good = [o for o in options
+            if not any(w in (o.get("name") or "").lower() for w in _OFFICE_WORDS)] or options
+    if long_stay:
+        proper = [o for o in good if _is_proper_campsite(o)]
+        if proper:
+            return proper[0], False
+        return good[0], True
+    return good[0], False
+
+
+def _stay_day(anchor, kind, date_str, weather, is_return):
+    """A day spent at one place: no driving, one 'stay' waypoint at that night's campsite."""
+    camp = anchor.get("overnight_camping")
+    place = camp or anchor["waypoints"][-1]
+    label = place.get("name") or place.get("label") or "Stay"
+    return {
+        "id": str(uuid.uuid4()),
+        "day_number": 0,
+        "date": date_str,
+        "driving_hours": 0.0,
+        "driving_km": 0.0,
+        "waypoints": [{
+            "order": 1,
+            "type": "stay",
+            "stay_kind": kind,
+            "label": label,
+            "lat": place["lat"],
+            "lng": place["lng"],
+            "place_id": place.get("place_id"),
+        }],
+        "overnight_camping": camp,
+        "overnight_options": [],
+        "route_polyline": None,
+        "weather": weather if weather and weather.get("status") == "success" else None,
+        "is_return": is_return,
+        "stay": True,
+        "stay_kind": kind,
+    }
+
+
+def _overnight_setting_for_day(preferences, day_num):
+    """
+    The requested surroundings for the night after `day_num` ("by a lake", "forest"...).
+
+    preferences: list of {"setting": str, "day_number": int|None} or plain strings
+    (a plain string / missing day_number applies to every night). A day-specific
+    entry wins over a general one.
+    """
+    if not preferences:
+        return None
+    if isinstance(preferences, (str, dict)):
+        preferences = [preferences]
+    general = None
+    for pref in preferences:
+        if isinstance(pref, str):
+            general = general or pref.strip() or None
+            continue
+        if not isinstance(pref, dict):
+            continue
+        setting = (pref.get("setting") or pref.get("near") or "").strip()
+        if not setting:
+            continue
+        day = pref.get("day_number")
+        if day is None:
+            general = general or setting
+        else:
+            try:
+                if int(day) == day_num:
+                    return setting
+            except (TypeError, ValueError):
+                continue
+    return general
+
+
+def _find_overnight_by_setting(lat, lng, setting, radius_km=50):
+    """
+    Campsites matching the requested surroundings (e.g. "by a lake") near a point,
+    via a Places text search; nearest first, only campsites / RV parks within radius_km.
+    """
+    from tools.maps_client import maps_allows, places_text_basic, get_client as maps_client
+
+    if not maps_allows("places"):
+        return []
+    query = f"campsite {setting}".strip()
+    try:
+        if maps_allows("places_rich"):
+            res = maps_client().places(query=query, location=(lat, lng), radius=radius_km * 1000)
+        else:
+            res = places_text_basic(query, lat=lat, lng=lng,
+                                    radius_m=radius_km * 1000, max_results=10)
+    except Exception as e:
+        print(f"[plan_route] themed campsite search failed ({query!r}): {e}")
+        return []
+
+    found = []
+    for place in res.get("results", []):
+        loc = (place.get("geometry") or {}).get("location") or {}
+        if loc.get("lat") is None or loc.get("lng") is None:
+            continue
+        name = place.get("name") or ""
+        types = place.get("types") or []
+        if not ({"campground", "rv_park"} & set(types) or "camp" in name.lower()):
+            continue
+        dist = _haversine_distance(lat, lng, loc["lat"], loc["lng"])
+        if dist > radius_km:
+            continue
+        found.append({
+            "id": None,
+            "name": name,
+            "lat": loc["lat"],
+            "lng": loc["lng"],
+            "place_id": place.get("place_id"),
+            "address": place.get("vicinity") or place.get("formatted_address"),
+            "rating": place.get("rating"),
+            "photos": [],
+            "source": "google_maps",
+            "distance_km": round(dist, 1),
+            "setting": setting,
+        })
+    found.sort(key=lambda c: c["distance_km"])
+    return found
+
+
+MAX_VIA_POINTS = 20
+# Google Directions takes at most 25 waypoints per request (pass-through ones included).
+MAX_DIRECTIONS_WAYPOINTS = 23
+
+
+def thin_via(waypoints, limit=MAX_DIRECTIONS_WAYPOINTS):
+    """Drop every other pass-through point until the waypoints fit Google's limit; stops stay."""
+    out = list(waypoints)
+    while len(out) > limit:
+        vias = [i for i, w in enumerate(out) if (w.get("type") == "via" if isinstance(w, dict) else False)]
+        if len(vias) < 2:
+            break
+        drop = set(vias[1::2])
+        out = [w for i, w in enumerate(out) if i not in drop]
+    return out
+
+
+def _via_for_day(via, legs, day_start, day_end):
+    """The drawn pass-through points between this day's start and end, in route order."""
+    if not via:
+        return []
+    start_pos = _route_position(legs, day_start["lat"], day_start["lng"])
+    end_pos = _route_position(legs, day_end["lat"], day_end["lng"])
+    out = []
+    for p in via:
+        pos = _route_position(legs, p["lat"], p["lng"])
+        # Not right at the day's start or end (a via point there only adds a kink).
+        near_end = min(_haversine_distance(p["lat"], p["lng"], q["lat"], q["lng"])
+                       for q in (day_start, day_end))
+        if start_pos < pos <= end_pos and near_end > 5:
+            out.append((pos, p))
+    return [p for _, p in sorted(out, key=lambda x: x[0])]
+
+
+# A day end this close to a place on the route moves to that place (km; also at most a
+# quarter of an average driving day, so short days are not stretched).
+SNAP_MAX_KM = 60.0
+
+
+def _snap_day_ends_to_waypoints(points, waypoints, avg_day_km):
+    """
+    Move a day end onto a nearby waypoint so the night is spent where the user is visiting.
+
+    Day ends the user fixed (overnight stops, stays, the turnaround) are kept. Each waypoint
+    takes at most one night. Snapped points carry `night_near` (the waypoint's label).
+    """
+    if not points or not waypoints:
+        return points
+    limit = min(SNAP_MAX_KM, 0.25 * (avg_day_km or 0))
+    used, out = set(), []
+    for pt in points:
+        if pt.get("requested_overnight") or pt.get("stay_days") or pt.get("turnaround"):
+            out.append(pt)
+            continue
+        best = None
+        for i, wp in enumerate(waypoints):
+            if i in used or wp.get("lat") is None or wp.get("lng") is None:
+                continue
+            d = _haversine_distance(pt["lat"], pt["lng"], wp["lat"], wp["lng"])
+            if d <= limit and (best is None or d < best[0]):
+                best = (d, i)
+        if best is None:
+            out.append(pt)
+            continue
+        used.add(best[1])
+        wp = waypoints[best[1]]
+        out.append({**pt, "label": wp.get("label") or pt.get("label"),
+                    "lat": wp["lat"], "lng": wp["lng"], "night_near": wp.get("label")})
+    return out
+
+
 def plan_route(
     origin,
     destination,
@@ -107,9 +472,20 @@ def plan_route(
     notes=None,
     round_trip=False,
     waypoints=None,
+    overnight_stops=None,
+    max_daily_km=None,
+    overnight_preferences=None,
+    stays=None,
+    rest_day_every=None,
+    allow_far_waypoints=False,
+    route_stops=None,
+    via_points=None,
 ):
     """
     Plan a multi-day route from origin to destination.
+
+    One travel day ends at each overnight stop, so num_days is at least
+    len(overnight_stops) + 1 (a trip with one night on the way = 2 days).
 
     Args:
         origin (dict): Origin with keys: label, lat, lng.
@@ -121,18 +497,163 @@ def plan_route(
         budget_per_night_eur (float): Max nightly budget.
         user_id (str): User UUID for persistence.
         title (str): Trip title.
+        overnight_stops (list): Optional places to sleep, in travel order
+            (dicts with label and optional lat/lng, or plain names).
+        max_daily_km (float): Optional daily distance limit; days are added when
+            the route doesn't fit and days are split by distance instead of time.
+        overnight_preferences (list): Surroundings wanted for the nights, e.g.
+            [{"day_number": 2, "setting": "by a lake"}] (no day_number = every night).
+        stays (list): Full days without driving, e.g. [{"label": "Dubrovnik", "days": 7}];
+            no label = at the destination (the turnaround point of a round trip).
+            They are part of num_days.
+        rest_day_every (int): Add one day off at the campsite after every N driving
+            days (also part of num_days).
+        route_stops (list): Stops in the order the user gave them (the start form):
+            [{"label", "lat", "lng", "nights", "leg": "out" | "back"}]. nights 0 = pass
+            through, 1 = one night there, n = a stay of n-1 full days. "back" stops are on
+            the way home of a round trip. The route keeps this order (no reordering).
+        via_points (list): Points the route must pass through without stopping, in order
+            ([{"lat", "lng"}], e.g. a line drawn on the map). They shape the route and each
+            day's directions but are no stops: no marker, no day split of their own.
 
     Returns:
-        dict: Complete trip plan with daily schedules.
+        dict: Complete trip plan with daily schedules, plus `warnings`
+            (things the user should be told, e.g. no campsite found).
     """
     if preferred_amenities is None:
         preferred_amenities = []
 
     client = get_maps_client()
+    warnings = []
+
+    # A line drawn on the map: pass-through points, in drawing order.
+    via = []
+    for p in (via_points or [])[:MAX_VIA_POINTS]:
+        try:
+            via.append({"lat": float(p["lat"]), "lng": float(p["lng"])})
+        except (TypeError, ValueError, KeyError):
+            continue
+
+    # The start form gives the stops in travel order: keep that order everywhere.
+    ordered = bool(route_stops) or bool(via)
+    route_out, route_back = [], []
+    kept_route_stops = []  # resolved, kept with the trip so modify_route can keep the order
+    if ordered:
+        waypoints = list(waypoints or [])
+        overnight_stops = list(overnight_stops or [])
+        stays = list(stays or [])
+        for seq, stop in enumerate(route_stops or []):
+            place = _ensure_coords(stop, client)
+            if place is None:
+                warnings.append(f"Could not locate the stop '{(stop or {}).get('label')}'; it is skipped.")
+                continue
+            place = {"label": place["label"], "lat": place["lat"], "lng": place["lng"], "seq": seq}
+            kept_route_stops.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
+                                     "nights": stop.get("nights") or 0, "leg": stop.get("leg") or "out"})
+            leg = stop.get("leg") or "out"
+            if leg == "back" and round_trip:
+                route_back.append(place)
+            elif leg != "turn":  # "turn": a night at the destination itself
+                route_out.append(place)
+            try:
+                nights = max(0, int(stop.get("nights") or 0))
+            except (TypeError, ValueError):
+                nights = 0
+            if nights == 0:
+                waypoints.append(place)
+            elif nights == 1:
+                overnight_stops.append(place)
+            else:
+                stays.append({**place, "days": nights - 1})
+        allow_far_waypoints = True  # the user placed every stop on purpose
+
+    origin = _ensure_coords(origin, client)
+    destination = _ensure_coords(destination, client)
+    if origin is None or destination is None:
+        return {
+            "status": "error",
+            "message": "Could not locate the origin or the destination.",
+        }
+
+    try:
+        num_days = max(1, int(num_days))
+    except (TypeError, ValueError):
+        return {"status": "error", "message": f"Invalid num_days: {num_days!r}."}
+
+    requested_stops, failed_stops = _normalize_overnight_stops(overnight_stops, client)
+    if failed_stops:
+        warnings.append(
+            "Could not locate the requested overnight place(s): "
+            + ", ".join(failed_stops) + "."
+        )
+    min_days = len(requested_stops) + 1
+    if num_days < min_days:
+        warnings.append(
+            f"num_days raised from {num_days} to {min_days} so that each of the "
+            f"{len(requested_stops)} overnight stop(s) gets its own night."
+        )
+        num_days = min_days
+
+    # Stay / rest days are carved out of num_days; the rest are driving days.
+    dest_stay_days, stay_places, failed_stays = _normalize_stays(stays, client, destination)
+    if failed_stays:
+        warnings.append("Could not locate the stay place(s): " + ", ".join(failed_stays) + ".")
+    try:
+        rest_day_every = int(rest_day_every) if rest_day_every else None
+    except (TypeError, ValueError):
+        rest_day_every = None
+    if rest_day_every is not None and rest_day_every < 1:
+        rest_day_every = None
+    total_days_requested = num_days
+    stay_days_total = dest_stay_days + sum(p["stay_days"] for p in stay_places)
+    min_driving = len(requested_stops) + len(stay_places) + (
+        2 if (round_trip and dest_stay_days) else 1)
+    driving_days = num_days - stay_days_total
+    if driving_days < min_driving:
+        driving_days = min_driving
+    num_days = driving_days  # from here until the stay days are added: driving days only
+
     normalized_waypoints = _normalize_waypoints(waypoints, client)
 
+    # Skip places far off the route (a vague name geocoded to another country, or a
+    # castle on the other side of Poland): they would wreck the day split. The route
+    # runs through the stay places and overnight stops, so detours are measured
+    # against the nearest leg of origin -> stops/stays -> destination.
+    anchors = sorted(list(requested_stops) + list(stay_places),
+                     key=lambda a: _haversine_distance(origin["lat"], origin["lng"], a["lat"], a["lng"]))
+    if round_trip:
+        anchors = anchors + [destination]
+    path = [origin] + anchors + [origin if round_trip else destination]
+    legs_km = [(a, b, _haversine_distance(a["lat"], a["lng"], b["lat"], b["lng"]))
+               for a, b in zip(path, path[1:])]
+    max_detour_km = max(150.0, 0.35 * max(l[2] for l in legs_km))
+    kept_waypoints = []
+    for wp in normalized_waypoints:
+        detour = min(
+            _haversine_distance(a["lat"], a["lng"], wp["lat"], wp["lng"])
+            + _haversine_distance(wp["lat"], wp["lng"], b["lat"], b["lng"]) - d
+            for a, b, d in legs_km
+        )
+        if detour > max_detour_km and not allow_far_waypoints:
+            warnings.append(
+                f"Skipped '{wp['label']}': about {detour:.0f} km off the route "
+                f"(limit {max_detour_km:.0f} km). If the trip should END there, make it the "
+                "destination (one-way) and put the turnaround city in stays; otherwise use a "
+                "more specific place, or confirm the detour with the user and pass "
+                "allow_far_waypoints=true."
+            )
+        else:
+            kept_waypoints.append(wp)
+    normalized_waypoints = kept_waypoints
+
     # Step 1: Get the total route via Google Maps
-    total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
+    if ordered:
+        # Every stop (also the ones to sleep at) shapes the route, in the user's order.
+        total_route = _compute_total_route(origin, destination, round_trip, route_out,
+                                           return_waypoints=route_back, ordered=True,
+                                           via_points=via)
+    else:
+        total_route = _compute_total_route(origin, destination, round_trip, normalized_waypoints)
 
     if total_route["status"] == "error":
         return total_route
@@ -141,7 +662,22 @@ def plan_route(
     total_distance_km = total_route["distance_km"]
     legs = total_route.get("legs", [])
 
-    # Validate feasibility
+    try:
+        max_daily_km = float(max_daily_km) if max_daily_km else None
+    except (TypeError, ValueError):
+        max_daily_km = None
+    km_needed = 0
+    if max_daily_km and max_daily_km > 0:
+        needed = math.ceil(total_distance_km / max_daily_km)
+        km_needed = needed
+        if needed > num_days:
+            warnings.append(
+                f"num_days raised from {num_days} to {needed} to keep days under "
+                f"{max_daily_km:.0f} km ({total_distance_km:.0f} km in total)."
+            )
+            num_days = needed
+
+    # Validate feasibility (after any day-count adjustment)
     if total_duration_hours > num_days * max_daily_drive_hours:
         return {
             "status": "error",
@@ -153,12 +689,106 @@ def plan_route(
             ),
         }
 
-    # Step 2: Divide route into daily segments using actual steps
+    # Step 2: Divide route into equal daily segments (time, or km with a km limit)
     total_duration_s = total_duration_hours * 3600
     route_end = origin if round_trip else destination
-    intermediate_points = _interpolate_stops_along_route(
-        legs, total_duration_s, num_days, origin, route_end
-    )
+    forced_stops = list(requested_stops) + list(stay_places)
+    if round_trip and dest_stay_days:
+        forced_stops.append({"label": destination["label"], "lat": destination["lat"],
+                             "lng": destination["lng"], "stay_days": dest_stay_days,
+                             "turnaround": True})
+    if ordered and all("seq" in st for st in forced_stops if not st.get("turnaround")):
+        turn_key = max([p["seq"] for p in route_out], default=-1) + 0.5
+        forced_stops.sort(key=lambda st: turn_key if st.get("turnaround") else st["seq"])
+    elif stay_places or (round_trip and dest_stay_days):
+        forced_stops.sort(key=lambda st: _route_position(legs, st["lat"], st["lng"]))
+    one_way_dest_stay = bool(dest_stay_days) and not round_trip
+    metric = "distance" if max_daily_km else "duration"
+
+    turn_step = None
+    if round_trip and dest_stay_days:
+        all_steps = [st for leg in legs for st in leg.get("steps", [])]
+        turn_step = _route_position(legs, destination["lat"], destination["lng"])
+        key = "distance" if metric == "distance" else "duration"
+        out_value = sum(st.get(key, {}).get("value", 0) for st in all_steps[:turn_step])
+        all_value = sum(st.get(key, {}).get("value", 0) for st in all_steps) or 1
+        out_share = out_value / all_value
+
+    def _half_points(steps, n, start, end):
+        return _interpolate_stops_along_route(
+            [{"steps": steps}], 0, n, start, end, metric=metric)
+
+    def _layout(n_driving):
+        """Day ends for n driving days + what follows each day (stay / rest days)."""
+        if turn_step and n_driving >= 2:
+            # Outbound and return get their own days in proportion to their length,
+            # with a day end exactly at the turnaround (the stay).
+            n_out = min(max(1, round(n_driving * out_share)), n_driving - 1)
+            pts = (_half_points(all_steps[:turn_step], n_out, origin, destination)
+                   + [{"label": destination["label"], "lat": destination["lat"],
+                       "lng": destination["lng"], "requested_overnight": True,
+                       "stay_days": dest_stay_days, "turnaround": True}]
+                   + _half_points(all_steps[turn_step:], n_driving - n_out, destination, origin))
+            others = [st for st in forced_stops if not st.get("turnaround")]
+            if others:
+                fixed = pts[n_out - 1]
+                rest = pts[:n_out - 1] + pts[n_out:]
+                rest = _apply_overnight_stops(rest, others) if len(rest) >= len(others) else rest
+                pts = rest[:n_out - 1] + [fixed] + rest[n_out - 1:]
+        else:
+            pts = _interpolate_stops_along_route(
+                legs, total_duration_s, n_driving, origin, route_end, metric=metric)
+            pts = _apply_overnight_stops(pts, forced_stops)
+        if round_trip and dest_stay_days:
+            for pt in pts:
+                if pt.get("stay_days") and _haversine_distance(
+                        pt["lat"], pt["lng"], destination["lat"], destination["lng"]) < 1:
+                    pt["turnaround"] = True
+        room = total_days_requested - n_driving - stay_days_total
+        extra, streak, rests = {}, 0, 0
+        for d in range(1, n_driving + 1):
+            streak += 1
+            if d < n_driving:
+                k = pts[d - 1].get("stay_days", 0)
+            else:
+                k = dest_stay_days if one_way_dest_stay else 0
+            if k:
+                extra[d] = (k, "stay")
+                streak = 0
+            elif (rest_day_every and d < n_driving and streak >= rest_day_every
+                  and rests < room):
+                extra[d] = (1, "rest")
+                rests += 1
+                streak = 0
+            else:
+                extra[d] = (0, None)
+        return pts, extra, n_driving + stay_days_total + rests, rests
+
+    # Without rest days: as many driving days as the request allows. With rest days:
+    # fewer driving days so rests fit, preferring the requested day count, then
+    # more rests, then more driving days (shorter legs).
+    lower = max(min_driving, km_needed,
+                math.ceil(total_duration_hours / max_daily_drive_hours - 1e-9))
+    candidates = range(num_days, max(lower, 1) - 1, -1) if rest_day_every else [num_days]
+    best = None
+    for n in candidates:
+        lay = _layout(n)
+        score = (lay[2] == total_days_requested, lay[3], n)
+        if best is None or score > best[0]:
+            best = (score, n, lay)
+    num_days = best[1]
+    intermediate_points, extra_after = best[2][0], best[2][1]
+
+    # A place to visit close to where a day would end becomes that night's place
+    # (Wolfgangsee 50 km before Teisendorf: sleep by the lake, not 50 km further on).
+    intermediate_points = _snap_day_ends_to_waypoints(
+        intermediate_points, normalized_waypoints,
+        total_distance_km / max(1, num_days))
+
+    day_offset, offset = {}, 0
+    for d in range(1, num_days + 1):
+        day_offset[d] = offset
+        offset += 1 + extra_after[d][0]
 
     # Pre-calculate nominal start and end for each day to assign waypoints
     day_nominal_segments = {}
@@ -198,7 +828,7 @@ def plan_route(
     previous_day_end = None
 
     for day_num in range(1, num_days + 1):
-        day_date = start + timedelta(days=day_num - 1)
+        day_date = start + timedelta(days=day_offset[day_num])
 
         # Determine start and end points for this day
         if day_num == 1:
@@ -217,23 +847,61 @@ def plan_route(
         # Find overnight camping (except last day at destination)
         overnight_camping = None
         overnight_options = []
-        if day_num < num_days:
-            camping_results = search_campings(
-                lat=day_end["lat"],
-                lng=day_end["lng"],
-                radius_km=30,
-                amenities=preferred_amenities,
-                max_cost_eur=budget_per_night_eur,
-                vw_compatible=True,
-                limit=3,
-            )
-            if camping_results.get("results"):
-                overnight_options = camping_results["results"]
-                overnight_camping = overnight_options[0]
+        if day_num < num_days or one_way_dest_stay:
+            setting = _overnight_setting_for_day(overnight_preferences, day_num)
+            if setting:
+                themed = _find_overnight_by_setting(day_end["lat"], day_end["lng"], setting)
+                if themed:
+                    overnight_options = themed[:6]
+                    overnight_camping, _ = _pick_campsite(
+                        themed, long_stay=extra_after[day_num][1] == "stay")
+                else:
+                    warnings.append(
+                        f"Day {day_num}: no campsite '{setting}' found within 50 km of "
+                        f"{day_end.get('label', 'the day end')}; a regular campsite is used."
+                    )
+            for radius_km in (() if overnight_camping else (30, 50)):
+                camping_results = search_campings(
+                    lat=day_end["lat"],
+                    lng=day_end["lng"],
+                    radius_km=radius_km,
+                    amenities=preferred_amenities,
+                    max_cost_eur=budget_per_night_eur,
+                    vw_compatible=True,
+                    limit=6,
+                )
+                if camping_results.get("results"):
+                    overnight_options = camping_results["results"]
+                    long_stay = extra_after[day_num][1] == "stay"
+                    overnight_camping, makeshift = _pick_campsite(overnight_options, long_stay)
+                    if makeshift:
+                        # The nearest spots are city parkings: look for real campsites
+                        # a bit further out before settling for a street.
+                        campsites = [c for c in _find_overnight_by_setting(
+                            day_end["lat"], day_end["lng"], "", radius_km=40)
+                            if not any(w in (c.get("name") or "").lower() for w in _OFFICE_WORDS)]
+                        if campsites:
+                            overnight_options = campsites[:6] + overnight_options
+                            overnight_camping, makeshift = campsites[0], False
+                    if makeshift:
+                        warnings.append(
+                            f"Day {day_num}: no proper campsite found near "
+                            f"{day_end.get('label', 'the stay place')} for the "
+                            f"{extra_after[day_num][0]}-day stay; using "
+                            f"{overnight_camping.get('name')} — worth choosing another."
+                        )
+                    break
+            if not overnight_camping:
+                warnings.append(
+                    f"Day {day_num}: no campsite found within 50 km of "
+                    f"{day_end.get('label', 'the day end')}; the night is marked "
+                    "at that point on the route — the user should pick a place to sleep."
+                )
 
         # Get exact directions for this day
         target_end = overnight_camping if overnight_camping else day_end
         ordered_day_wps = list(day_wps)
+        day_via = []
         try:
             directions_kwargs = {
                 "origin": f"{day_start['lat']},{day_start['lng']}",
@@ -242,7 +910,17 @@ def plan_route(
                 "departure_time": max(datetime.now(), datetime.combine(day_date, datetime.min.time())),
                 "traffic_model": "best_guess",
             }
-            if day_wps:
+            day_via = _via_for_day(via, legs, day_start, target_end)
+            if len(day_via) + len(day_wps) > MAX_DIRECTIONS_WAYPOINTS:
+                day_via = [p for p in thin_via([{**p, "type": "via"} for p in day_via],
+                                               MAX_DIRECTIONS_WAYPOINTS - len(day_wps))]
+            if day_via:
+                # Drawn line: pass through its points in order; stops (if any) after them
+                # would break the drawing, so they keep Google's order only without via.
+                directions_kwargs["waypoints"] = (
+                    [f"via:{p['lat']},{p['lng']}" for p in day_via]
+                    + [f"{w['lat']},{w['lng']}" for w in day_wps])
+            elif day_wps:
                 directions_kwargs["waypoints"] = [f"{w['lat']},{w['lng']}" for w in day_wps]
                 directions_kwargs["optimize_waypoints"] = True
 
@@ -296,6 +974,13 @@ def plan_route(
                 "notes": wp.get("notes"),
             })
 
+        for p in (day_via if via else []):
+            # Kept so a later recalculation of the day follows the drawing (never shown).
+            day_schedule_waypoints.append({
+                "order": len(day_schedule_waypoints) + 1,
+                "type": "via", "label": "via", "lat": p["lat"], "lng": p["lng"],
+            })
+
         if overnight_camping:
             day_schedule_waypoints.append({
                 "order": len(day_schedule_waypoints) + 1,
@@ -341,6 +1026,17 @@ def plan_route(
             "weather": weather if weather["status"] == "success" else None,
             "is_return": is_return_leg
         }
+        if day_end.get("night_near"):
+            schedule["night_near"] = day_end["night_near"]
+        if overnight_camping and ordered_day_wps:
+            # How far the night is from the day's places, so a reply never calls a
+            # campsite 50 km away "near" one of them.
+            schedule["campsite_km_from_stops"] = [
+                {"stop": wp.get("label"),
+                 "km": round(_haversine_distance(overnight_camping["lat"], overnight_camping["lng"],
+                                                 wp["lat"], wp["lng"]), 1)}
+                for wp in ordered_day_wps
+            ]
 
         # Remember this day's actual end point to be the start point of the next day
         if overnight_camping:
@@ -353,6 +1049,52 @@ def plan_route(
             previous_day_end = day_end
 
         daily_schedules.append(schedule)
+
+    # Insert the stay / rest days after their driving day, then renumber.
+    turnaround_day = None
+    if round_trip and dest_stay_days:
+        for d in range(1, num_days):
+            if intermediate_points[d - 1].get("turnaround"):
+                turnaround_day = d
+    final_schedules = []
+    for d, sched in enumerate(daily_schedules, 1):
+        if turnaround_day is not None:
+            sched["is_return"] = d > turnaround_day
+        final_schedules.append(sched)
+        k, kind = extra_after[d]
+        if not k:
+            continue
+        if kind == "rest" and not sched.get("overnight_camping"):
+            continue  # no campsite to rest at
+        anchor_place = sched.get("overnight_camping") or sched["waypoints"][-1]
+        for i in range(1, k + 1):
+            stay_date = start + timedelta(days=day_offset[d] + i)
+            weather = get_weather_forecast(anchor_place["lat"], anchor_place["lng"],
+                                           stay_date.strftime("%Y-%m-%d"))
+            is_ret = sched.get("is_return", False) if turnaround_day is None else False
+            final_schedules.append(_stay_day(sched, kind, stay_date.strftime("%Y-%m-%d"),
+                                             weather, is_ret))
+    for i, sched in enumerate(final_schedules, 1):
+        sched["day_number"] = i
+        sched["date"] = (start + timedelta(days=i - 1)).strftime("%Y-%m-%d")
+    driving_day_count = num_days
+    daily_schedules = final_schedules
+    num_days = len(final_schedules)
+    stay_count = sum(1 for x in daily_schedules if x.get("stay_kind") == "stay")
+    rest_count = sum(1 for x in daily_schedules if x.get("stay_kind") == "rest")
+    if num_days != total_days_requested:
+        warnings.append(
+            f"The trip has {num_days} days instead of {total_days_requested}: "
+            f"{driving_day_count} driving, {stay_count} stay and {rest_count} rest day(s)."
+        )
+
+    if max_daily_km:
+        for d in daily_schedules:
+            if d["driving_km"] > max_daily_km * 1.1:
+                warnings.append(
+                    f"Day {d['day_number']}: {d['driving_km']:.0f} km, above the "
+                    f"{max_daily_km:.0f} km limit (campsite detour or a long stretch)."
+                )
 
     # Step 4: Build trip object
     trip = {
@@ -371,10 +1113,14 @@ def plan_route(
         "total_driving_hours": round(sum(d["driving_hours"] for d in daily_schedules), 1),
         "total_driving_km": round(sum(d["driving_km"] for d in daily_schedules), 1),
     }
+    # How the route was shaped (start form / drawn line): modify_route re-plans with it, so a
+    # later change in the chat keeps the stop order and the drawing.
+    plan_params = {k: v for k, v in (("route_stops", kept_route_stops), ("via_points", via)) if v}
+    if plan_params:
+        trip["plan_params"] = plan_params
 
     # Step 5: Persist to database if user_id provided
-    if user_id:
-        _persist_trip(trip, daily_schedules)
+    save_error = _persist_trip(trip, daily_schedules) if user_id else None
 
     return {
         "status": "success",
@@ -382,10 +1128,19 @@ def plan_route(
         "daily_schedules": daily_schedules,
         "total_driving_hours": trip["total_driving_hours"],
         "total_driving_km": trip["total_driving_km"],
+        "num_days": num_days,
+        "overnight_count": num_days - 1,
+        "driving_days": driving_day_count,
+        "stay_days": stay_count,
+        "rest_days": rest_count,
+        "warnings": warnings,
+        "saved": bool(user_id) and save_error is None,
+        "save_error": save_error,
     }
 
 
-def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
+def _compute_total_route(origin, destination, round_trip=False, waypoints=None,
+                         return_waypoints=None, ordered=False, via_points=None):
     """
     Compute the total route between origin and destination
     using Google Maps Directions API.
@@ -400,11 +1155,19 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
         client = get_maps_client()
         normalized_wps = _normalize_waypoints(waypoints, client)
         wp_list = [f"{wp['lat']},{wp['lng']}" for wp in normalized_wps]
-        
+        # ordered: the user's order (start form), Google must not reorder the stops
+        optimize = len(wp_list) > 1 and not ordered
+        # A drawn line: pass-through points ("via:" = no stop, no extra leg).
+        wp_list += [f"via:{p['lat']},{p['lng']}" for p in (via_points or [])]
+
         if round_trip:
             # Add destination to waypoints as the turnaround point if it's different from origin
             if destination['label'] != origin['label']:
                 wp_list.append(f"{destination['lat']},{destination['lng']}")
+            # Stops on the way home come after the turnaround.
+            wp_list += [f"{wp['lat']},{wp['lng']}"
+                        for wp in _normalize_waypoints(return_waypoints, client)]
+            optimize = len(wp_list) > 1 and not ordered
                 
             directions = client.directions(
                 origin=f"{origin['lat']},{origin['lng']}",
@@ -413,7 +1176,7 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
                 mode="driving",
                 departure_time="now",
                 traffic_model="best_guess",
-                optimize_waypoints=True if len(wp_list) > 1 else False
+                optimize_waypoints=optimize
             )
         else:
             directions = client.directions(
@@ -423,7 +1186,7 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
                 mode="driving",
                 departure_time="now",
                 traffic_model="best_guess",
-                optimize_waypoints=True if len(wp_list) > 1 else False
+                optimize_waypoints=optimize
             )
 
         if not directions:
@@ -464,62 +1227,167 @@ def _compute_total_route(origin, destination, round_trip=False, waypoints=None):
         }
 
 
-def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, destination):
+def _point_along_polyline(points, fraction):
+    """Point at `fraction` (0..1) of a polyline's length (points: [{lat, lng}, ...])."""
+    if not points:
+        return None
+    if len(points) == 1 or fraction <= 0:
+        return dict(points[0])
+    seg_lengths = [
+        _haversine_distance(a["lat"], a["lng"], b["lat"], b["lng"])
+        for a, b in zip(points, points[1:])
+    ]
+    total = sum(seg_lengths)
+    if total <= 0 or fraction >= 1:
+        return dict(points[-1])
+    target = total * fraction
+    walked = 0.0
+    for (a, b), seg in zip(zip(points, points[1:]), seg_lengths):
+        if walked + seg >= target and seg > 0:
+            f = (target - walked) / seg
+            return {
+                "lat": a["lat"] + (b["lat"] - a["lat"]) * f,
+                "lng": a["lng"] + (b["lng"] - a["lng"]) * f,
+            }
+        walked += seg
+    return dict(points[-1])
+
+
+def _step_geometry(step, fallback_start):
+    """Decoded polyline of a Directions step, or a straight start→end line."""
+    encoded = (step.get("polyline") or {}).get("points")
+    if encoded:
+        try:
+            from googlemaps.convert import decode_polyline
+            pts = decode_polyline(encoded)
+            if pts:
+                return pts
+        except Exception:
+            pass
+    start = step.get("start_location") or fallback_start
+    end = step["end_location"]
+    return [{"lat": start["lat"], "lng": start["lng"]}, {"lat": end["lat"], "lng": end["lng"]}]
+
+
+def _interpolate_stops_along_route(legs, total_duration_s, num_days, origin, destination,
+                                   metric="duration"):
     """
-    Find intermediate stopping points by accumulating driving time 
-    along actual route steps.
+    Find the num_days - 1 day-end points by cutting the route into equal parts.
+
+    A cut can fall inside a long Directions step (a motorway step can last hours):
+    the point is then placed along that step's polyline, so one step can hold
+    several cuts and days come out even.
 
     Args:
         legs (list): Route legs from Google Maps Directions API.
-        total_duration_s (int): Total route duration in seconds.
+        total_duration_s (float): Total route duration in seconds (metric="duration").
         num_days (int): Number of travel days.
         origin (dict): Origin coordinates.
         destination (dict): Destination coordinates.
+        metric (str): "duration" (equal driving time) or "distance" (equal km).
 
     Returns:
-        list: List of intermediate point dicts (num_days - 1 points).
+        list: Intermediate point dicts (num_days - 1 points).
     """
     if num_days <= 1:
         return []
 
-    target_interval = total_duration_s / num_days
+    steps = [step for leg in legs for step in leg.get("steps", [])]
+    key = "distance" if metric == "distance" else "duration"
+    total = sum(st.get(key, {}).get("value", 0) for st in steps)
+    if metric != "distance" and not total:
+        total = total_duration_s
+    interval = total / num_days if total else 0
+
     points = []
-    current_time = 0
-    current_target = target_interval
-    
-    for leg in legs:
-        for step in leg.get("steps", []):
-            step_duration = step["duration"]["value"]
-            current_time += step_duration
-            
-            if current_time >= current_target:
-                # We reached or passed the target time for this day.
+    elapsed = 0.0
+    prev_end = origin
+    if interval > 0:
+        for step in steps:
+            value = step.get(key, {}).get("value", 0)
+            geometry = None
+            while len(points) < num_days - 1:
+                target = interval * (len(points) + 1)
+                if value <= 0 or target > elapsed + value + 1e-6:
+                    break
+                if geometry is None:
+                    geometry = _step_geometry(step, prev_end)
+                pt = _point_along_polyline(geometry, (target - elapsed) / value)
                 points.append({
                     "label": f"Waypoint {len(points) + 1}",
-                    "lat": step["end_location"]["lat"],
-                    "lng": step["end_location"]["lng"],
+                    "lat": pt["lat"],
+                    "lng": pt["lng"],
                 })
-                current_target += target_interval
-                
-                if len(points) == num_days - 1:
-                    return points
-                    
-    # Fallback if we didn't get enough points
+            elapsed += value
+            prev_end = step.get("end_location", prev_end)
+            if len(points) == num_days - 1:
+                return points
+
+    # Fallback if the steps were missing: straight-line interpolation
     lat1, lng1 = origin["lat"], origin["lng"]
     lat2, lng2 = destination["lat"], destination["lng"]
-    
     while len(points) < num_days - 1:
         idx = len(points) + 1
         fraction = idx / num_days
-        interp_lat = lat1 + (lat2 - lat1) * fraction
-        interp_lng = lng1 + (lng2 - lng1) * fraction
         points.append({
             "label": f"Fallback Waypoint {idx}",
-            "lat": interp_lat,
-            "lng": interp_lng
+            "lat": lat1 + (lat2 - lat1) * fraction,
+            "lng": lng1 + (lng2 - lng1) * fraction,
         })
-        
     return points
+
+
+def _json_default(value):
+    """json.dumps fallback: Decimal (NUMERIC columns) -> float, anything else -> str."""
+    from decimal import Decimal
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
+
+
+_PLAN_PARAMS_READY = False
+
+
+def _ensure_plan_params_column():
+    """trips.plan_params (migration 009), added here too if the migration hasn't run (idempotent)."""
+    global _PLAN_PARAMS_READY
+    if not _PLAN_PARAMS_READY:
+        with get_engine().begin() as conn:
+            conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS plan_params JSONB"))
+        _PLAN_PARAMS_READY = True
+
+
+def _save_plan_params(trip_id, plan_params):
+    """Keep route_stops / via_points with a saved trip. Failing here never fails the trip."""
+    import json
+    try:
+        _ensure_plan_params_column()
+        with get_engine().begin() as conn:
+            conn.execute(text("UPDATE trips SET plan_params = CAST(:p AS jsonb) WHERE id = :id"),
+                         {"p": json.dumps(plan_params, default=_json_default), "id": trip_id})
+    except Exception as e:
+        print(f"  ⚠️  Could not save plan_params: {e}")
+
+
+def load_plan_params(trip_id):
+    """route_stops / via_points a saved trip was planned with ({} if none or unknown)."""
+    import json
+    if not trip_id:
+        return {}
+    try:
+        _ensure_plan_params_column()
+        with get_engine().connect() as conn:
+            row = conn.execute(text("SELECT plan_params FROM trips WHERE id = :id"), {"id": trip_id}).fetchone()
+    except Exception as e:
+        print(f"  ⚠️  Could not read plan_params: {e}")
+        return {}
+    val = row[0] if row else None
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except ValueError:
+            val = None
+    return val if isinstance(val, dict) else {}
 
 
 def _persist_trip(trip, daily_schedules):
@@ -529,6 +1397,9 @@ def _persist_trip(trip, daily_schedules):
     Args:
         trip (dict): Trip data.
         daily_schedules (list): List of daily schedule dicts.
+
+    Returns:
+        str | None: Error description if saving failed, else None.
     """
     try:
         engine = get_engine()
@@ -593,7 +1464,7 @@ def _persist_trip(trip, daily_schedules):
                         "schedule_date": schedule["date"],
                         "driving_hours": schedule["driving_hours"],
                         "driving_km": schedule["driving_km"],
-                        "waypoints": json.dumps(schedule["waypoints"]),
+                        "waypoints": json.dumps(schedule["waypoints"], default=_json_default),
                         "camping_id": camping_id,
                         "route_polyline": schedule.get("route_polyline"),
                     },
@@ -601,9 +1472,13 @@ def _persist_trip(trip, daily_schedules):
 
             conn.commit()
             print(f"  ✅ Trip '{trip['title']}' saved to DB")
+        if trip.get("plan_params"):
+            _save_plan_params(trip["id"], trip["plan_params"])
+        return None
 
     except Exception as e:
         print(f"  ⚠️  Failed to persist trip: {e}")
+        return f"{type(e).__name__}: {str(e)[:400]}"
 
 
 if __name__ == "__main__":

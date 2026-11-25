@@ -59,20 +59,6 @@ class TestSnifferMascot(unittest.TestCase):
         self.assertIn("Volkswagen Sniffer", data["name"])
         self.assertEqual(data["short_name"], "VW Sniffer")
 
-    def test_index_html_sniffer_integration(self):
-        """Verify that index.html integrates Sniffer title, navbar mascot, and chat welcome."""
-        index_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "frontend", "index.html"
-        )
-        with open(index_path, "r", encoding="utf-8") as f:
-            html = f.read()
-
-        self.assertIn("<title>Volkswagen Sniffer — AI Trip Planner</title>", html)
-        self.assertIn("nav-sniffer-avatar", html)
-        self.assertIn("welcome-sniffer-mascot", html)
-        self.assertIn("sniffer-sitting.png", html)
-        self.assertIn("sniffer-avatar.png", html)
-
     def test_chat_bubbles_styling_and_classes(self):
         """Verify that app.js sets proper message classes and styles.css styles chat bubbles."""
         app_js_path = os.path.join(

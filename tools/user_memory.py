@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 
 from tools.db import get_engine
-from tools.openai_client import get_client, MODEL_NAME
+from tools.openai_client import get_client, MODEL_NAME, chat_kwargs
 
 
 # Default embedding model (1536 dimensions, highly cost-effective)
@@ -368,7 +368,8 @@ def extract_memories_from_message(user_id: str, user_message: str) -> List[Dict[
         "Jesteś modułem ekstrakcji pamięci długoterminowej dla asystenta podróży VW California. "
         "Twoim zadaniem jest wyłapanie TRWAŁYCH preferencji, nawyków, antypatii lub ograniczeń podróżnika "
         "(np. podróż z psem, unikanie płatnych dróg, preferowanie kempingów nad jeziorem, zamiłowanie do rowerów, "
-        "posiadanie markizy, ograniczenia budżetowe na nocleg).\n\n"
+        "posiadanie markizy, ograniczenia budżetowe na nocleg, model auta którym podróżuje — "
+        "np. VW ID. Buzz (elektryczny), California eHybrid, California T6.1 diesel — kategoria vehicle).\n\n"
         "IGNORUJ tymczasowe parametry wycieczki (np. daty startu, konkretną trasę na ten weekend, liczbę dni).\n\n"
         "Zwróć TYLKO poprawny JSON (tablicę obiektów) lub pustą tablicę `[]` jeśli w wypowiedzi nie ma żadnych trwałych preferencji:\n"
         "[\n"
@@ -389,7 +390,7 @@ def extract_memories_from_message(user_id: str, user_message: str) -> List[Dict[
                 {"role": "user", "content": user_message},
             ],
             response_format={"type": "json_object"},
-            temperature=0.1,
+            **chat_kwargs(temperature=0.1),
         )
 
         content = response.choices[0].message.content or "{}"
@@ -415,3 +416,66 @@ def extract_memories_from_message(user_id: str, user_message: str) -> List[Dict[
     except Exception as e:
         print(f"[user_memory] Memory extraction failed: {e}")
         return []
+
+
+# ── Remembered vehicle (Nov 2026) ─────────────────────────────────────────────
+# The van is an ordinary `vehicle` memory; these map it to the stop planner's keys.
+VEHICLE_PATTERNS = (  # checked in this order: "California eHybrid" is phev, not diesel
+    ("ev", r"id\.?\s*buzz|\belectric|elektr|\bev\b|\bbev\b"),
+    ("phev", r"e-?hybrid|hybr|plug-?in|\bphev\b"),
+    ("diesel", r"\bt6(\.1)?\b|\bt7\b|\btdi\b|diesel|california"),
+)
+VEHICLE_MEMORY_TEXT = {
+    "ev": "Podróżuje VW ID. Buzz (elektryczny)",
+    "phev": "Podróżuje VW California eHybrid (hybryda plug-in)",
+    "diesel": "Podróżuje VW California T6.1 (diesel)",
+}
+
+
+def vehicle_key_from_text(text_value: str) -> Optional[str]:
+    """'ev' / 'phev' / 'diesel' for a memory that names a van model, else None."""
+    import re
+    low = (text_value or "").lower()
+    for key, pattern in VEHICLE_PATTERNS:
+        if re.search(pattern, low):
+            return key
+    return None
+
+
+def remembered_vehicle(user_id: Optional[str]) -> Optional[str]:
+    """The user's van from the newest active `vehicle` memory naming a model (None if unknown)."""
+    if not user_id:
+        return None
+    try:
+        for mem in list_user_memories(user_id, category="vehicle"):  # newest first
+            key = vehicle_key_from_text(mem.get("content"))
+            if key:
+                return key
+    except Exception as e:
+        print(f"[user_memory] Could not read the remembered vehicle: {e}")
+    return None
+
+
+def remember_vehicle(user_id: Optional[str], key: str) -> bool:
+    """
+    Make `key` the user's van: delete `vehicle` memories naming another model and save
+    one canonical memory unless the same model is already remembered.
+    """
+    if not user_id or key not in VEHICLE_MEMORY_TEXT:
+        return False
+    try:
+        same = False
+        for mem in list_user_memories(user_id, category="vehicle"):
+            mem_key = vehicle_key_from_text(mem.get("content"))
+            if mem_key and mem_key != key:
+                delete_user_memory(user_id, mem["id"])
+            elif mem_key == key:
+                same = True
+        if not same:
+            save_user_memory(user_id, VEHICLE_MEMORY_TEXT[key], category="vehicle",
+                             polarity="habit", confidence=1.0)
+        return True
+    except Exception as e:
+        print(f"[user_memory] Could not remember the vehicle: {e}")
+        return False
+

@@ -56,8 +56,8 @@ CREATE TABLE IF NOT EXISTS trips (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_trips_user_id ON trips(user_id);
-CREATE INDEX idx_trips_status ON trips(status);
+CREATE INDEX IF NOT EXISTS idx_trips_user_id ON trips(user_id);
+CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status);
 
 -- -----------------------------------------------------------
 -- 3. Campings
@@ -97,9 +97,9 @@ CREATE TABLE IF NOT EXISTS campings (
 );
 
 -- Spatial index for proximity queries
-CREATE INDEX idx_campings_location ON campings USING GIST(location);
-CREATE INDEX idx_campings_country ON campings(country);
-CREATE INDEX idx_campings_place_id ON campings(place_id);
+CREATE INDEX IF NOT EXISTS idx_campings_location ON campings USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_campings_country ON campings(country);
+CREATE INDEX IF NOT EXISTS idx_campings_place_id ON campings(place_id);
 
 -- -----------------------------------------------------------
 -- 4. Daily Schedules
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS daily_schedules (
     UNIQUE(trip_id, day_number)
 );
 
-CREATE INDEX idx_daily_schedules_trip_id ON daily_schedules(trip_id);
+CREATE INDEX IF NOT EXISTS idx_daily_schedules_trip_id ON daily_schedules(trip_id);
 
 -- -----------------------------------------------------------
 -- 5. Photos (Travel Memory)
@@ -151,9 +151,9 @@ CREATE TABLE IF NOT EXISTS photos (
 );
 
 -- Spatial index for proximity queries on photos
-CREATE INDEX idx_photos_location ON photos USING GIST(location);
-CREATE INDEX idx_photos_user_id ON photos(user_id);
-CREATE INDEX idx_photos_trip_id ON photos(trip_id);
+CREATE INDEX IF NOT EXISTS idx_photos_location ON photos USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_photos_user_id ON photos(user_id);
+CREATE INDEX IF NOT EXISTS idx_photos_trip_id ON photos(trip_id);
 
 -- -----------------------------------------------------------
 -- 6. Chat Messages (AI Conversation)
@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_chat_messages_trip_id ON chat_messages(trip_id);
-CREATE INDEX idx_chat_messages_created_at
+CREATE INDEX IF NOT EXISTS idx_chat_messages_trip_id ON chat_messages(trip_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at
     ON chat_messages(trip_id, created_at);
 
 -- -----------------------------------------------------------
@@ -192,4 +192,4 @@ CREATE TABLE IF NOT EXISTS trip_summaries (
     generated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_trip_summaries_trip_id ON trip_summaries(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_summaries_trip_id ON trip_summaries(trip_id);

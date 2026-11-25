@@ -12,7 +12,7 @@ import json
 import uuid
 from typing import Any, Dict, List, Optional
 
-from tools.openai_client import get_client, MODEL_NAME
+from tools.openai_client import get_client, MODEL_NAME, chat_kwargs
 from tools.user_memory import list_user_memories, save_user_memory
 
 
@@ -720,8 +720,8 @@ def generate_dynamic_suggestions(
                 },
             ],
             response_format={"type": "json_object"},
-            temperature=0.75,
             timeout=9.0,
+            **chat_kwargs(temperature=0.75),
         )
 
         content = response.choices[0].message.content or "{}"

@@ -45,10 +45,81 @@ function openSingleInfoWindow(infoWindow, marker) {
 }
 
 const API_BASE = '';
+
+// A new chat on every page load: the server keeps a separate session per id,
+// so a reload starts from scratch (no old history, no active trip).
+const CHAT_CONVERSATION_ID = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const CAMPING_PLACEHOLDER_URL = '/static/assets/camping_placeholder.svg';
 const ATTRACTION_PLACEHOLDER_URL = '/static/assets/attraction_placeholder.svg';
 window.CAMPING_PLACEHOLDER_URL = CAMPING_PLACEHOLDER_URL;
 window.ATTRACTION_PLACEHOLDER_URL = ATTRACTION_PLACEHOLDER_URL;
+
+// ── Free photos for attractions without one (Google photos are billed and off) ──
+// A placeholder <img> marked with _placePhotoAttrs gets a photo from /api/place_photo
+// (Wikimedia Commons, else Mapillary) once it is on screen; the credit goes in a small
+// label on the photo. Works for every list and info window, whenever they are drawn.
+const _placePhotoCache = new Map();   // "lat,lng" -> Promise<photo|null>
+const _placePhotoSeen = new WeakSet();
+
+function _placePhotoAttrs(lat, lng, name) {
+    if (lat == null || lng == null || isNaN(+lat) || isNaN(+lng)) return '';
+    const safe = String(name || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    return ` data-photo-lat="${+lat}" data-photo-lng="${+lng}" data-photo-name="${safe}"`;
+}
+
+function _placePhoto(lat, lng, name) {
+    const key = `${(+lat).toFixed(4)},${(+lng).toFixed(4)}`;
+    if (!_placePhotoCache.has(key)) {
+        _placePhotoCache.set(key, apiCall('place_photo', { lat: +lat, lng: +lng, name, kind: 'attraction' })
+            .then(res => (res && res.photo && res.photo.url) ? res.photo : null)
+            .catch(() => null));
+    }
+    return _placePhotoCache.get(key);
+}
+
+async function _fillPlacePhoto(img) {
+    const photo = await _placePhoto(img.dataset.photoLat, img.dataset.photoLng, img.dataset.photoName);
+    if (!photo || !img.isConnected) return;
+    img.src = photo.url;
+    img.title = photo.credit || '';
+    const wrap = img.parentElement;
+    if (!wrap) return;
+    const badge = wrap.querySelector('.photo-placeholder-badge');
+    if (badge) badge.remove();
+    if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    const credit = document.createElement('a');
+    credit.className = 'place-photo-credit';
+    credit.textContent = photo.credit || '';
+    if (photo.viewer_url) { credit.href = photo.viewer_url; credit.target = '_blank'; credit.rel = 'noopener'; }
+    credit.addEventListener('click', e => e.stopPropagation());
+    wrap.appendChild(credit);
+}
+
+const _placePhotoIO = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(entries => entries.forEach(e => {
+        if (e.isIntersecting) { _placePhotoIO.unobserve(e.target); _fillPlacePhoto(e.target); }
+    }), { rootMargin: '200px' })
+    : null;
+
+function _queuePlacePhotos(root) {
+    if (!root || !root.querySelectorAll) return;
+    const imgs = root.matches && root.matches('img[data-photo-lat]') ? [root]
+        : [...root.querySelectorAll('img[data-photo-lat]')];
+    imgs.forEach(img => {
+        if (_placePhotoSeen.has(img)) return;
+        _placePhotoSeen.add(img);
+        if (_placePhotoIO) _placePhotoIO.observe(img); else _fillPlacePhoto(img);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    _queuePlacePhotos(document.body);
+    new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => {
+        if (n.nodeType === 1) _queuePlacePhotos(n);
+    }))).observe(document.body, { childList: true, subtree: true });
+});
 
 async function apiCall(endpoint, data = {}) {
     try {
@@ -276,7 +347,7 @@ function addMarker(lat, lng, title, icon, label, photoUrl = null, photoId = null
         const previewBadge = !hasReal ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const imgHtml = `
             <div style="position:relative; width:210px; height:130px; margin:0 auto 6px auto; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-                <img src="${photoSrc}" alt="${title}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${fallbackUrl}';">
+                <img src="${photoSrc}" alt="${title}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${fallbackUrl}';"${!hasReal && !isCamp ? _placePhotoAttrs(lat, lng, title) : ''}>
                 ${previewBadge}
             </div>
         `;
@@ -302,7 +373,7 @@ function addMarker(lat, lng, title, icon, label, photoUrl = null, photoId = null
 
     marker.addListener('click', async () => {
         openSingleInfoWindow(infoWindow, marker);
-        if (placeId && !displayPhotoUrl) {
+        if (placeId && !String(placeId).startsWith('p4n:') && !displayPhotoUrl) {
             try {
                 const res = await fetch(`${API_BASE}/api/place_details/${placeId}`);
                 const data = await res.json();
@@ -506,7 +577,14 @@ function fitMapToDayRoute(day) {
     }
 
     if (!bounds.isEmpty()) {
-        state.map.fitBounds(bounds, getMapFitPadding({ top: 90 }));
+        const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
+        if (ne.equals(sw)) {
+            // Stay / rest day: one point, so zoom to the campsite area instead of street level
+            state.map.setCenter(ne);
+            state.map.setZoom(12);
+        } else {
+            state.map.fitBounds(bounds, getMapFitPadding({ top: 90 }));
+        }
     }
 }
 window.fitMapToDayRoute = fitMapToDayRoute;
@@ -621,6 +699,10 @@ function displayTripOnMap(tripData) {
         day.waypoints.forEach(wp => {
             // Attraction / waypoint items will be rendered as rich attraction markers, not generic red pins
             if (wp.type === 'attraction' || wp.type === 'waypoint') return;
+            // Stay / rest days sit at the previous night's campsite, which already has a marker
+            if (wp.type === 'stay') return;
+            // Pass-through points of a route drawn on the map: no marker
+            if (wp.type === 'via') return;
 
             let markerLabel = '';
             if (wp.type === 'start' && idx === 0) markerLabel = 'A';
@@ -722,7 +804,7 @@ function displayTripOnMap(tripData) {
         card.dataset.dayNumber = day.day_number;
 
         const btnText = window.t ? window.t('camping_change_btn') : '🏕️ Zobacz / zmień kemping';
-        const campingName = day.overnight_camping ? (day.overnight_camping.name || day.overnight_camping.label) : null;
+        let campingName = day.overnight_camping ? (day.overnight_camping.name || day.overnight_camping.label) : null;
 
         const isReturn = (typeof day.is_return === 'boolean') ? day.is_return :
                          (typeof day.is_return_leg === 'boolean') ? day.is_return_leg :
@@ -732,6 +814,7 @@ function displayTripOnMap(tripData) {
 
         const attractionWaypoints = (day.waypoints || []).filter(wp => wp.type === 'attraction' || wp.type === 'waypoint');
         let attractionsHtml = '';
+
         if (attractionWaypoints.length > 0) {
             const attrBadges = attractionWaypoints.map(wp => {
                 const badgeEmoji = wp.emoji || (wp.type === 'waypoint' ? '📍' : '⭐');
@@ -742,6 +825,18 @@ function displayTripOnMap(tripData) {
         }
 
         const dayTitle = window.t ? window.t('day_card_day', { day: day.day_number }) : `Dzień ${day.day_number}`;
+        // Stay / rest day: no driving, the night is at the same campsite
+        const stayWp = (day.waypoints || []).length > 0 && day.waypoints.every(wp => wp.type === 'stay')
+            ? day.waypoints[0] : null;
+        const stayKind = day.stay_kind || (stayWp && stayWp.stay_kind) || 'stay';
+        const stayText = window.t
+            ? window.t(stayKind === 'rest' ? 'day_rest_label' : 'day_stay_label')
+            : (stayKind === 'rest' ? 'Dzień odpoczynku' : 'Dzień na miejscu');
+        const drivingLineHtml = stayWp
+            ? `<span>⛺ ${stayText}</span>`
+            : `<span>🚗 ${day.driving_hours || 0}h</span>
+                <span style="margin-left: 8px;">📏 ${Math.round(day.driving_km || 0)}km</span>`;
+        if (!campingName && stayWp) campingName = stayWp.label;
         const dayBadgeColor = isReturn ? '#E65100' : '#001E50';
 
         card.innerHTML = `
@@ -751,8 +846,7 @@ function displayTripOnMap(tripData) {
             </div>
             <div class="day-label">${day.date || ''}</div>
             <div style="font-size: 0.8rem; color: #666; margin-top: 4px;">
-                <span>🚗 ${day.driving_hours || 0}h</span>
-                <span style="margin-left: 8px;">📏 ${Math.round(day.driving_km || 0)}km</span>
+                ${drivingLineHtml}
             </div>
             <div class="day-card-content">
                 ${attractionsHtml}
@@ -888,27 +982,26 @@ async function loadCampingsOnMap() {
             // Build badges for amenities and CEE power
             let badgesHtml = '<div class="camping-badges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">';
             if (camp.shore_power_hookup || camp.has_power || camp.hookup_type === '230V CEE' || (camp.amenities && camp.amenities.includes('power'))) {
-                badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+                badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
             }
             if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-                badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:2px 6px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+                badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:2px 6px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
             }
             if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-                badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:2px 6px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+                badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:2px 6px; border-radius:4px; font-size:11px;">🚰 Water</span>';
             }
             if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
                 badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:2px 6px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
             }
             if (camp.has_toilets) {
-                badgesHtml += '<span class="camping-badge toilet-badge" style="background:#FFF3E0; color:#E65100; padding:2px 6px; border-radius:4px; font-size:11px;">🚽 Toaleta</span>';
+                badgesHtml += '<span class="camping-badge toilet-badge" style="background:#FFF3E0; color:#E65100; padding:2px 6px; border-radius:4px; font-size:11px;">🚽 Toilets</span>';
             }
             badgesHtml += '</div>';
 
             const infoWindowContent = `
                 <div class="camping-infowindow" style="padding:6px; max-width:220px;">
                     <h4 style="margin:0 0 4px 0; color:#001E50; font-size:14px;">${camp.name}</h4>
-                    ${camp.rating ? `<div style="font-size:12px; color:#555;">⭐ ${camp.rating}</div>` : ''}
-                    ${camp.cost_per_night_eur ? `<div style="font-size:12px; color:#333; font-weight:bold; margin-top:2px;">€${camp.cost_per_night_eur}/noc</div>` : ''}
+                    <div style="font-size:12px; color:#555; display:flex; gap:8px;">${camp.rating ? `<span>⭐ ${camp.rating}</span>` : ''}${campPriceTextHtml(camp)}</div>
                     ${badgesHtml}
                 </div>
             `;
@@ -1048,27 +1141,30 @@ async function loadAttractionsOnMap(tripId, preferences = null) {
             });
         });
 
-        // Ensure any attraction saved in current trip schedules is present in allAttrs
+        // Ensure every place saved on the trip is present in allAttrs: attractions and the
+        // 'waypoint' items (places on the route, fuel / charging / lunch stops), which were
+        // dropped here and vanished from the map a moment after it was drawn.
         if (state.currentTrip && state.currentTrip.daily_schedules) {
             state.currentTrip.daily_schedules.forEach(day => {
                 (day.waypoints || []).forEach(wp => {
-                    if (wp.type === 'attraction') {
+                    if (wp.type === 'attraction' || wp.type === 'waypoint') {
                         const exists = allAttrs.some(a =>
                             (wp.place_id && a.place_id && a.place_id === wp.place_id) ||
                             (a.name && wp.label && a.name.trim().toLowerCase() === wp.label.trim().toLowerCase())
                         );
                         if (!exists) {
+                            const isWaypoint = wp.type === 'waypoint';
                             allAttrs.unshift({
-                                name: wp.label || wp.name || 'Atrakcja',
+                                name: wp.label || wp.name || (isWaypoint ? 'Punkt na trasie' : 'Atrakcja'),
                                 lat: wp.lat,
                                 lng: wp.lng,
                                 place_id: wp.place_id,
                                 photo_url: wp.photo_url,
                                 rating: wp.rating,
                                 address: wp.address || '',
-                                emoji: wp.emoji || '⭐',
-                                color: wp.color || '#F9A825',
-                                category_label: wp.category_label || 'Atrakcja',
+                                emoji: wp.emoji || (isWaypoint ? '📍' : '⭐'),
+                                color: wp.color || (isWaypoint ? '#001E50' : '#F9A825'),
+                                category_label: wp.category_label || (isWaypoint ? 'Punkt na trasie' : 'Atrakcja'),
                                 day_number: day.day_number,
                                 is_in_route: true
                             });
@@ -1162,7 +1258,7 @@ function renderTopAttractionsModalPage() {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="top-attraction-img-wrap">
-                <img src="${photoSrc}" alt="${attr.name}" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                <img src="${photoSrc}" alt="${attr.name}" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!hasRealPhoto ? _placePhotoAttrs(attr.lat, attr.lng, attr.name) : ''}>
                 ${previewBadge}
             </div>
         `;
@@ -1423,7 +1519,7 @@ function _createAttractionMarker(attr, dayIdx, seqIdx) {
             <div style="margin:-4px -4px 8px -4px; border-radius:4px 4px 0 0; overflow:hidden; height:125px; position:relative;">
                 <img src="${photoUrl || ATTRACTION_PLACEHOLDER_URL}" alt="${name}"
                      style="width:100%; height:125px; object-fit:cover; display:block;"
-                     onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                     onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!photoUrl ? _placePhotoAttrs(attr.lat, attr.lng, name) : ''}>
                 ${!photoUrl ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : ''}
             </div>
             <div style="padding: 0 2px 4px;">
@@ -1665,20 +1761,14 @@ function addMessage(role, text) {
 
         if (role === 'assistant') {
             const rolePillText = (window.t ? window.t('sniffer_role_tag') : 'Przewodnik VW') || 'Przewodnik VW';
-            const speakBtnLabel = window.t ? window.t('sniffer_speak_msg') : 'Odsłuchaj';
             msgDiv.innerHTML = `
-                <div class="message-avatar-sniffer" id="avatar-${msgId}" title="Volkswagen Sniffer"></div>
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
-                            <span class="sniffer-name">🐶 Volkswagen Sniffer</span>
+                            <span class="sniffer-name">Volkswagen Sniffer</span>
                             <span class="sniffer-badge-pill">${rolePillText}</span>
                         </div>
                         <div class="message-actions-right">
-                            <button class="btn-message-speak" data-msg-id="${msgId}" title="${speakBtnLabel}" aria-label="${speakBtnLabel}">
-                                <span class="speak-icon">🔊</span>
-                                <span class="speak-label">${speakBtnLabel}</span>
-                            </button>
                             <div class="message-meta">${timeStr}</div>
                         </div>
                     </div>
@@ -1700,36 +1790,6 @@ function addMessage(role, text) {
             messagesEl.appendChild(msgDiv);
         }
         messagesEl.scrollTop = messagesEl.scrollHeight;
-
-        // Mount animated photographic SnifferAvatar in message avatar container
-        if (role === 'assistant') {
-            const avatarContainer = msgDiv.querySelector('.message-avatar-sniffer');
-            if (avatarContainer) {
-                if (window.SnifferAvatar) {
-                    const msgAvatar = new window.SnifferAvatar(avatarContainer, {
-                        size: 96,
-                        interactive: true,
-                        autoBlink: true,
-                        className: 'message-sniffer-avatar-instance'
-                    });
-                    msgDiv._snifferAvatar = msgAvatar;
-                    if (window.snifferVoice) {
-                        window.snifferVoice.registerMessageAvatar(msgId, msgAvatar);
-                    }
-                } else {
-                    avatarContainer.innerHTML = '<img src="/static/assets/sniffer-avatar.png" alt="Sniffer">';
-                }
-            }
-        }
-    }
-
-    // Auto-speak new assistant messages if voice enabled
-    if (role === 'assistant' && window.snifferVoice && window.snifferVoice.isVoiceEnabled()) {
-        const currentLang = typeof getAppLanguage === 'function' ? getAppLanguage() : 'pl';
-        window.snifferVoice.speak(text, {
-            messageId: msgId,
-            lang: currentLang
-        });
     }
 
     // 2. Map Mini Chat Window
@@ -1739,11 +1799,10 @@ function addMessage(role, text) {
         mapMsgDiv.className = `message ${role} map-message`;
         if (role === 'assistant') {
             mapMsgDiv.innerHTML = `
-                <div class="message-avatar-sniffer" id="map-avatar-${msgId}"></div>
                 <div class="message-content-wrap">
                     <div class="message-header-row">
                         <div class="message-sender-tag">
-                            <span class="sniffer-name">🐶 VW Sniffer</span>
+                            <span class="sniffer-name">VW Sniffer</span>
                         </div>
                         <div class="message-meta">${timeStr}</div>
                     </div>
@@ -1765,26 +1824,6 @@ function addMessage(role, text) {
             mapMessagesEl.appendChild(mapMsgDiv);
         }
         mapMessagesEl.scrollTop = mapMessagesEl.scrollHeight;
-
-        // Mount animated SnifferAvatar for map mini-chat
-        if (role === 'assistant') {
-            const mapAvatarContainer = mapMsgDiv.querySelector('.message-avatar-sniffer');
-            if (mapAvatarContainer) {
-                if (window.SnifferAvatar) {
-                    const mapMsgAvatar = new window.SnifferAvatar(mapAvatarContainer, {
-                        size: 48,
-                        interactive: true,
-                        autoBlink: true,
-                    });
-                    mapMsgDiv._snifferAvatar = mapMsgAvatar;
-                    if (window.snifferVoice) {
-                        window.snifferVoice.registerMessageAvatar(`${msgId}-map`, mapMsgAvatar);
-                    }
-                } else {
-                    mapAvatarContainer.innerHTML = '<img src="/static/assets/sniffer-avatar.png" alt="Sniffer">';
-                }
-            }
-        }
     }
 
     state.chatHistory.push({ role, text });
@@ -1793,9 +1832,9 @@ function addMessage(role, text) {
 function showTyping(show, isPlanning = false) {
     state.isTyping = show;
 
-    // Animate header Sniffer avatar thinking/sniffing
-    if (window.headerSnifferAvatar) {
-        window.headerSnifferAvatar.setThinking(show);
+    // 3D Sniffer (AVW module): thinking face while the reply is pending
+    if (window.snifferAVW) {
+        window.snifferAVW.thinking(show);
     }
     
     const typingEl = document.getElementById('typing-indicator');
@@ -1826,9 +1865,9 @@ function showTyping(show, isPlanning = false) {
 async function sendMessage(text) {
     if (!text || !text.trim() || state.isTyping) return;
 
-    // Interrupt any ongoing speech synthesis immediately
-    if (window.snifferVoice) {
-        window.snifferVoice.stop();
+    // Interrupt Sniffer if he is still talking
+    if (window.snifferAVW) {
+        window.snifferAVW.stop();
     }
 
     addMessage('user', text);
@@ -1854,7 +1893,7 @@ async function sendMessage(text) {
     if (mapSendBtn) mapSendBtn.disabled = true;
 
     showTyping(true);
-    const chatPayload = { message: text };
+    const chatPayload = { message: text, conversation_id: CHAT_CONVERSATION_ID };
     if (state.locationEnabled && state.userLocation) {
         chatPayload.user_location = state.userLocation;
     }
@@ -1865,8 +1904,14 @@ async function sendMessage(text) {
     if (mapSendBtn) mapSendBtn.disabled = mapInput ? mapInput.value.trim().length === 0 : true;
 
 
+    handleChatResult(result);
+}
+
+// What a chat (or start form) reply does: bubble, Sniffer, map and campsites.
+function handleChatResult(result) {
     if (result.status === 'success' || result.status === 'partial') {
         addMessage('assistant', result.text);
+        speakSnifferLine(result.sniffer);
         
         // Update slot progress
         if (result.slot_state) {
@@ -1875,6 +1920,10 @@ async function sendMessage(text) {
 
         // Process tool calls (like plan_route, modify_route, add_attraction)
         let routePlanned = false;
+        // A search followed by set_overnight in the same turn already moved the night:
+        // no list to pick from then.
+        const nightAlreadyChanged = (result.tool_calls || []).some(tc =>
+            tc.function_name === 'set_overnight' && tc.result && tc.result.status === 'success');
         if (result.tool_calls) {
             result.tool_calls.forEach(tc => {
                 // Full route plan or route modification → redraw entire map
@@ -1888,7 +1937,7 @@ async function sendMessage(text) {
 
                 // Camping search tool call → pop up recommendation modal with Google Places photos
                 if (
-                    tc.function_name === 'search_campings' &&
+                    tc.function_name === 'search_campings' && !nightAlreadyChanged &&
                     tc.result && tc.result.status === 'success' &&
                     tc.result.results && tc.result.results.length > 0
                 ) {
@@ -1922,14 +1971,17 @@ async function sendMessage(text) {
             routePlanned = true;
         }
 
-        // Auto-redirect to map if a route was just planned AND trigger Camping Selection Modal
+        // A new or changed route: show the map with the whole trip first; the campsites
+        // open from the bar on the map (they used to pop up over the route right away).
         if (routePlanned) {
             setTimeout(() => {
-                if (state.currentView === 'chat') {
+                // Without the interactive map (GOOGLE_MAPS_MODE != full) stay in the chat.
+                if (state.currentView === 'chat' && window.google && window.google.maps) {
                     switchView('map');
                 }
                 if (state.currentTrip) {
-                    openCampingSelectionModal(state.currentTrip, 0);
+                    fitMapToTrip();
+                    showCampsiteReviewBar(state.currentTrip);
                 }
             }, 1200);
         }
@@ -2736,108 +2788,1009 @@ async function handlePhotoUpload(files) {
     }
 }
 
-// ── Sniffer Speech & Talking Avatar Initialization ───────────
-function initSnifferSpeechModule() {
-    const avatarBox = document.getElementById('sniffer-header-avatar-box');
-    const voiceBtn = document.getElementById('btn-toggle-sniffer-voice');
-    const speechWidget = document.getElementById('sniffer-speech-widget');
-    const statusIcon = document.getElementById('voice-status-icon');
+// ── 3D Sniffer (AVW module) ──────────────────────────────────
+// The floating 3D Sniffer is mounted by the module script in index.html as window.snifferAVW
+// (see architecture/sniffer_speech_sop.md). It always speaks English: the backend adds a short
+// English line for him (result.sniffer = {spoken, mood, reaction}) next to the chat reply.
+function speakSnifferLine(line) {
+    if (!window.snifferAVW || !line || !line.spoken) return;
+    window.snifferAVW.say(line.spoken, { mood: line.mood, reaction: line.reaction });
+}
 
-    // 1. Initialize Animated Sniffer Avatar in Header
-    if (avatarBox && window.SnifferAvatar) {
-        window.headerSnifferAvatar = new window.SnifferAvatar(avatarBox, {
-            size: 44,
-            interactive: true,
-            autoBlink: true,
-        });
-
-        if (window.snifferVoice) {
-            window.snifferVoice.registerAvatar(window.headerSnifferAvatar);
-        }
-    }
-
-    // 2. Setup Voice Toggle Button in Header
-    if (voiceBtn && window.snifferVoice) {
-        const updateBtnUi = (enabled) => {
-            voiceBtn.classList.toggle('active', enabled);
-            voiceBtn.classList.toggle('muted', !enabled);
-            voiceBtn.setAttribute('aria-checked', String(enabled));
-            if (statusIcon) statusIcon.textContent = enabled ? '🔊' : '🔇';
-            const tooltipKey = enabled ? 'sniffer_voice_tooltip_on' : 'sniffer_voice_tooltip_off';
-            const tooltipText = window.t ? window.t(tooltipKey) : (enabled ? 'Głos Sniffera: Włączony' : 'Głos Sniffera: Wyciszony');
-            voiceBtn.setAttribute('title', tooltipText);
-        };
-
-        updateBtnUi(window.snifferVoice.isVoiceEnabled());
-
-        voiceBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const newEnabled = window.snifferVoice.toggleVoice();
-            updateBtnUi(newEnabled);
-        });
-
-        // Listen for speech state changes to update animations & message buttons
-        window.addEventListener('sniffer-voice-state-change', (e) => {
-            const { enabled, isSpeaking, activeMessageId } = e.detail;
-            if (speechWidget) speechWidget.classList.toggle('is-speaking', isSpeaking);
-            if (voiceBtn) voiceBtn.classList.toggle('is-speaking', isSpeaking);
-
-            // Toggle .is-speaking on assistant message elements
-            document.querySelectorAll('.message.assistant').forEach(msg => {
-                const isThisActive = isSpeaking && msg.id === activeMessageId;
-                msg.classList.toggle('is-speaking', isThisActive);
-            });
-
-            // Update all message speak buttons
-            document.querySelectorAll('.btn-message-speak').forEach(btn => {
-                const btnMsgId = btn.dataset.msgId;
-                const isThisPlaying = isSpeaking && btnMsgId === activeMessageId;
-                btn.classList.toggle('is-playing', isThisPlaying);
-                const icon = btn.querySelector('.speak-icon');
-                const label = btn.querySelector('.speak-label');
-                if (isThisPlaying) {
-                    if (icon) icon.textContent = '⏹️';
-                    if (label) label.textContent = window.t ? window.t('sniffer_stop_msg') : 'Zatrzymaj';
-                } else {
-                    if (icon) icon.textContent = '🔊';
-                    if (label) label.textContent = window.t ? window.t('sniffer_speak_msg') : 'Odsłuchaj';
-                }
-            });
-        });
-    }
-
-    // 3. Delegate message speech buttons
-    const messagesContainer = document.getElementById('chat-messages');
-    if (messagesContainer) {
-        messagesContainer.addEventListener('click', (e) => {
-            const speakBtn = e.target.closest('.btn-message-speak');
-            if (!speakBtn) return;
-            e.stopPropagation();
-
-            const msgId = speakBtn.dataset.msgId;
-            const messageEl = document.getElementById(msgId);
-            const rawText = messageEl ? decodeURIComponent(messageEl.dataset.rawText || '') : '';
-
-            if (window.snifferVoice) {
-                if (window.snifferVoice.isSpeaking && window.snifferVoice.activeMessageId === msgId) {
-                    window.snifferVoice.stop();
-                } else if (rawText) {
-                    const currentLang = typeof getAppLanguage === 'function' ? getAppLanguage() : 'pl';
-                    window.snifferVoice.speak(rawText, {
-                        messageId: msgId,
-                        lang: currentLang
-                    });
-                }
-            }
-        });
+function notifySnifferTyping(inputEl) {
+    if (window.snifferAVW && inputEl && inputEl.value.trim()) {
+        window.snifferAVW.listening();
     }
 }
 
+// ── Start form: Direct / Point-to-point / Turnaround ─────────────
+// The first route comes from structured fields (free text was not always understood
+// for a first plan); the chat takes over after it. POST /api/plan_form.
+const tripFormState = { mode: 'direct' };
+
+function _isoDate(d) {
+    const z = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+}
+
+// Places Autocomplete when the Maps library is there; plain text otherwise (the server geocodes).
+function attachPlaceAutocomplete(input) {
+    if (!input || input.dataset.acAttached) return;
+    input.addEventListener('input', () => {
+        delete input.dataset.lat;
+        delete input.dataset.lng;
+    });
+    const tryAttach = () => {
+        if (input.dataset.acAttached) return;
+        if (!(window.google && google.maps && google.maps.places && google.maps.places.Autocomplete)) return;
+        input.dataset.acAttached = '1';
+        const ac = new google.maps.places.Autocomplete(input, { fields: ['geometry', 'name', 'formatted_address'] });
+        ac.addListener('place_changed', () => {
+            const place = ac.getPlace();
+            if (place && place.geometry && place.geometry.location) {
+                input.dataset.lat = place.geometry.location.lat();
+                input.dataset.lng = place.geometry.location.lng();
+                if (place.name) input.value = place.name;
+            }
+        });
+    };
+    input.addEventListener('focus', tryAttach);
+    tryAttach();
+}
+
+function _readPlace(input) {
+    const label = (input.value || '').trim();
+    if (!label) return null;
+    const place = { label };
+    if (input.dataset.lat && input.dataset.lng) {
+        place.lat = Number(input.dataset.lat);
+        place.lng = Number(input.dataset.lng);
+    }
+    return place;
+}
+
+function addStopRow(listId, data = {}) {
+    const list = document.getElementById(listId);
+    if (!list || list.children.length >= 10) return;
+    const row = document.createElement('div');
+    row.className = 'tf-stop';
+    const nightsOptions = [0, 1, 2, 3, 4, 5, 6, 7]
+        .map(n => `<option value="${n}">${n === 0 ? 'Drive through' : `${n} night${n > 1 ? 's' : ''}`}</option>`)
+        .join('');
+    row.innerHTML = `
+        <input type="text" class="tf-stop-place" placeholder="Stop ${list.children.length + 1}" autocomplete="off" maxlength="120">
+        <select class="tf-stop-nights" aria-label="Nights at this stop">${nightsOptions}</select>
+        <button type="button" class="tf-stop-remove" aria-label="Remove stop">×</button>
+    `;
+    const input = row.querySelector('.tf-stop-place');
+    if (data.label) input.value = data.label;
+    row.querySelector('.tf-stop-nights').value = String(data.nights || 0);
+    row.querySelector('.tf-stop-remove').addEventListener('click', () => row.remove());
+    list.appendChild(row);
+    attachPlaceAutocomplete(input);
+    return row;
+}
+
+function _readStops(listId) {
+    const list = document.getElementById(listId);
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.tf-stop')).map(row => {
+        const place = _readPlace(row.querySelector('.tf-stop-place'));
+        if (!place) return null;
+        place.nights = parseInt(row.querySelector('.tf-stop-nights').value, 10) || 0;
+        return place;
+    }).filter(Boolean);
+}
+
+// Full days at the destination; on a turnaround also "one night, then back".
+function renderDestStayOptions(mode) {
+    const select = document.getElementById('tf-dest-stay');
+    if (!select) return;
+    const previous = select.value;
+    const options = [['0', mode === 'turnaround' ? 'Turn straight back' : 'None']];
+    if (mode === 'turnaround') options.push(['night', '1 night, then back']);
+    [1, 2, 3, 4, 5, 6, 7, 10, 14].forEach(n => options.push([String(n), `${n} day${n > 1 ? 's' : ''}`]));
+    select.innerHTML = options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+    select.value = options.some(([v]) => v === previous) ? previous
+        : (mode === 'turnaround' ? 'night' : '0');
+}
+
+function setTripFormMode(mode) {
+    tripFormState.mode = mode;
+    document.querySelectorAll('#trip-form .tf-mode').forEach(btn => {
+        const on = btn.dataset.mode === mode;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const stopsWrap = document.getElementById('tf-stops-wrap');
+    const backWrap = document.getElementById('tf-back-wrap');
+    const title = document.getElementById('tf-stops-title');
+    if (stopsWrap) stopsWrap.hidden = mode === 'direct';
+    if (backWrap) backWrap.hidden = mode !== 'turnaround';
+    renderDestStayOptions(mode);
+    if (title) title.textContent = mode === 'turnaround' ? 'Stops on the way there' : 'Stops on the way';
+    if (mode !== 'direct') {
+        const list = document.getElementById('tf-stops');
+        if (list && !list.children.length) addStopRow('tf-stops');
+    }
+}
+
+function _tripFormError(message) {
+    const el = document.getElementById('tf-error');
+    if (!el) return;
+    el.textContent = message || '';
+    el.hidden = !message;
+}
+
+async function submitTripForm(e) {
+    if (e) e.preventDefault();
+    if (state.isTyping) return;
+    _tripFormError('');
+    const originInput = document.getElementById('tf-origin');
+    const destInput = document.getElementById('tf-destination');
+    let origin = _readPlace(originInput);
+    if (!origin && state.userLocation && state.userLocation.lat != null) {
+        origin = {
+            label: state.userLocation.city || state.userLocation.name || 'My location',
+            lat: state.userLocation.lat,
+            lng: state.userLocation.lng,
+        };
+    }
+    const destination = _readPlace(destInput);
+    if (!origin) { _tripFormError('Where do you start?'); originInput.focus(); return; }
+    if (!destination) { _tripFormError('Where are you going?'); destInput.focus(); return; }
+
+    const mode = tripFormState.mode;
+    const form = {
+        mode,
+        origin,
+        destination,
+        start_date: document.getElementById('tf-start').value || null,
+        num_days: document.getElementById('tf-days').value || null,
+    };
+    if (mode !== 'direct') form.stops = _readStops('tf-stops');
+    if (mode === 'turnaround') {
+        form.back_stops = _readStops('tf-back-stops');
+    }
+    const destStay = document.getElementById('tf-dest-stay').value;
+    if (destStay === 'night') form.dest_overnight = true;
+    else form.dest_days = parseInt(destStay, 10) || 0;
+
+    const submitBtn = document.getElementById('tf-submit');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Planning…'; }
+    if (window.snifferAVW) window.snifferAVW.stop();
+    showTyping(true, true);
+    const payload = { form, conversation_id: CHAT_CONVERSATION_ID };
+    if (state.locationEnabled && state.userLocation) payload.user_location = state.userLocation;
+    const result = await apiCall('plan_form', payload);
+    showTyping(false);
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Plan the route'; }
+
+    if (result.status === 'error' && !(result.tool_calls && result.tool_calls.length)) {
+        _tripFormError(result.text || result.message || 'The route could not be planned.');
+        return;
+    }
+    addMessage('user', result.summary || `${origin.label} → ${destination.label}`);
+    handleChatResult(result);
+}
+
+function initTripForm() {
+    const formEl = document.getElementById('trip-form');
+    if (!formEl) return;
+    formEl.querySelectorAll('.tf-mode').forEach(btn =>
+        btn.addEventListener('click', () => setTripFormMode(btn.dataset.mode)));
+    formEl.querySelectorAll('.tf-add-stop').forEach(btn =>
+        btn.addEventListener('click', () => {
+            const row = addStopRow(btn.dataset.list);
+            if (row) row.querySelector('.tf-stop-place').focus();
+        }));
+    const origin = document.getElementById('tf-origin');
+    attachPlaceAutocomplete(origin);
+    attachPlaceAutocomplete(document.getElementById('tf-destination'));
+    if (origin) origin.addEventListener('focus', () => {
+        const loc = state.userLocation;
+        origin.placeholder = (loc && loc.lat != null)
+            ? `My location (${loc.city || loc.name || 'GPS'})` : 'City or place';
+    });
+    const start = document.getElementById('tf-start');
+    if (start) {
+        const today = new Date();
+        const tomorrow = new Date(today.getTime() + 86400000);
+        start.min = _isoDate(today);
+        start.value = _isoDate(tomorrow);
+    }
+    formEl.addEventListener('submit', submitTripForm);
+    setTripFormMode('direct');
+}
+
+// ── Drawing a route with a finger (touch screens only) ──────────────
+// On a touch screen the map gets a ✏️ button: the map stops moving, one finger draws the
+// line, the line is simplified to a start, an end and up to MAX_DRAWN_VIA pass-through
+// points, and /api/plan_form (mode "drawn") plans the route along it. Mouse input is
+// ignored on purpose: this is the touch mode.
+// Checked again on every change: DevTools device mode or a tablet keyboard dock can switch
+// it after the page has loaded, and the first touch on the page shows the button too.
+function isTouchScreen() {
+    return !!((window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches)
+        || (navigator.maxTouchPoints || 0) > 0);
+}
+// Pass-through points every VIA_STEP_KM along the line (more apart on long lines, at most
+// MAX_DRAWN_VIA): close enough that the route can't cut a corner past a town the line crosses.
+const MAX_DRAWN_VIA = 20;
+const VIA_STEP_KM = 10;
+const drawState = { active: false, pointerId: null, px: [], line: null, projection: null, drawn: null,
+    mode: 'new' };
+// A line whose two ends are this close (km) to the saved route changes only that stretch.
+const RESHAPE_SNAP_KM = 20;
+const DRAW_BUTTON_TEXT = { reshape: 'Change the route', extend: 'Extend the trip', new: 'Plan this route' };
+
+function _drawEl(id) { return document.getElementById(id); }
+
+function _mapProjection() {
+    if (!drawState.projection && window.google && google.maps && state.map) {
+        const ov = new google.maps.OverlayView();
+        ov.onAdd = () => {};
+        ov.draw = () => {};
+        ov.onRemove = () => {};
+        ov.setMap(state.map);
+        drawState.projection = ov;
+    }
+    return drawState.projection ? drawState.projection.getProjection() : null;
+}
+
+function _pxToLatLng(x, y) {
+    const proj = _mapProjection();
+    if (!proj) return null;
+    const ll = proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
+    return ll ? { lat: ll.lat(), lng: ll.lng() } : null;
+}
+
+// Ramer–Douglas–Peucker on screen pixels: keeps the shape, drops the wobble of a finger.
+function simplifyStroke(points, tolerance) {
+    if (points.length < 3) return points.slice();
+    const [ax, ay] = points[0];
+    const [bx, by] = points[points.length - 1];
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    let maxD = -1, idx = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+        const [px, py] = points[i];
+        const d = Math.abs(dy * px - dx * py + bx * ay - by * ax) / len;
+        if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD <= tolerance) return [points[0], points[points.length - 1]];
+    const left = simplifyStroke(points.slice(0, idx + 1), tolerance);
+    const right = simplifyStroke(points.slice(idx), tolerance);
+    return left.slice(0, -1).concat(right);
+}
+
+function strokeLength(points) {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+        total += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    }
+    return total;
+}
+
+// Evenly spaced points along the simplified line (by length), without the two ends.
+function samplePassThrough(points, count) {
+    if (count <= 0 || points.length < 2) return [];
+    const total = strokeLength(points);
+    const out = [];
+    let seg = 1, walked = 0;
+    for (let k = 1; k <= count; k++) {
+        const target = total * k / (count + 1);
+        while (seg < points.length) {
+            const [x0, y0] = points[seg - 1];
+            const [x1, y1] = points[seg];
+            const l = Math.hypot(x1 - x0, y1 - y0);
+            if (walked + l >= target) {
+                const f = l ? (target - walked) / l : 0;
+                out.push([x0 + (x1 - x0) * f, y0 + (y1 - y0) * f]);
+                break;
+            }
+            walked += l;
+            seg++;
+        }
+    }
+    return out;
+}
+
+// Points along the drawn line (as lat/lng, finger wobble included) every VIA_STEP_KM km,
+// without the two ends; the step grows on long lines so there are at most MAX_DRAWN_VIA.
+function passThroughByKm(line) {
+    if (line.length < 2) return [];
+    const cum = [0];
+    for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + _distKm(line[i - 1], line[i]));
+    const total = cum[cum.length - 1];
+    const step = Math.max(VIA_STEP_KM, total / (MAX_DRAWN_VIA + 1));
+    const count = Math.min(MAX_DRAWN_VIA, Math.floor(total / step));
+    const out = [];
+    let seg = 1;
+    for (let k = 1; k <= count; k++) {
+        const target = total * k / (count + 1);
+        while (seg < line.length - 1 && cum[seg] < target) seg++;
+        const l = cum[seg] - cum[seg - 1];
+        const f = l ? (target - cum[seg - 1]) / l : 0;
+        out.push({
+            lat: line[seg - 1].lat + (line[seg].lat - line[seg - 1].lat) * f,
+            lng: line[seg - 1].lng + (line[seg].lng - line[seg - 1].lng) * f,
+        });
+    }
+    return out;
+}
+
+function _setDrawHint(text) {
+    const hint = _drawEl('draw-route-hint');
+    if (hint) { hint.textContent = text; hint.hidden = false; }
+}
+
+function _clearDrawnLine() {
+    if (drawState.line) { drawState.line.setMap(null); drawState.line = null; }
+    drawState.px = [];
+    drawState.drawn = null;
+}
+
+function startDrawing() {
+    if (!state.mapInitialized) initGoogleMap();
+    if (!state.map || !(window.google && google.maps)) {
+        alert('The map is not available, so a route cannot be drawn.');
+        return;
+    }
+    _mapProjection();
+    drawState.active = true;
+    _clearDrawnLine();
+    state.map.setOptions({ gestureHandling: 'none', draggable: false, zoomControl: false });
+    _drawEl('draw-layer').hidden = false;
+    _drawEl('draw-route-panel').hidden = false;
+    _drawEl('draw-route-summary').hidden = true;
+    _drawEl('btn-draw-route').classList.add('active');
+    const reviewBar = _drawEl('campsite-review-bar');
+    if (reviewBar) reviewBar.hidden = true;
+    _setDrawHint('✏️ Draw your route with one finger, from the start to the destination.');
+}
+
+function stopDrawing() {
+    drawState.active = false;
+    drawState.pointerId = null;
+    _clearDrawnLine();
+    if (state.map) state.map.setOptions({ gestureHandling: 'auto', draggable: true, zoomControl: true });
+    _drawEl('draw-layer').hidden = true;
+    _drawEl('draw-route-panel').hidden = true;
+    _drawEl('btn-draw-route').classList.remove('active');
+}
+
+function _onDrawDown(e) {
+    if (!drawState.active || e.pointerType === 'mouse') return;   // touch / pen only
+    e.preventDefault();
+    if (drawState.pointerId !== null) {
+        // A second finger: that's no drawing; start over.
+        drawState.pointerId = null;
+        _clearDrawnLine();
+        _setDrawHint('✏️ One finger only — draw the route again.');
+        return;
+    }
+    _clearDrawnLine();
+    _drawEl('draw-route-summary').hidden = true;
+    drawState.pointerId = e.pointerId;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    drawState.px = [[e.clientX - rect.left, e.clientY - rect.top]];
+    drawState.line = new google.maps.Polyline({
+        map: state.map, path: [], strokeColor: '#0040C1', strokeOpacity: 0.9, strokeWeight: 5,
+        clickable: false,
+    });
+    const ll = _pxToLatLng(...drawState.px[0]);
+    if (ll) drawState.line.getPath().push(new google.maps.LatLng(ll.lat, ll.lng));
+}
+
+function _onDrawMove(e) {
+    if (e.pointerId !== drawState.pointerId || !drawState.line) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const p = [e.clientX - rect.left, e.clientY - rect.top];
+    const last = drawState.px[drawState.px.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 4) return;
+    drawState.px.push(p);
+    const ll = _pxToLatLng(...p);
+    if (ll) drawState.line.getPath().push(new google.maps.LatLng(ll.lat, ll.lng));
+}
+
+async function _onDrawUp(e) {
+    if (e.pointerId !== drawState.pointerId) return;
+    drawState.pointerId = null;
+    const px = drawState.px;
+    if (px.length < 2 || strokeLength(px) < 60) {
+        _clearDrawnLine();
+        _setDrawHint('✏️ Draw a longer line, from the start to the destination.');
+        return;
+    }
+    const simple = simplifyStroke(px, 3);
+    const toLL = pts => pts.map(p => _pxToLatLng(...p)).filter(Boolean);
+    const [start] = toLL([px[0]]);
+    const [end] = toLL([px[px.length - 1]]);
+    const via = passThroughByKm(toLL(px));
+    if (!start || !end) return;
+    // Show the simplified line: that's what the planner follows.
+    drawState.line.setPath(toLL(simple).map(p => new google.maps.LatLng(p.lat, p.lng)));
+    drawState.drawn = { start, end, via, startLabel: null, endLabel: null };
+    await _showDrawSummary();
+}
+
+// Points of the current trip's driving days (polylines when the geometry library is there).
+function _currentRoutePoints() {
+    const trip = state.currentTrip;
+    if (!trip || !Array.isArray(trip.daily_schedules)) return [];
+    const pts = [];
+    trip.daily_schedules.forEach(day => {
+        if (day.route_polyline && window.google && google.maps && google.maps.geometry) {
+            try {
+                google.maps.geometry.encoding.decodePath(day.route_polyline)
+                    .forEach(p => pts.push({ lat: p.lat(), lng: p.lng() }));
+                return;
+            } catch (e) { /* fall back to the waypoints */ }
+        }
+        (day.waypoints || []).forEach(w => {
+            if (w.lat != null && w.lng != null) pts.push({ lat: Number(w.lat), lng: Number(w.lng) });
+        });
+    });
+    return pts;
+}
+
+function _kmToRoute(point, pts) {
+    let best = Infinity;
+    pts.forEach(p => { best = Math.min(best, _distKm(p, point)); });
+    return best;
+}
+
+// What the line can do with the current (saved) trip:
+// both ends on the route -> change that part; from the trip's end to somewhere new -> extend.
+function _drawModes(d) {
+    const trip = state.currentTrip;
+    if (!trip || !trip.trip || !trip.trip.id) return ['new'];
+    const pts = _currentRoutePoints();
+    if (!pts.length) return ['new'];
+    const startOn = _kmToRoute(d.start, pts) <= RESHAPE_SNAP_KM;
+    const endOn = _kmToRoute(d.end, pts) <= RESHAPE_SNAP_KM;
+    if (startOn && endOn) return ['reshape', 'new'];
+    const days = trip.daily_schedules || [];
+    const lastWps = days.length ? (days[days.length - 1].waypoints || []) : [];
+    const tripEnd = lastWps.length ? lastWps[lastWps.length - 1] : null;
+    if (tripEnd && tripEnd.lat != null && !endOn
+            && _distKm({ lat: Number(tripEnd.lat), lng: Number(tripEnd.lng) }, d.start) <= RESHAPE_SNAP_KM) {
+        return ['extend', 'new'];
+    }
+    return ['new'];
+}
+
+function setDrawMode(mode) {
+    drawState.mode = mode;
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(btn => {
+        const on = btn.dataset.mode === mode;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const d = drawState.drawn;
+    const fields = _drawEl('draw-new-fields');
+    if (fields) fields.hidden = mode === 'reshape';
+    const startWrap = _drawEl('draw-start-wrap');
+    if (startWrap) startWrap.hidden = mode === 'extend';     // the new days follow the trip
+    const daysLabel = _drawEl('draw-days-label');
+    if (daysLabel) daysLabel.textContent = mode === 'extend' ? 'Extra days' : 'Days in total';
+    const note = _drawEl('draw-route-note');
+    if (note && d) {
+        note.textContent = mode === 'reshape'
+            ? 'Only the stretch between the two ends follows your line · campsites and other days stay'
+            : mode === 'extend'
+            ? 'From the end of your trip along the line · new days are added, the planned days stay'
+            : `Along your line · ${d.via.length} pass-through point${d.via.length === 1 ? '' : 's'}`
+              + (state.currentTrip ? ' · replaces the current route' : '');
+    }
+    const btn = _drawEl('btn-draw-plan');
+    if (btn) btn.textContent = DRAW_BUTTON_TEXT[mode];
+    _drawEl('draw-error').hidden = true;
+}
+
+async function _placeName(point) {
+    const res = await apiCall('location/reverse', { lat: point.lat, lng: point.lng });
+    return (res && (res.city || res.name)) || `${point.lat.toFixed(3)}, ${point.lng.toFixed(3)}`;
+}
+
+async function _showDrawSummary() {
+    const d = drawState.drawn;
+    _drawEl('draw-route-hint').hidden = true;
+    _drawEl('draw-route-summary').hidden = false;
+    _drawEl('draw-error').hidden = true;
+    _drawEl('draw-from').textContent = '…';
+    _drawEl('draw-to').textContent = '…';
+    const modes = _drawModes(d);
+    _drawEl('draw-mode').hidden = modes.length < 2;
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(b => {
+        b.hidden = !modes.includes(b.dataset.mode);
+    });
+    setDrawMode(modes[0]);
+    const start = _drawEl('draw-start');
+    if (start && !start.value) {
+        const today = new Date();
+        start.min = _isoDate(today);
+        start.value = _isoDate(new Date(today.getTime() + 86400000));
+    }
+    const [from, to] = await Promise.all([_placeName(d.start), _placeName(d.end)]);
+    if (drawState.drawn !== d) return;   // redrawn meanwhile
+    d.startLabel = from;
+    d.endLabel = to;
+    _drawEl('draw-from').textContent = from;
+    _drawEl('draw-to').textContent = to;
+}
+
+// "Change this part" (/api/reshape_route) or "Extend the trip" (/api/extend_route).
+async function changeTripWithLine(mode) {
+    const d = drawState.drawn;
+    const btn = _drawEl('btn-draw-plan');
+    btn.disabled = true;
+    btn.textContent = mode === 'extend' ? 'Extending…' : 'Changing…';
+    const payload = {
+        trip_id: state.currentTrip.trip.id,
+        stroke: [d.start, ...d.via, d.end],
+        conversation_id: CHAT_CONVERSATION_ID,
+    };
+    if (mode === 'extend') {
+        payload.end_label = d.endLabel;
+        payload.extra_days = _drawEl('draw-days').value || null;
+        payload.dest_days = parseInt(_drawEl('draw-dest-days').value, 10) || 0;
+        showTyping(true, true);
+    }
+    const result = await apiCall(mode === 'extend' ? 'extend_route' : 'reshape_route', payload);
+    if (mode === 'extend') showTyping(false);
+    btn.disabled = false;
+    if (result.status !== 'success' || !result.trip_data) {
+        btn.textContent = DRAW_BUTTON_TEXT[mode];
+        const err = _drawEl('draw-error');
+        err.textContent = result.message || 'The route could not be changed.';
+        err.hidden = false;
+        if (['not_saved', 'off_route', 'off_end'].includes(result.code)) {
+            // Offer the whole route along the line instead.
+            _drawEl('draw-mode').hidden = true;
+            setDrawMode('new');
+            err.hidden = false;
+        }
+        return;
+    }
+    stopDrawing();
+    state.currentTrip = result.trip_data;
+    displayTripOnMap(result.trip_data);
+    const text = [result.message, ...(result.warnings || [])].join(' ');
+    addMessage('assistant', text);
+    if (window.snifferAVW) window.snifferAVW.say(text, { mood: 'happy', reaction: 'ears_up' });
+}
+
+async function planDrawnRoute() {
+    const d = drawState.drawn;
+    if (!d || state.isTyping) return;
+    if (drawState.mode === 'reshape' || drawState.mode === 'extend') return changeTripWithLine(drawState.mode);
+    const form = {
+        mode: 'drawn',
+        origin: { label: d.startLabel || 'Start', lat: d.start.lat, lng: d.start.lng },
+        destination: { label: d.endLabel || 'Destination', lat: d.end.lat, lng: d.end.lng },
+        via_points: d.via,
+        start_date: _drawEl('draw-start').value || null,
+        num_days: _drawEl('draw-days').value || null,
+        dest_days: parseInt(_drawEl('draw-dest-days').value, 10) || 0,
+    };
+    const btn = _drawEl('btn-draw-plan');
+    btn.disabled = true;
+    btn.textContent = 'Planning…';
+    if (window.snifferAVW) window.snifferAVW.stop();
+    showTyping(true, true);
+    const result = await apiCall('plan_form', { form, conversation_id: CHAT_CONVERSATION_ID });
+    showTyping(false);
+    btn.disabled = false;
+    btn.textContent = 'Plan this route';
+    if (result.status === 'error' && !(result.tool_calls && result.tool_calls.length)) {
+        const err = _drawEl('draw-error');
+        err.textContent = result.text || result.message || 'The route could not be planned.';
+        err.hidden = false;
+        return;
+    }
+    stopDrawing();
+    addMessage('user', result.summary || `${form.origin.label} → ${form.destination.label}`);
+    handleChatResult(result);
+}
+
+function initDrawRoute() {
+    const btn = _drawEl('btn-draw-route');
+    const layer = _drawEl('draw-layer');
+    if (!btn || !layer) return;
+    const update = (touch = isTouchScreen()) => {
+        btn.hidden = !touch;
+        if (!touch && drawState.active) stopDrawing();
+    };
+    update();
+    if (window.matchMedia) {
+        const mq = window.matchMedia('(any-pointer: coarse)');
+        if (mq.addEventListener) mq.addEventListener('change', () => update());
+    }
+    window.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') update(true);
+    }, { capture: true, passive: true });
+    btn.addEventListener('click', () => (drawState.active ? stopDrawing() : startDrawing()));
+    layer.addEventListener('pointerdown', _onDrawDown);
+    layer.addEventListener('pointermove', _onDrawMove);
+    layer.addEventListener('pointerup', _onDrawUp);
+    layer.addEventListener('pointercancel', _onDrawUp);
+    _drawEl('btn-draw-cancel').addEventListener('click', stopDrawing);
+    _drawEl('btn-draw-redo').addEventListener('click', () => {
+        _clearDrawnLine();
+        _drawEl('draw-route-summary').hidden = true;
+        _setDrawHint('✏️ Draw your route with one finger, from the start to the destination.');
+    });
+    _drawEl('btn-draw-plan').addEventListener('click', planDrawnRoute);
+    document.querySelectorAll('#draw-mode .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => setDrawMode(b.dataset.mode)));
+}
+
+// ── Fuel / EV charging / lunch stops along the route ──────────────────
+// /api/route_stops works out when to stop (departure time, vehicle range, lunchtime) and
+// lists places nearest to the route from Google Places (basic fields only).
+// "Add" puts one on its day via /api/add_route_stop (saved trips).
+const stopsState = { kind: 'fuel', markers: [], result: null };
+const STOP_EMOJI = { fuel: '⛽', ev_charging: '🔌', restaurant: '🍽️' };
+
+function _stopsPrefs() {
+    try { return JSON.parse(localStorage.getItem('vw.stops') || '{}') || {}; } catch (e) { return {}; }
+}
+
+function _saveStopsPrefs(prefs) {
+    try { localStorage.setItem('vw.stops', JSON.stringify(prefs)); } catch (e) { /* private mode */ }
+}
+
+// The van is kept in the user's long-term memory (RAG, /api/vehicle) so the panel, the
+// campsite window and Sniffer in the chat agree; the browser keeps a copy (anonymous users).
+async function _syncRememberedVehicle() {
+    const res = await apiCall('vehicle', {});
+    const vehicle = res && res.vehicle;
+    if (!vehicle) return null;
+    const prefs = _stopsPrefs();
+    if (prefs.vehicle !== vehicle) _saveStopsPrefs({ ...prefs, vehicle });
+    return vehicle;
+}
+
+function _applyStopsVehicle(vehicle) {
+    const sel = _drawEl('stops-vehicle');
+    if (sel && vehicle) sel.value = vehicle;
+    if (vehicle === 'ev' && stopsState.kind === 'fuel') setStopsKind('ev_charging');
+    if (vehicle !== 'ev' && stopsState.kind === 'ev_charging') setStopsKind('fuel');
+}
+
+function _clearStopMarkers() {
+    stopsState.markers.forEach(m => m.setMap && m.setMap(null));
+    stopsState.markers = [];
+}
+
+function setStopsKind(kind) {
+    stopsState.kind = kind;
+    document.querySelectorAll('#stops-kinds .draw-mode-btn').forEach(b => {
+        const on = b.dataset.kind === kind;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    _drawEl('stops-results').innerHTML = '';
+    _drawEl('stops-error').hidden = true;
+    _clearStopMarkers();
+}
+
+function openStopsPanel() {
+    const prefs = _stopsPrefs();
+    if (prefs.vehicle) _drawEl('stops-vehicle').value = prefs.vehicle;
+    if (prefs.departure) _drawEl('stops-departure').value = prefs.departure;
+    setStopsKind(_drawEl('stops-vehicle').value === 'ev' ? 'ev_charging' : stopsState.kind);
+    const bar = _drawEl('campsite-review-bar');
+    if (bar) bar.hidden = true;
+    _drawEl('stops-panel').hidden = false;
+    _drawEl('btn-route-stops').classList.add('active');
+    _syncRememberedVehicle().then(v => {
+        if (v && v !== _drawEl('stops-vehicle').value) _applyStopsVehicle(v);
+    });
+}
+
+function closeStopsPanel() {
+    _drawEl('stops-panel').hidden = true;
+    _drawEl('btn-route-stops').classList.remove('active');
+    _clearStopMarkers();
+}
+
+// Street-level photo of a stop from Mapillary (free; server: /api/place_photo). Only when the
+// server has a MAPILLARY_TOKEN (result.photos); a place without a photo just has none.
+function _stopPhotoSlot(p, photos) {
+    return photos ? `<div class="stops-photo" data-lat="${+p.lat}" data-lng="${+p.lng}"></div>` : '';
+}
+
+async function _loadStopPhotos(container) {
+    const slots = [...container.querySelectorAll('.stops-photo[data-lat]')];
+    await Promise.all(slots.map(async slot => {
+        const lat = +slot.dataset.lat, lng = +slot.dataset.lng;
+        delete slot.dataset.lat;
+        const res = await apiCall('place_photo', { lat, lng });
+        const ph = res && res.photo;
+        if (!ph || !ph.url) { slot.remove(); return; }
+        const label = `${ph.credit}${ph.year ? ' · ' + ph.year : ''}`;
+        slot.innerHTML = `<a href="${escapeCampText(ph.viewer_url)}" target="_blank" rel="noopener" title="${escapeCampText(label)}">
+            <img src="${escapeCampText(ph.url)}" alt="" loading="lazy"></a>`;
+        slot.querySelector('img').addEventListener('error', () => slot.remove());
+        const credit = slot.parentElement && slot.parentElement.querySelector('.stops-photo-credit');
+        if (credit) credit.textContent = `📷 ${label}`;
+    }));
+}
+
+function _stopExtras(p) {
+    const bits = [];
+    if (p.kind === 'restaurant' && p.fast_food) bits.push('fast food');
+    if (p.address) bits.push(p.address);
+    bits.push(p.off_route_km <= 0.3 ? 'on the route' : `${p.off_route_km} km off the route`);
+    return bits.map(escapeCampText).join(' · ');
+}
+
+function renderStops(result) {
+    const box = _drawEl('stops-results');
+    _clearStopMarkers();
+    const targets = result.targets || [];
+    if (!targets.length) {
+        box.innerHTML = `<div class="stops-empty">${escapeCampText(result.message || 'No stops needed.')}</div>`;
+        return;
+    }
+    box.innerHTML = targets.map((t, ti) => `
+        <div class="stops-target">
+            <div class="stops-when"><strong>Day ${t.day_number} · ~${escapeCampText(t.eta)}</strong>
+                <span>after ${escapeCampText(t.after_driving)} of driving · ${escapeCampText(t.reason)}</span></div>
+            ${(t.candidates || []).length ? t.candidates.map((p, pi) => `
+                <div class="stops-place">
+                    ${_stopPhotoSlot(p, result.photos)}
+                    <div class="stops-text"><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div>
+                         ${result.photos ? '<div class="stops-photo-credit"></div>' : ''}</div>
+                    ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}">Add</button>` : ''}
+                </div>`).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
+        </div>`).join('') + (result.saved_trip ? '' :
+        '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    _loadStopPhotos(box);
+
+    box.querySelectorAll('.stops-add').forEach(btn => btn.addEventListener('click', () => {
+        const t = targets[+btn.dataset.t];
+        addRouteStop(t, t.candidates[+btn.dataset.p], btn);
+    }));
+
+    if (state.map && window.google && google.maps && google.maps.Marker) {
+        targets.forEach(t => (t.candidates || []).forEach(p => {
+            stopsState.markers.push(new google.maps.Marker({
+                map: state.map, position: { lat: p.lat, lng: p.lng },
+                title: `${p.name} · day ${t.day_number} ~${t.eta}`,
+                label: { text: STOP_EMOJI[p.kind] || '•', fontSize: '16px' },
+            }));
+        }));
+    }
+}
+
+async function findRouteStops() {
+    const trip = state.currentTrip;
+    const err = _drawEl('stops-error');
+    err.hidden = true;
+    if (!trip) {
+        err.textContent = 'Plan a route first.';
+        err.hidden = false;
+        return;
+    }
+    const prefs = { vehicle: _drawEl('stops-vehicle').value, departure: _drawEl('stops-departure').value || '09:00' };
+    _saveStopsPrefs(prefs);
+    const btn = _drawEl('btn-stops-find');
+    btn.disabled = true;
+    btn.textContent = 'Searching…';
+    const result = await apiCall('route_stops', {
+        trip_id: trip.trip && trip.trip.id, kind: stopsState.kind, ...prefs,
+        conversation_id: CHAT_CONVERSATION_ID,
+    });
+    btn.disabled = false;
+    btn.textContent = 'Find stops';
+    if (result.status !== 'success') {
+        err.textContent = result.message || 'Could not find stops.';
+        err.hidden = false;
+        return;
+    }
+    stopsState.result = result;
+    renderStops(result);
+}
+
+async function addRouteStop(target, place, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    const res = await apiCall('add_route_stop', {
+        trip_id: state.currentTrip.trip.id, day_number: target.day_number, kind: place.kind,
+        place: { name: place.name, lat: place.lat, lng: place.lng, place_id: place.place_id },
+        eta: target.eta, conversation_id: CHAT_CONVERSATION_ID,
+    });
+    if (res.status !== 'success' || !res.trip_data) {
+        btn.disabled = false;
+        btn.textContent = 'Add';
+        const err = _drawEl('stops-error');
+        err.textContent = res.message || 'Could not add the stop.';
+        err.hidden = false;
+        return;
+    }
+    btn.textContent = '✓ Added';
+    state.currentTrip = res.trip_data;
+    const markers = stopsState.markers;
+    stopsState.markers = [];            // keep the list's markers while the route redraws
+    displayTripOnMap(res.trip_data);
+    stopsState.markers = markers;
+    addMessage('assistant', res.message);
+}
+
+// ── The same stops inside the campsite window, for the day shown there ──
+// Nothing is searched until a type is picked (each search is a paid Google call).
+// Vehicle and departure come from the ⛽ Stops panel on the map (saved in the browser).
+const dayStopsState = { day: null, tripId: null };
+
+function _dayStopsVehicle() {
+    const prefs = _stopsPrefs();
+    const vehicle = prefs.vehicle || 'diesel';
+    const opt = document.querySelector(`#stops-vehicle option[value="${vehicle}"]`);
+    return { vehicle, label: opt ? opt.textContent : vehicle, departure: prefs.departure || '09:00' };
+}
+
+function renderDayStopsForModal(tripData, daySchedule) {
+    const section = _drawEl('day-stops-modal-section');
+    if (!section) return;
+    const wps = daySchedule.waypoints || [];
+    const driving = !!daySchedule.route_polyline && !(wps.length && wps.every(w => w.type === 'stay'));
+    section.hidden = !driving;
+    if (!driving) return;
+    dayStopsState.day = daySchedule.day_number;
+    dayStopsState.tripId = tripData && tripData.trip ? tripData.trip.id : null;
+    _renderDayStopsHeader(daySchedule.day_number);
+    _drawEl('day-stops-list').innerHTML =
+        '<div class="stops-empty">Pick a type to see places along this day, at the time you would get there.</div>';
+    const before = _dayStopsVehicle().vehicle;
+    _syncRememberedVehicle().then(v => {
+        if (v && v !== before && dayStopsState.day === daySchedule.day_number) _renderDayStopsHeader(daySchedule.day_number);
+    });
+}
+
+function _renderDayStopsHeader(day) {
+    const v = _dayStopsVehicle();
+    _drawEl('day-stops-modal-title').textContent = `🛣️ Stops on the way — Day ${day}`;
+    _drawEl('day-stops-note').textContent =
+        `${v.label} · departure ${v.departure} · change both in ⛽ Stops on the map`;
+    // An electric van charges, the others refuel.
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b => {
+        b.hidden = (b.dataset.kind === 'fuel' && v.vehicle === 'ev') ||
+                   (b.dataset.kind === 'ev_charging' && v.vehicle !== 'ev');
+        b.classList.remove('active');
+        b.setAttribute('aria-checked', 'false');
+    });
+}
+
+function _dayStopAlreadyAdded(day, place) {
+    const sched = ((state.currentTrip || {}).daily_schedules || []).find(d => d.day_number === day);
+    return !!(sched && (sched.waypoints || []).some(w =>
+        (w.place_id && w.place_id === place.place_id) ||
+        (Math.abs(w.lat - place.lat) < 1e-5 && Math.abs(w.lng - place.lng) < 1e-5)));
+}
+
+async function loadDayStops(kind) {
+    const day = dayStopsState.day;
+    const list = _drawEl('day-stops-list');
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b => {
+        const on = b.dataset.kind === kind;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    list.innerHTML = '<div class="stops-empty">Searching…</div>';
+    const v = _dayStopsVehicle();
+    const result = await apiCall('route_stops', {
+        trip_id: dayStopsState.tripId, kind, vehicle: v.vehicle, departure: v.departure,
+        day_number: day, conversation_id: CHAT_CONVERSATION_ID,
+    });
+    if (day !== dayStopsState.day) return;  // another day was opened meanwhile
+    if (result.status !== 'success') {
+        list.innerHTML = `<div class="stops-empty">${escapeCampText(result.message || 'Could not find stops.')}</div>`;
+        return;
+    }
+    const targets = result.targets || [];
+    if (!targets.length) {
+        const none = { fuel: `No fuel stop needed on day ${day}.`,
+                       ev_charging: `No charging stop needed on day ${day}.`,
+                       restaurant: `Day ${day} ends before lunchtime.` }[kind];
+        list.innerHTML = `<div class="stops-empty">${escapeCampText(none)}</div>`;
+        return;
+    }
+    list.innerHTML = targets.map((t, ti) => `
+        <div class="stops-target">
+            <div class="stops-when"><strong>~${escapeCampText(t.eta)}</strong>
+                <span>after ${escapeCampText(t.after_driving)} of driving · ${escapeCampText(t.reason)}</span></div>
+            ${(t.candidates || []).length ? t.candidates.map((p, pi) => {
+                const added = _dayStopAlreadyAdded(day, p);
+                return `
+                <div class="stops-place">
+                    ${_stopPhotoSlot(p, result.photos)}
+                    <div class="stops-text"><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div>
+                         ${result.photos ? '<div class="stops-photo-credit"></div>' : ''}</div>
+                    ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}" ${added ? 'disabled' : ''}>${added ? '✓ Added' : 'Add'}</button>` : ''}
+                </div>`;
+            }).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
+        </div>`).join('') + (result.saved_trip ? '' :
+        '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    _loadStopPhotos(list);
+
+    list.querySelectorAll('.stops-add:not([disabled])').forEach(btn => btn.addEventListener('click', async () => {
+        const t = targets[+btn.dataset.t];
+        const place = t.candidates[+btn.dataset.p];
+        btn.disabled = true;
+        btn.textContent = '…';
+        const res = await apiCall('add_route_stop', {
+            trip_id: dayStopsState.tripId, day_number: t.day_number, kind: place.kind,
+            place: { name: place.name, lat: place.lat, lng: place.lng, place_id: place.place_id },
+            eta: t.eta, conversation_id: CHAT_CONVERSATION_ID,
+        });
+        if (res.status !== 'success' || !res.trip_data) {
+            btn.disabled = false;
+            btn.textContent = 'Add';
+            list.insertAdjacentHTML('afterbegin',
+                `<div class="stops-empty">${escapeCampText(res.message || 'Could not add the stop.')}</div>`);
+            return;
+        }
+        btn.textContent = '✓ Added';
+        state.currentTrip = res.trip_data;
+        displayTripOnMap(res.trip_data);
+        const dayIndex = (res.trip_data.daily_schedules || []).findIndex(d => d.day_number === t.day_number);
+        if (dayIndex >= 0) renderCampingDayTabs(res.trip_data, dayIndex);
+        addMessage('assistant', res.message);
+    }));
+}
+
+function initRouteStops() {
+    const btn = _drawEl('btn-route-stops');
+    if (!btn) return;
+    btn.hidden = false;
+    btn.addEventListener('click', () => (_drawEl('stops-panel').hidden ? openStopsPanel() : closeStopsPanel()));
+    _drawEl('btn-stops-close').addEventListener('click', closeStopsPanel);
+    _drawEl('btn-stops-find').addEventListener('click', findRouteStops);
+    document.querySelectorAll('#stops-kinds .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => setStopsKind(b.dataset.kind)));
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => loadDayStops(b.dataset.kind)));
+    _drawEl('stops-vehicle').addEventListener('change', e => {
+        const vehicle = e.target.value;
+        _applyStopsVehicle(vehicle);
+        _saveStopsPrefs({ ..._stopsPrefs(), vehicle });
+        apiCall('vehicle', { vehicle });  // remembered for logged-in users (also by Sniffer)
+    });
+}
+
 // ── Event Listeners ──────────────────────────────────────────
+function initAppVersion() {
+    const el = document.getElementById('app-version');
+    if (!el) return;
+    fetch('/api/version')
+        .then(r => (r.ok ? r.json() : null))
+        .then(info => {
+            if (!info) return;
+            el.replaceChildren(
+                Object.assign(document.createElement('span'), { textContent: `v${info.version}` }),
+                Object.assign(document.createElement('span'), { textContent: info.commit })
+            );
+            el.title = `Wersja ${info.version}, build ${info.commit}`;
+            el.hidden = false;
+        })
+        .catch(() => { /* version label is optional */ });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize Sniffer Speech & Talking Avatar
-    initSnifferSpeechModule();
-    
+    initTripForm();
+    initAppVersion();
+    initDrawRoute();
+    initRouteStops();
     // Language Switcher setup
     document.querySelectorAll('.lang-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -2979,6 +3932,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const charCounter = document.getElementById('char-counter');
 
     chatInput.addEventListener('input', () => {
+        notifySnifferTyping(chatInput);
         chatInput.style.height = 'auto';
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
         const len = chatInput.value.length;
@@ -4726,7 +5680,61 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuth();
 });
 
+// ── Campsite review bar (map) ─────────────────────────────────
+function showCampsiteReviewBar(tripData) {
+    const bar = document.getElementById('campsite-review-bar');
+    if (!bar) return;
+    const nights = (tripData && tripData.daily_schedules || []).filter(d =>
+        (d.waypoints || []).some(w => w.type === 'camping')).length;
+    if (!nights) { bar.hidden = true; return; }
+    const text = document.getElementById('campsite-review-text');
+    if (text) {
+        text.textContent = `🏕️ ${nights} ${nights === 1 ? 'night' : 'nights'} planned — campsites are picked`;
+    }
+    const review = document.getElementById('btn-review-campsites');
+    if (review) review.onclick = () => {
+        bar.hidden = true;
+        if (state.currentTrip) openCampingSelectionModal(state.currentTrip, 0);
+    };
+    const dismiss = document.getElementById('btn-dismiss-campsite-bar');
+    if (dismiss) dismiss.onclick = () => { bar.hidden = true; };
+    bar.hidden = false;
+}
+
 // ── Camping Selection Modal Functions ─────────────────────────
+// Free or paid, on every place to stay (backend: tools/camping_price.py),
+// shown as text next to the rating.
+function campPriceTextHtml(camp) {
+    let kind = camp && camp.price_kind;
+    let label = camp && camp.price_label;
+    if (!kind) {
+        const cost = camp ? Number(camp.cost_per_night_eur) : NaN;
+        if (camp && camp.cost_per_night_eur != null && !Number.isNaN(cost)) {
+            kind = cost > 0 ? 'paid' : 'free';
+            label = cost > 0 ? `Paid · €${cost}/night` : 'Free';
+        } else {
+            kind = 'unknown';
+            label = 'Price not listed';
+        }
+    }
+    return `<span class="camping-card-price price-${kind}">${escapeCampText(label)}</span>`;
+}
+
+function park4nightBadgeHtml(camp) {
+    if (!camp || camp.source !== 'park4night') return '';
+    const p4nLabel = escapeCampText(camp.spot_type ? `park4night · ${camp.spot_type}` : 'park4night');
+    const p4nId = String(camp.place_id || '').startsWith('p4n:') ? String(camp.place_id).slice(4) : '';
+    const rawUrl = camp.external_url || (/^\d+$/.test(p4nId) ? `https://park4night.com/en/place/${p4nId}` : '');
+    const p4nUrl = /^https:\/\/([a-z0-9-]+\.)*park4night\.com\//i.test(rawUrl) ? escapeCampText(rawUrl) : '';
+    return p4nUrl
+        ? `<a class="camping-badge p4n-badge" href="${p4nUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:4px; font-size:11px; text-decoration:none;">🚐 ${p4nLabel}</a>`
+        : `<span class="camping-badge p4n-badge" style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:4px; font-size:11px;">🚐 ${p4nLabel}</span>`;
+}
+
+function escapeCampText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 function openCampingSelectionModal(tripData, targetDayInput = 1) {
     const modal = document.getElementById('camping-selection-modal');
     if (!modal) return;
@@ -4803,6 +5811,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
     if (badgeEl) {
         badgeEl.textContent = `Dzień ${daySchedule.day_number} z ${totalDays}`;
     }
+    renderDayStopsForModal(currentData, daySchedule);
     if (titleEl) {
         titleEl.textContent = window.t ? window.t('camping_modal_title', { day: daySchedule.day_number }) : `🏕️ Wybierz Nocleg dla Dnia ${daySchedule.day_number}`;
     }
@@ -4814,7 +5823,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096; font-size: 0.95rem;">Wyszukiwanie kempingów dla Dnia ${daySchedule.day_number}...</div>`;
         const lastWp = (daySchedule.waypoints && daySchedule.waypoints.length > 0) ? daySchedule.waypoints[daySchedule.waypoints.length - 1] : null;
         if (lastWp && lastWp.lat && lastWp.lng) {
-            const searchRes = await apiCall('search_campings', { lat: lastWp.lat, lng: lastWp.lng, radius_km: 40, limit: 3 });
+            const searchRes = await apiCall('search_campings', { lat: lastWp.lat, lng: lastWp.lng, radius_km: 40, limit: 6 });
             if (searchRes.status === 'success' && searchRes.results && searchRes.results.length > 0) {
                 options = searchRes.results;
                 daySchedule.overnight_options = options;
@@ -4848,7 +5857,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="camping-card-img-wrap">
-                <img src="${photoSrc}" alt="${camp.name}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
+                <img src="${escapeCampText(photoSrc)}" alt="${escapeCampText(camp.name)}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
                 ${previewBadge}
             </div>
         `;
@@ -4856,17 +5865,18 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
         // Build badges
         let badgesHtml = '<div class="camping-card-badges">';
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
-            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
         if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
         }
         if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Water</span>';
         }
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
         }
+        badgesHtml += park4nightBadgeHtml(camp);
         badgesHtml += '</div>';
 
         const selectedBadgeText = window.t ? window.t('camping_selected_badge') : '✓ Wybrany';
@@ -4878,11 +5888,11 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
             ${badgeTop}
             ${photoHtml}
             <div class="camping-card-header">
-                <h4>${camp.name}</h4>
-                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${camp.address}</div>` : ''}
+                <h4>${escapeCampText(camp.name)}</h4>
+                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : ''}
+                    ${campPriceTextHtml(camp)}
                 </div>
                 ${badgesHtml}
             </div>
@@ -5022,7 +6032,7 @@ async function renderDayAttractionsForModal(tripData, dayNumber) {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="top-attraction-img-wrap" style="height:100px; border-radius:6px; overflow:hidden; margin-bottom:6px; position:relative;">
-                <img src="${photoSrc}" alt="${attr.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                <img src="${photoSrc}" alt="${attr.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!hasRealPhoto ? _placePhotoAttrs(attr.lat, attr.lng, attr.name) : ''}>
                 ${previewBadge}
             </div>
         `;
@@ -5059,7 +6069,54 @@ async function renderDayAttractionsForModal(tripData, dayNumber) {
 }
 window.renderDayAttractionsForModal = renderDayAttractionsForModal;
 
-function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kempingi') {
+// Nights of a trip that can get another campsite: driving days except the last
+// (stay days follow the night before them, so they are not listed separately).
+function tripNights(trip) {
+    if (!trip || !trip.trip || !trip.trip.id || !Array.isArray(trip.daily_schedules)) return [];
+    const days = trip.daily_schedules;
+    return days
+        .filter((d, i) => i < days.length - 1 &&
+            !(d.waypoints || []).every(w => w.type === 'stay'))
+        .map(d => ({
+            day: d.day_number,
+            label: `Night after day ${d.day_number}` + (d.date ? ` (${d.date})` : ''),
+        }));
+}
+
+function _distKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLat / 2) ** 2 +
+        Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// The night whose day's route passes closest to `place` (polyline points when the
+// geometry library is loaded, otherwise the day's waypoints).
+function nearestNight(trip, nights, place) {
+    if (!nights.length) return null;
+    if (!place || place.lat == null || place.lng == null) return nights[0].day;
+    const target = { lat: Number(place.lat), lng: Number(place.lng) };
+    let best = { day: nights[0].day, km: Infinity };
+    nights.forEach(n => {
+        const day = trip.daily_schedules.find(d => d.day_number === n.day);
+        let pts = (day.waypoints || []).filter(w => w.lat != null && w.lng != null)
+            .map(w => ({ lat: Number(w.lat), lng: Number(w.lng) }));
+        if (day.route_polyline && window.google && google.maps && google.maps.geometry) {
+            try {
+                pts = pts.concat(google.maps.geometry.encoding.decodePath(day.route_polyline)
+                    .map(p => ({ lat: p.lat(), lng: p.lng() })));
+            } catch (e) { /* keep the waypoints */ }
+        }
+        pts.forEach(p => {
+            const km = _distKm(p, target);
+            if (km < best.km) best = { day: n.day, km };
+        });
+    });
+    return best.day;
+}
+
+function openCampingSearchModal(campingsList, locationTitle = 'Places to stay nearby') {
     const modal = document.getElementById('camping-selection-modal');
     const grid = document.getElementById('camping-cards-grid');
     const titleEl = document.getElementById('camping-modal-title');
@@ -5068,16 +6125,22 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
     if (!modal || !grid) return;
 
     if (tabsContainer) tabsContainer.innerHTML = '';
-    if (badgeEl) badgeEl.textContent = 'Szukaj noclegu';
+    if (badgeEl) badgeEl.textContent = 'Places to stay';
     if (titleEl) titleEl.textContent = `🏕️ ${locationTitle}`;
 
     grid.innerHTML = '';
     modal.style.display = 'flex';
 
     if (!campingsList || campingsList.length === 0) {
-        grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096;">Brak kempingów spełniających wybrane kryteria w tym obszarze.</div>`;
+        grid.innerHTML = `<div style="grid-column: 1/-1; padding: 24px; text-align: center; color: #718096;">No places to stay match these filters in this area.</div>`;
         return;
     }
+
+    // Nights of the current trip this search can fill; the one whose route passes
+    // closest to the results is preselected ("sleep near Wolfgangsee" -> day 2).
+    const trip = state.currentTrip;
+    const nights = tripNights(trip);
+    const defaultNight = nearestNight(trip, nights, campingsList[0]);
 
     campingsList.forEach((camp) => {
         const card = document.createElement('div');
@@ -5089,56 +6152,80 @@ function openCampingSearchModal(campingsList, locationTitle = 'Rekomendowane kem
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="camping-card-img-wrap">
-                <img src="${photoSrc}" alt="${camp.name}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
+                <img src="${escapeCampText(photoSrc)}" alt="${escapeCampText(camp.name)}" onerror="this.onerror=null; this.src='${CAMPING_PLACEHOLDER_URL}';">
                 ${previewBadge}
             </div>
         `;
 
         let badgesHtml = '<div class="camping-card-badges">';
         if (camp.shore_power_hookup || camp.has_power || (camp.amenities && camp.amenities.includes('power'))) {
-            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Prąd CEE</span>';
+            badgesHtml += '<span class="camping-badge cee-badge" style="background:#E3F2FD; color:#1565C0; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:bold;">🔌 Power</span>';
         }
         if (camp.has_showers || (camp.amenities && camp.amenities.includes('showers'))) {
-            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Prysznic</span>';
+            badgesHtml += '<span class="camping-badge shower-badge" style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:4px; font-size:11px;">🚿 Showers</span>';
         }
         if (camp.has_water || (camp.amenities && camp.amenities.includes('water'))) {
-            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Woda</span>';
+            badgesHtml += '<span class="camping-badge water-badge" style="background:#E0F7FA; color:#006064; padding:3px 8px; border-radius:4px; font-size:11px;">🚰 Water</span>';
         }
         if (camp.has_wifi || (camp.amenities && camp.amenities.includes('wifi'))) {
             badgesHtml += '<span class="camping-badge wifi-badge" style="background:#F3E5F5; color:#4A148C; padding:3px 8px; border-radius:4px; font-size:11px;">📶 WiFi</span>';
         }
+        badgesHtml += park4nightBadgeHtml(camp);
         badgesHtml += '</div>';
 
         card.innerHTML = `
             ${photoHtml}
             <div class="camping-card-header">
-                <h4>${camp.name}</h4>
-                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${camp.address}</div>` : ''}
+                <h4>${escapeCampText(camp.name)}</h4>
+                ${camp.address ? `<div style="font-size:0.8rem; color:#718096; margin-bottom:4px;">📍 ${escapeCampText(camp.address)}</div>` : ''}
                 <div class="camping-card-meta">
                     ${camp.rating ? `<span class="camping-card-rating">⭐ ${camp.rating} ${camp.review_count ? `(${camp.review_count})` : ''}</span>` : ''}
-                    ${camp.cost_per_night_eur ? `<span class="camping-card-cost">€${camp.cost_per_night_eur}/noc</span>` : ''}
+                    ${campPriceTextHtml(camp)}
                 </div>
                 ${badgesHtml}
             </div>
             <div class="camping-card-action">
-                <button class="btn-select-camping">Zatwierdź ten kemping</button>
+                ${nights.length ? `
+                <select class="camping-night-select" aria-label="Night">
+                    ${nights.map(n => `<option value="${n.day}" ${n.day === defaultNight ? 'selected' : ''}>${escapeCampText(n.label)}</option>`).join('')}
+                </select>` : ''}
+                <button class="btn-select-camping">${nights.length ? 'Sleep here' : 'Show on map'}</button>
             </div>
         `;
 
         const btn = card.querySelector('.btn-select-camping');
-        btn.addEventListener('click', () => {
-            btn.textContent = '✓ Wybrano kemping';
-            btn.style.background = '#00875A';
-            btn.disabled = true;
-            card.classList.add('selected');
-
-            if (state.mapInitialized && camp.lat && camp.lng) {
-                addMarker(camp.lat, camp.lng, camp.name, null, '🏕️');
-                state.map.panTo({ lat: camp.lat, lng: camp.lng });
-            }
-            setTimeout(() => {
+        btn.addEventListener('click', async () => {
+            const select = card.querySelector('.camping-night-select');
+            if (!select) {
+                // No trip yet: only show the place on the map.
+                if (state.mapInitialized && camp.lat && camp.lng) {
+                    addMarker(camp.lat, camp.lng, camp.name, null, '🏕️');
+                    state.map.panTo({ lat: camp.lat, lng: camp.lng });
+                }
                 modal.style.display = 'none';
-            }, 800);
+                return;
+            }
+            const dayNumber = parseInt(select.value, 10);
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            const res = await apiCall('select_camping', {
+                trip_id: trip.trip.id,
+                day_number: dayNumber,
+                camping: camp,
+            });
+            if (res.status === 'success' && res.trip_data) {
+                state.currentTrip = res.trip_data;
+                displayTripOnMap(res.trip_data);
+                modal.style.display = 'none';
+            } else if (res.status === 'error' && /authenticated|not saved|not found/i.test(res.message || '')) {
+                // A trip that is not saved (not logged in): let the planner move the night.
+                modal.style.display = 'none';
+                sendMessage(`Sleep at ${camp.name} (lat ${camp.lat}, lng ${camp.lng}) on the night after day ${dayNumber}.`);
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Sleep here';
+                alert(res.message || 'Could not change the night.');
+            }
         });
 
         grid.appendChild(card);
