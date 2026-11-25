@@ -78,8 +78,9 @@ and its days are appended. The trip's destination, end date and title follow the
 the day's average speed; a 15 min break every 2 h) and picks target points: fuel when ~75%
 of the tank range is used (the tank carries over days; T6.1 diesel 800 km, eHybrid 750 km),
 charging when the battery reaches 20% (full each morning, fast charge to 80%; ID. Buzz
-380 km), lunch where the clock reaches 12:45. Places come from OpenStreetMap via Overpass
-(`tools/osm_client.py`, one query per request, cached) — no Google Places cost. A chosen
+380 km), lunch where the clock reaches 12:45. Places come from Google Places API (New),
+Nearby Search with basic "Pro" fields only (`tools/google_stops.py`, one call per stop point,
+cached 24 h; no hours, ratings, EV/fuel options, which are billed as Enterprise/Atmosphere). A chosen
 place is added as a `waypoint` with `service`, emoji and `planned_time` at its position on
 the day (`navigation/route_stop_add.py`); only that day is recalculated. Attractions are
 re-fetched only when the trip's shape changes (day ends, 10 km steps of day length), not

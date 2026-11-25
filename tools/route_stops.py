@@ -6,15 +6,15 @@ time in proportion to distance, and short breaks. Target points:
 - fuel:        when ~75% of the tank range is used (the tank carries over between days);
 - ev_charging: when the battery reaches ~20% (full every morning, fast charge to 80%);
 - restaurant:  lunch, where the clock reaches ~12:45 (days that end before 12:30 get none).
-Places near the targets come from OpenStreetMap (tools/osm_client.py), free of Google cost,
-ranked by how far they are off the route. See architecture/routing_sop.md.
+Places near the targets come from Google Places API (New) with basic "Pro" fields only
+(tools/google_stops.py), ranked by how far they are off the route. See architecture/routing_sop.md.
 """
 
 from datetime import datetime, timedelta
 
 from googlemaps.convert import decode_polyline
 
-from tools import osm_client
+from tools import google_stops
 
 VEHICLES = {
     "diesel": {"label": "California T6.1 (diesel)", "fuel_range_km": 800, "ev_range_km": None},
@@ -29,6 +29,7 @@ LUNCH_AT = (12, 45)
 LUNCH_EARLIEST = (12, 30)
 BREAK_EVERY_H, BREAK_MIN = 2.0, 15
 SEARCH_RADIUS_M, WIDER_RADIUS_M = 5000, 15000
+LUNCH_MIN_LEFT_H = 0.5        # lunch this close to the day's end -> eat at the destination
 CANDIDATES_PER_TARGET = 3
 FALLBACK_KMH = 75.0
 
@@ -171,7 +172,7 @@ def find_targets(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT_DEP
             if clock.clock(clock.length) < datetime(2000, 1, 1, *LUNCH_EARLIEST):
                 continue  # arrives before lunch: eat at the campsite
             km = clock.km_at_clock(*LUNCH_AT)
-            if km is not None:
+            if km is not None and clock.driving_h(clock.length - km) >= LUNCH_MIN_LEFT_H:
                 add(day, line, clock, km, "lunchtime")
     else:
         raise ValueError(f"Unknown kind: {kind}")
@@ -183,6 +184,15 @@ def find_targets(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT_DEP
 
 def _off_route_km(place, line):
     return min(_km(place, p) for p in line)
+
+
+def _search(kind, targets):
+    """Places near the targets: 5 km first, then 15 km around the targets left empty."""
+    found = google_stops.find_places(kind, [t["point"] for t in targets], SEARCH_RADIUS_M)
+    missing = [t for t in targets if not any(_km(t["point"], p) <= SEARCH_RADIUS_M / 1000 + 0.5 for p in found)]
+    if missing:
+        found += google_stops.find_places(kind, [t["point"] for t in missing], WIDER_RADIUS_M)
+    return found
 
 
 def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT_DEPARTURE,
@@ -207,13 +217,14 @@ def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT
         return base
 
     lines = {int(d["day_number"]): l for d, l in _driving_days(schedules)}
+    if not google_stops.available():
+        return {"status": "error", "message": "Place search needs Google Places (GOOGLE_MAPS_API_KEY and "
+                                              "GOOGLE_MAPS_MODE basic or full)."}
     try:
-        found = osm_client.find_places(kind, [t["point"] for t in targets], SEARCH_RADIUS_M)
-        missing = [t for t in targets if not any(_km(t["point"], p) <= SEARCH_RADIUS_M / 1000 + 0.5 for p in found)]
-        if missing:
-            found += osm_client.find_places(kind, [t["point"] for t in missing], WIDER_RADIUS_M)
-    except osm_client.OverpassError as e:
-        return {"status": "error", "message": str(e)}
+        found = _search(kind, targets)
+    except google_stops.GooglePlacesError as e:
+        print(f"[route_stops] {e}")
+        return {"status": "error", "message": "Place search is not available right now. Try again in a moment."}
 
     for t in targets:
         line = lines[t["day_number"]]
@@ -221,16 +232,14 @@ def plan_route_stops(schedules, kind, vehicle=DEFAULT_VEHICLE, departure=DEFAULT
         ranked = []
         for p in near:
             off = _off_route_km(p, line)
-            key = (round(off, 1), 0 if p.get("brand") or p["name"] not in ("Fuel station", "EV charger", "Restaurant") else 1)
-            if kind == "ev_charging":
-                key = (round(off, 1), -(p.get("power_kw") or 0))
+            key = (round(off, 1), 0 if p["name"] not in ("Fuel station", "EV charger", "Restaurant") else 1)
             ranked.append((key, {**p, "off_route_km": round(off, 1)}))
         ranked.sort(key=lambda x: x[0])
         seen, cands = set(), []
         for _, p in ranked:
-            if p["osm_id"] in seen:
+            if p["place_id"] in seen:
                 continue
-            seen.add(p["osm_id"])
+            seen.add(p["place_id"])
             cands.append(p)
             if len(cands) == CANDIDATES_PER_TARGET:
                 break

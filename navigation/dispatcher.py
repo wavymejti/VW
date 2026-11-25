@@ -193,7 +193,7 @@ def has_concrete_change(arguments):
 
 
 def _handle_find_route_stops(arguments):
-    """Chat tool: where and when to stop for fuel / charging / lunch (OpenStreetMap, no Google cost)."""
+    """Chat tool: where and when to stop for fuel / charging / lunch (Google Places, basic fields)."""
     from tools.trip_store import get_trip_data
     from tools.route_stops import plan_route_stops
 
@@ -212,7 +212,7 @@ def _handle_add_route_stop(arguments):
     """Chat tool: put one place from find_route_stops on its day (saved trips)."""
     from navigation.route_stop_add import add_route_stop
 
-    place = {k: arguments.get(k) for k in ("name", "lat", "lng", "osm_id")}
+    place = {k: arguments.get(k) for k in ("name", "lat", "lng", "place_id")}
     result = add_route_stop(arguments.get("trip_id"), arguments.get("day_number"), place,
                             arguments.get("kind"), arguments.get("eta"))
     if result.get("status") == "success":
@@ -1636,7 +1636,7 @@ OPENAI_TOOL_DEFINITIONS = [
                 "Where and when to stop along the planned route for fuel (kind 'fuel'), EV charging "
                 "('ev_charging') or lunch ('restaurant'). Times assume departure at 09:00 and the "
                 "vehicle's range (diesel T6.1 by default). Returns per day the planned time, the reason "
-                "and up to 3 places from OpenStreetMap nearest to the route. Tell the user the time and "
+                "and up to 3 places (Google Places) nearest to the route. Tell the user the time and "
                 "the best option per stop; add one only when the user wants it (add_route_stop)."
             ),
             "parameters": {
@@ -1670,7 +1670,7 @@ OPENAI_TOOL_DEFINITIONS = [
                     "name": {"type": "string"},
                     "lat": {"type": "number"},
                     "lng": {"type": "number"},
-                    "osm_id": {"type": "string"},
+                    "place_id": {"type": "string"},
                     "eta": {"type": "string", "description": "Planned time HH:MM."},
                 },
                 "required": ["day_number", "kind", "name", "lat", "lng"],

@@ -1,7 +1,7 @@
 """
 Putting a fuel / charging / lunch stop on a day of a saved trip (Nov 2026).
 
-The place (from tools/route_stops.py, OpenStreetMap) becomes a waypoint of the day at its
+The place (from tools/route_stops.py, Google Places) becomes a waypoint of the day at its
 position along the route, with an emoji and the planned time; only that day is recalculated.
 No Google Places search is made for it (unlike add_attraction).
 """
@@ -33,7 +33,7 @@ def stop_waypoint(place, kind, eta=None):
         "category_label": label,
         "notes": f"Planned {KIND_LABELS[kind].lower()}" + (f" around {eta}" if eta else ""),
         "planned_time": eta,
-        "osm_id": place.get("osm_id"),
+        "place_id": place.get("place_id") or place.get("osm_id"),
     }
 
 
@@ -83,7 +83,7 @@ def add_route_stop(trip_id, day_number, place, kind, eta=None):
         if len(wps) < 2 or all(w.get("type") == "stay" for w in wps):
             return {"status": "error", "message": f"Day {day_number} has no driving."}
         new_wp = stop_waypoint(place, kind, eta)
-        if any(w.get("osm_id") and w.get("osm_id") == new_wp["osm_id"] for w in wps):
+        if any((w.get("place_id") or w.get("osm_id")) == new_wp["place_id"] for w in wps if new_wp["place_id"]):
             return {"status": "error", "message": f"{new_wp['label']} is already on day {day_number}."}
         wps = insert_in_order(wps, new_wp, row[2])
         if not _recalculate_day_route(conn, str(row[0]), wps):

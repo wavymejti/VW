@@ -935,8 +935,8 @@ def api_route_stops():
     Where and when to stop for fuel / EV charging / lunch along the current trip.
 
     Body: {"trip_id", "kind": "fuel" | "ev_charging" | "restaurant", "vehicle", "departure",
-           "day_number" (optional), "conversation_id"}. Places come from OpenStreetMap
-    (no Google Places cost). Unsaved trips use the route planned in this chat.
+           "day_number" (optional), "conversation_id"}. Places come from Google Places
+    (basic fields only). Unsaved trips use the route planned in this chat.
     """
     from tools.route_stops import plan_route_stops, schedules_from_rows
 

@@ -3363,7 +3363,7 @@ function initDrawRoute() {
 
 // ── Fuel / EV charging / lunch stops along the route ──────────────────
 // /api/route_stops works out when to stop (departure time, vehicle range, lunchtime) and
-// lists places nearest to the route from OpenStreetMap (no Google Places cost).
+// lists places nearest to the route from Google Places (basic fields only).
 // "Add" puts one on its day via /api/add_route_stop (saved trips).
 const stopsState = { kind: 'fuel', markers: [], result: null };
 const STOP_EMOJI = { fuel: '⛽', ev_charging: '🔌', restaurant: '🍽️' };
@@ -3412,15 +3412,8 @@ function closeStopsPanel() {
 
 function _stopExtras(p) {
     const bits = [];
-    if (p.kind === 'ev_charging') {
-        if (p.power_kw) bits.push(`${Math.round(p.power_kw)} kW`);
-        if (p.sockets && p.sockets.length) bits.push(p.sockets.join(', '));
-        if (p.operator && p.operator !== p.name) bits.push(p.operator);
-    }
-    if (p.kind === 'restaurant' && p.cuisine) bits.push(p.cuisine);
     if (p.kind === 'restaurant' && p.fast_food) bits.push('fast food');
-    if (p.kind === 'fuel' && p.brand && p.brand !== p.name) bits.push(p.brand);
-    if (p.kind === 'fuel' && p.lpg) bits.push('LPG');
+    if (p.address) bits.push(p.address);
     bits.push(p.off_route_km <= 0.3 ? 'on the route' : `${p.off_route_km} km off the route`);
     return bits.map(escapeCampText).join(' · ');
 }
@@ -3496,7 +3489,7 @@ async function addRouteStop(target, place, btn) {
     btn.textContent = '…';
     const res = await apiCall('add_route_stop', {
         trip_id: state.currentTrip.trip.id, day_number: target.day_number, kind: place.kind,
-        place: { name: place.name, lat: place.lat, lng: place.lng, osm_id: place.osm_id },
+        place: { name: place.name, lat: place.lat, lng: place.lng, place_id: place.place_id },
         eta: target.eta, conversation_id: CHAT_CONVERSATION_ID,
     });
     if (res.status !== 'success' || !res.trip_data) {
