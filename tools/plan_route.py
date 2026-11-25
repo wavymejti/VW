@@ -537,6 +537,7 @@ def plan_route(
     # The start form gives the stops in travel order: keep that order everywhere.
     ordered = bool(route_stops) or bool(via)
     route_out, route_back = [], []
+    kept_route_stops = []  # resolved, kept with the trip so modify_route can keep the order
     if ordered:
         waypoints = list(waypoints or [])
         overnight_stops = list(overnight_stops or [])
@@ -547,6 +548,8 @@ def plan_route(
                 warnings.append(f"Could not locate the stop '{(stop or {}).get('label')}'; it is skipped.")
                 continue
             place = {"label": place["label"], "lat": place["lat"], "lng": place["lng"], "seq": seq}
+            kept_route_stops.append({"label": place["label"], "lat": place["lat"], "lng": place["lng"],
+                                     "nights": stop.get("nights") or 0, "leg": stop.get("leg") or "out"})
             leg = stop.get("leg") or "out"
             if leg == "back" and round_trip:
                 route_back.append(place)
@@ -1110,6 +1113,11 @@ def plan_route(
         "total_driving_hours": round(sum(d["driving_hours"] for d in daily_schedules), 1),
         "total_driving_km": round(sum(d["driving_km"] for d in daily_schedules), 1),
     }
+    # How the route was shaped (start form / drawn line): modify_route re-plans with it, so a
+    # later change in the chat keeps the stop order and the drawing.
+    plan_params = {k: v for k, v in (("route_stops", kept_route_stops), ("via_points", via)) if v}
+    if plan_params:
+        trip["plan_params"] = plan_params
 
     # Step 5: Persist to database if user_id provided
     save_error = _persist_trip(trip, daily_schedules) if user_id else None
@@ -1337,6 +1345,51 @@ def _json_default(value):
     return str(value)
 
 
+_PLAN_PARAMS_READY = False
+
+
+def _ensure_plan_params_column():
+    """trips.plan_params (migration 009), added here too if the migration hasn't run (idempotent)."""
+    global _PLAN_PARAMS_READY
+    if not _PLAN_PARAMS_READY:
+        with get_engine().begin() as conn:
+            conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS plan_params JSONB"))
+        _PLAN_PARAMS_READY = True
+
+
+def _save_plan_params(trip_id, plan_params):
+    """Keep route_stops / via_points with a saved trip. Failing here never fails the trip."""
+    import json
+    try:
+        _ensure_plan_params_column()
+        with get_engine().begin() as conn:
+            conn.execute(text("UPDATE trips SET plan_params = CAST(:p AS jsonb) WHERE id = :id"),
+                         {"p": json.dumps(plan_params, default=_json_default), "id": trip_id})
+    except Exception as e:
+        print(f"  ⚠️  Could not save plan_params: {e}")
+
+
+def load_plan_params(trip_id):
+    """route_stops / via_points a saved trip was planned with ({} if none or unknown)."""
+    import json
+    if not trip_id:
+        return {}
+    try:
+        _ensure_plan_params_column()
+        with get_engine().connect() as conn:
+            row = conn.execute(text("SELECT plan_params FROM trips WHERE id = :id"), {"id": trip_id}).fetchone()
+    except Exception as e:
+        print(f"  ⚠️  Could not read plan_params: {e}")
+        return {}
+    val = row[0] if row else None
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except ValueError:
+            val = None
+    return val if isinstance(val, dict) else {}
+
+
 def _persist_trip(trip, daily_schedules):
     """
     Save trip and daily schedules to the database.
@@ -1419,7 +1472,9 @@ def _persist_trip(trip, daily_schedules):
 
             conn.commit()
             print(f"  ✅ Trip '{trip['title']}' saved to DB")
-            return None
+        if trip.get("plan_params"):
+            _save_plan_params(trip["id"], trip["plan_params"])
+        return None
 
     except Exception as e:
         print(f"  ⚠️  Failed to persist trip: {e}")

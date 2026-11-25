@@ -55,6 +55,18 @@ no waypoint optimisation. Each day gets the via points between its start and end
 stored on the day as waypoints of type `via` (never shown) so a recalculation of the day
 (`_recalculate_day_route`) still follows the drawing.
 
+## Re-planning keeps the trip's shape (`modify_route`)
+
+`plan_route` returns how the route was shaped in `trip.plan_params`
+(`{"route_stops": [...], "via_points": [...]}`, stops resolved to coordinates). Saved trips
+keep it in `trips.plan_params` (JSONB, migration 009, also added on first use); the chat
+session keeps it in `last_plan` for unsaved trips. `modify_route` / `add_waypoint` pass it to
+`plan_route` again, so a change asked in the chat (daily limit, more days, an extra place)
+keeps the form's stop order and the drawn line. To avoid doubling: drive-through stops are
+dropped from the waypoints read back from the days, multi-night stops from the read-back
+stays; an excluded place is removed from `route_stops`; the drawn line is dropped when the
+start or the end changes.
+
 ## Changing part of a saved route (`POST /api/reshape_route`)
 
 A drawn line whose two ends lie within 20 km of the saved route changes only that stretch

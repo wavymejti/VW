@@ -540,6 +540,11 @@ def _run_tool(session, tc, tool_calls):
     # would make it look like a change and re-plan the same trip.
     if fn_name in ("modify_route", "add_waypoint") and session.get("last_plan"):
         if fn_name == "add_waypoint" or has_concrete_change(fn_args):
+            from navigation.dispatcher import _moved
+            last = session["last_plan"]
+            if _moved((fn_args.get("origin"), fn_args.get("destination")),
+                      (last.get("origin"), last.get("destination"))):
+                fn_args["_origin_changed"] = True  # a drawn line no longer fits
             for key, val in session["last_plan"].items():
                 if key == "waypoints":
                     fn_args["_conversation_waypoints"] = val
@@ -583,6 +588,9 @@ def _run_tool(session, tc, tool_calls):
                 "round_trip", "stays", "rest_day_every", "overnight_stops",
                 "overnight_preferences", "max_daily_km", "max_daily_drive_hours",
                 "preferred_amenities")},
+            # Start-form stops / drawn line, as the planner resolved them: kept by modify_route.
+            "route_stops": (trip.get("plan_params") or {}).get("route_stops"),
+            "via_points": (trip.get("plan_params") or {}).get("via_points"),
         }
 
     # Remember a compact view of the trip for get_trip_summary.

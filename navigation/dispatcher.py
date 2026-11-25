@@ -188,6 +188,54 @@ MODIFY_CHANGE_KEYS = (
 )
 
 
+def _near(a, b, km):
+    from tools.plan_route import _haversine_distance
+    try:
+        return _haversine_distance(float(a["lat"]), float(a["lng"]), float(b["lat"]), float(b["lng"])) <= km
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def _keep_trip_shape(route_stops, via_points, exclude_places, origin_changed, waypoints, stays):
+    """
+    A trip from the start form / a drawn line is re-planned with its route_stops and via_points,
+    so its order and drawing survive a change made in the chat. Returns
+    (route_stops, via_points, waypoints, stays) with:
+    - excluded places removed from route_stops (and their attractions);
+    - the drive-through stops dropped from the waypoints and the stays of multi-night
+      stops dropped from the stays read back from the days: route_stops brings them back once;
+    - the drawing dropped when the start or the end changes (the line no longer fits).
+    """
+    def excluded(label):
+        return any(ex and ex.lower() in (label or "").lower() for ex in exclude_places or [])
+
+    route_stops = [st for st in (route_stops or []) if not excluded(st.get("label"))]
+    via_points = [] if origin_changed else list(via_points or [])
+    attractions = [w for w in waypoints
+                   if not (isinstance(w, dict) and any(_near(w, st, 2) for st in route_stops))]
+    if stays:
+        multi = [st for st in route_stops if (st.get("nights") or 0) >= 2]
+        stays = [sd for sd in stays if not (sd.get("lat") is not None and any(_near(sd, st, 30) for st in multi))]
+    return route_stops, via_points, attractions, stays
+
+
+def _moved(asked, saved):
+    """True when a start or an end asked for is a different place than the saved one."""
+    for a, b in zip(asked, saved):
+        if not a or not b:
+            continue
+        if isinstance(a, str):
+            a = {"label": a}
+        if a.get("lat") is not None:
+            if not _near(a, b, 5):
+                return True
+        elif (a.get("label") or "").strip().lower() not in ((b.get("label") or "").lower(), ""):
+            first = (a.get("label") or "").split(",")[0].strip().lower()
+            if first and first not in (b.get("label") or "").lower():
+                return True
+    return False
+
+
 def has_concrete_change(arguments):
     return any((arguments or {}).get(k) not in (None, "", []) for k in MODIFY_CHANGE_KEYS)
 
@@ -423,6 +471,7 @@ def _handle_modify_route(arguments):
         # Fetch original trip parameters from DB if trip_id provided
         origin = arguments.get("origin")
         destination = arguments.get("destination")
+        asked_ends, saved_ends = (origin, destination), (None, None)
         num_days = arguments.get("num_days")
         start_date = arguments.get("start_date")
         preferred_amenities = arguments.get("preferred_amenities")
@@ -456,12 +505,10 @@ def _handle_modify_route(arguments):
                     ).fetchone()
 
                     if row:
-                        origin = origin or {
-                            "label": row[0], "lat": float(row[1]), "lng": float(row[2])
-                        }
-                        destination = destination or {
-                            "label": row[3], "lat": float(row[4]), "lng": float(row[5])
-                        }
+                        saved_ends = ({"label": row[0], "lat": float(row[1]), "lng": float(row[2])},
+                                      {"label": row[3], "lat": float(row[4]), "lng": float(row[5])})
+                        origin = origin or saved_ends[0]
+                        destination = destination or saved_ends[1]
                         if not num_days and row[6] and row[7]:
                             num_days = (row[7] - row[6]).days + 1
                         start_date = start_date or str(row[6])
@@ -546,6 +593,15 @@ def _handle_modify_route(arguments):
             except Exception as ex:
                 print(f"Fallback trip fetch failed: {ex}")
 
+        # Stops from the start form and a drawn line: keep their order / shape (see _keep_trip_shape).
+        route_stops = arguments.get("route_stops")
+        via_points = arguments.get("via_points")
+        if trip_id and route_stops is None and via_points is None:
+            from tools.plan_route import load_plan_params
+            saved = load_plan_params(trip_id)
+            route_stops, via_points = saved.get("route_stops"), saved.get("via_points")
+        origin_changed = bool(arguments.get("_origin_changed")) or _moved(asked_ends, saved_ends)
+
         if not all([origin, destination, num_days, start_date]):
             return {
                 "status": "error",
@@ -596,6 +652,10 @@ def _handle_modify_route(arguments):
         if notes:
             extra_notes.append(notes)
 
+        if route_stops or via_points:
+            route_stops, via_points, all_waypoints, stays = _keep_trip_shape(
+                route_stops, via_points, exclude_places, origin_changed, all_waypoints, stays)
+
         start_date = _sanitize_trip_start_date(start_date)
 
         result = plan_route(
@@ -614,6 +674,8 @@ def _handle_modify_route(arguments):
             stays=stays,
             rest_day_every=rest_day_every,
             allow_far_waypoints=bool(arguments.get("allow_far_waypoints")),
+            route_stops=route_stops or None,
+            via_points=via_points or None,
             **({"max_daily_drive_hours": max_daily_drive_hours} if max_daily_drive_hours else {}),
         )
 
