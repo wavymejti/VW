@@ -265,7 +265,10 @@ def _handle_add_route_stop(arguments):
                             arguments.get("kind"), arguments.get("eta"))
     if result.get("status") == "success":
         data = result.pop("trip_data") or {}
+        # The map's summary reads the totals from the top level (as set_overnight returns them).
         result.update({"trip": data.get("trip"), "daily_schedules": data.get("daily_schedules"),
+                       "total_driving_km": data.get("total_driving_km"),
+                       "total_driving_hours": data.get("total_driving_hours"),
                        "trip_id": arguments.get("trip_id")})
     return result
 

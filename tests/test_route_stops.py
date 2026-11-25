@@ -182,3 +182,16 @@ def test_one_place_per_station_keeps_the_station():
     kept = google_stops._one_per_address([pump, avia, other], "fuel")
     assert [p["name"] for p in kept] == ["Avia Fuel Station", "Westfalen"]
     assert google_stops._one_per_address([pump, avia], "restaurant") == [pump, avia]
+
+
+def test_chat_add_stop_returns_the_trip_totals(monkeypatch):
+    """The map summary showed 0 km / 0.0 h after a stop added from the chat."""
+    from navigation import dispatcher, route_stop_add
+    monkeypatch.setattr(route_stop_add, "add_route_stop", lambda *a, **k: {
+        "status": "success", "message": "added",
+        "trip_data": {"trip": {"title": "T"}, "daily_schedules": [{"day_number": 1}],
+                      "total_driving_km": 819.4, "total_driving_hours": 8.8}})
+    res = dispatcher._handle_add_route_stop({"trip_id": "t", "day_number": 2, "kind": "restaurant",
+                                             "name": "EssEck", "lat": 51.27, "lng": 7.22})
+    assert res["total_driving_km"] == 819.4 and res["total_driving_hours"] == 8.8
+    assert res["daily_schedules"] and "trip_data" not in res
