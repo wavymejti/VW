@@ -3509,6 +3509,118 @@ async function addRouteStop(target, place, btn) {
     addMessage('assistant', res.message);
 }
 
+// ── The same stops inside the campsite window, for the day shown there ──
+// Nothing is searched until a type is picked (each search is a paid Google call).
+// Vehicle and departure come from the ⛽ Stops panel on the map (saved in the browser).
+const dayStopsState = { day: null, tripId: null };
+
+function _dayStopsVehicle() {
+    const prefs = _stopsPrefs();
+    const vehicle = prefs.vehicle || 'diesel';
+    const opt = document.querySelector(`#stops-vehicle option[value="${vehicle}"]`);
+    return { vehicle, label: opt ? opt.textContent : vehicle, departure: prefs.departure || '09:00' };
+}
+
+function renderDayStopsForModal(tripData, daySchedule) {
+    const section = _drawEl('day-stops-modal-section');
+    if (!section) return;
+    const wps = daySchedule.waypoints || [];
+    const driving = !!daySchedule.route_polyline && !(wps.length && wps.every(w => w.type === 'stay'));
+    section.hidden = !driving;
+    if (!driving) return;
+    dayStopsState.day = daySchedule.day_number;
+    dayStopsState.tripId = tripData && tripData.trip ? tripData.trip.id : null;
+    const v = _dayStopsVehicle();
+    _drawEl('day-stops-modal-title').textContent = `🛣️ Stops on the way — Day ${daySchedule.day_number}`;
+    _drawEl('day-stops-note').textContent =
+        `${v.label} · departure ${v.departure} · change both in ⛽ Stops on the map`;
+    // An electric van charges, the others refuel.
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b => {
+        b.hidden = (b.dataset.kind === 'fuel' && v.vehicle === 'ev') ||
+                   (b.dataset.kind === 'ev_charging' && v.vehicle !== 'ev');
+        b.classList.remove('active');
+        b.setAttribute('aria-checked', 'false');
+    });
+    _drawEl('day-stops-list').innerHTML =
+        '<div class="stops-empty">Pick a type to see places along this day, at the time you would get there.</div>';
+}
+
+function _dayStopAlreadyAdded(day, place) {
+    const sched = ((state.currentTrip || {}).daily_schedules || []).find(d => d.day_number === day);
+    return !!(sched && (sched.waypoints || []).some(w =>
+        (w.place_id && w.place_id === place.place_id) ||
+        (Math.abs(w.lat - place.lat) < 1e-5 && Math.abs(w.lng - place.lng) < 1e-5)));
+}
+
+async function loadDayStops(kind) {
+    const day = dayStopsState.day;
+    const list = _drawEl('day-stops-list');
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b => {
+        const on = b.dataset.kind === kind;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    list.innerHTML = '<div class="stops-empty">Searching…</div>';
+    const v = _dayStopsVehicle();
+    const result = await apiCall('route_stops', {
+        trip_id: dayStopsState.tripId, kind, vehicle: v.vehicle, departure: v.departure,
+        day_number: day, conversation_id: CHAT_CONVERSATION_ID,
+    });
+    if (day !== dayStopsState.day) return;  // another day was opened meanwhile
+    if (result.status !== 'success') {
+        list.innerHTML = `<div class="stops-empty">${escapeCampText(result.message || 'Could not find stops.')}</div>`;
+        return;
+    }
+    const targets = result.targets || [];
+    if (!targets.length) {
+        const none = { fuel: `No fuel stop needed on day ${day}.`,
+                       ev_charging: `No charging stop needed on day ${day}.`,
+                       restaurant: `Day ${day} ends before lunchtime.` }[kind];
+        list.innerHTML = `<div class="stops-empty">${escapeCampText(none)}</div>`;
+        return;
+    }
+    list.innerHTML = targets.map((t, ti) => `
+        <div class="stops-target">
+            <div class="stops-when"><strong>~${escapeCampText(t.eta)}</strong>
+                <span>after ${escapeCampText(t.after_driving)} of driving · ${escapeCampText(t.reason)}</span></div>
+            ${(t.candidates || []).length ? t.candidates.map((p, pi) => {
+                const added = _dayStopAlreadyAdded(day, p);
+                return `
+                <div class="stops-place">
+                    <div><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div></div>
+                    ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}" ${added ? 'disabled' : ''}>${added ? '✓ Added' : 'Add'}</button>` : ''}
+                </div>`;
+            }).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
+        </div>`).join('') + (result.saved_trip ? '' :
+        '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    list.querySelectorAll('.stops-add:not([disabled])').forEach(btn => btn.addEventListener('click', async () => {
+        const t = targets[+btn.dataset.t];
+        const place = t.candidates[+btn.dataset.p];
+        btn.disabled = true;
+        btn.textContent = '…';
+        const res = await apiCall('add_route_stop', {
+            trip_id: dayStopsState.tripId, day_number: t.day_number, kind: place.kind,
+            place: { name: place.name, lat: place.lat, lng: place.lng, place_id: place.place_id },
+            eta: t.eta, conversation_id: CHAT_CONVERSATION_ID,
+        });
+        if (res.status !== 'success' || !res.trip_data) {
+            btn.disabled = false;
+            btn.textContent = 'Add';
+            list.insertAdjacentHTML('afterbegin',
+                `<div class="stops-empty">${escapeCampText(res.message || 'Could not add the stop.')}</div>`);
+            return;
+        }
+        btn.textContent = '✓ Added';
+        state.currentTrip = res.trip_data;
+        displayTripOnMap(res.trip_data);
+        const dayIndex = (res.trip_data.daily_schedules || []).findIndex(d => d.day_number === t.day_number);
+        if (dayIndex >= 0) renderCampingDayTabs(res.trip_data, dayIndex);
+        addMessage('assistant', res.message);
+    }));
+}
+
 function initRouteStops() {
     const btn = _drawEl('btn-route-stops');
     if (!btn) return;
@@ -3518,6 +3630,8 @@ function initRouteStops() {
     _drawEl('btn-stops-find').addEventListener('click', findRouteStops);
     document.querySelectorAll('#stops-kinds .draw-mode-btn').forEach(b =>
         b.addEventListener('click', () => setStopsKind(b.dataset.kind)));
+    document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b =>
+        b.addEventListener('click', () => loadDayStops(b.dataset.kind)));
     _drawEl('stops-vehicle').addEventListener('change', e => {
         if (e.target.value === 'ev' && stopsState.kind === 'fuel') setStopsKind('ev_charging');
         if (e.target.value !== 'ev' && stopsState.kind === 'ev_charging') setStopsKind('fuel');
@@ -3525,8 +3639,26 @@ function initRouteStops() {
 }
 
 // ── Event Listeners ──────────────────────────────────────────
+function initAppVersion() {
+    const el = document.getElementById('app-version');
+    if (!el) return;
+    fetch('/api/version')
+        .then(r => (r.ok ? r.json() : null))
+        .then(info => {
+            if (!info) return;
+            el.replaceChildren(
+                Object.assign(document.createElement('span'), { textContent: `v${info.version}` }),
+                Object.assign(document.createElement('span'), { textContent: info.commit })
+            );
+            el.title = `Wersja ${info.version}, build ${info.commit}`;
+            el.hidden = false;
+        })
+        .catch(() => { /* version label is optional */ });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initTripForm();
+    initAppVersion();
     initDrawRoute();
     initRouteStops();
     // Language Switcher setup
@@ -5549,6 +5681,7 @@ async function renderCampingOptionsForDay(tripData, dayIndex) {
     if (badgeEl) {
         badgeEl.textContent = `Dzień ${daySchedule.day_number} z ${totalDays}`;
     }
+    renderDayStopsForModal(currentData, daySchedule);
     if (titleEl) {
         titleEl.textContent = window.t ? window.t('camping_modal_title', { day: daySchedule.day_number }) : `🏕️ Wybierz Nocleg dla Dnia ${daySchedule.day_number}`;
     }

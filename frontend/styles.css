@@ -4690,3 +4690,30 @@ button:active, .nav-item:active, .quick-action:active, .suggestion-tile:active {
 .stops-add:disabled { background: var(--vw-success); cursor: default; }
 .stops-empty { font-size: 0.85rem; color: var(--vw-text-secondary); }
 .stops-credit { font-size: 0.7rem; color: var(--vw-text-muted); text-align: right; }
+
+/* ── App version: deliberately quiet footer in the nav rail ── */
+.app-version {
+    font-size: 9px;
+    line-height: 1.25;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.55);
+    text-align: center;
+    user-select: text;
+    font-variant-numeric: tabular-nums;
+}
+
+.app-version span {
+    display: block;
+}
+
+.app-version[hidden] {
+    display: none;
+}
+
+/* Stops of one day inside the campsite window (app.js: renderDayStopsForModal) */
+.day-stops-modal-section { margin: 20px 0 8px; display: flex; flex-direction: column; gap: 10px; }
+.day-stops-modal-section[hidden] { display: none; }
+.day-stops-modal-title { margin: 0; color: #001E50; font-size: 1.05rem; font-weight: 700; }
+.day-stops-kinds { max-width: 460px; }
+.day-stops-note { font-size: 0.78rem; color: var(--vw-text-secondary); }
+.day-stops-list { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }

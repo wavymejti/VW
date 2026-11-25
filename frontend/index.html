@@ -11,7 +11,7 @@
 
     <link rel="manifest" href="/static/manifest.json">
     <!-- VW Brand Design System -->
-    <link rel="stylesheet" href="/static/styles.css?v=2.2">
+    <link rel="stylesheet" href="/static/styles.css?v=2.3">
 </head>
 <body>
 
@@ -86,6 +86,7 @@
                     <button class="lang-btn" data-lang="en" role="menuitem"><span class="lang-flag">🇬🇧</span> English</button>
                 </div>
             </div>
+            <div class="app-version" id="app-version" aria-hidden="true" hidden></div>
         </div>
     </nav>
 
@@ -913,6 +914,18 @@
             <!-- 3 Camping Proposal Cards -->
             <div class="camping-cards-grid" id="camping-cards-grid">
                 <!-- Cards rendered dynamically -->
+            </div>
+
+            <!-- Fuel / charging / lunch stops of this day (app.js: renderDayStopsForModal) -->
+            <div class="day-stops-modal-section" id="day-stops-modal-section" hidden>
+                <h4 id="day-stops-modal-title" class="day-stops-modal-title">🛣️ Stops on the way</h4>
+                <div class="draw-mode day-stops-kinds" id="day-stops-kinds" role="radiogroup" aria-label="Stop type">
+                    <button type="button" class="draw-mode-btn" data-kind="fuel" role="radio">⛽ Fuel</button>
+                    <button type="button" class="draw-mode-btn" data-kind="ev_charging" role="radio">🔌 Charging</button>
+                    <button type="button" class="draw-mode-btn" data-kind="restaurant" role="radio">🍽️ Lunch</button>
+                </div>
+                <div class="day-stops-note" id="day-stops-note"></div>
+                <div class="day-stops-list" id="day-stops-list"></div>
             </div>
 
             <!-- Day Attractions Section -->
