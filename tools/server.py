@@ -15,6 +15,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
+import subprocess
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, send_from_directory, session, send_file, make_response, Response
@@ -530,6 +531,33 @@ def get_chat_session(user_id=None, trip_id=None, lang="pl", conversation_id=None
     return sess
 
 
+# ── App version (shown subtly in the nav rail) ────────────────
+def _read_app_version():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    version = "dev"
+    try:
+        with open(os.path.join(root, "package.json"), encoding="utf-8") as f:
+            version = json.load(f).get("version", version)
+    except (OSError, ValueError):
+        pass
+    commit = "unknown"
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=root, stderr=subprocess.DEVNULL, timeout=5
+        ).decode().strip() or commit
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"version": version, "commit": commit}
+
+
+APP_VERSION = _read_app_version()
+
+
+@app.route("/api/version", methods=["GET"])
+def get_app_version():
+    return jsonify(APP_VERSION)
+
+
 # ── Frontend Route ────────────────────────────────────────────
 @app.route("/")
 def index():
@@ -954,7 +982,29 @@ def api_route_stops():
     result = plan_route_stops(schedules, data.get("kind"), data.get("vehicle") or "diesel",
                               data.get("departure") or "09:00", data.get("day_number"))
     result["saved_trip"] = bool(trip)
+    from tools import mapillary_client
+    result["photos"] = mapillary_client.available()
     return jsonify(result), (200 if result.get("status") == "success" else 400)
+
+
+@app.route("/api/place_photo", methods=["POST"])
+def api_place_photo():
+    """
+    Free photo of a place: {"lat", "lng", "kind", "name"} -> {"status", "photo"}.
+    kind "attraction": Wikimedia Commons, else Mapillary; stops: Mapillary street-level photo.
+    """
+    from tools import mapillary_client, place_photos
+
+    data = request.get_json() or {}
+    try:
+        lat, lng = float(data.get("lat")), float(data.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "lat and lng are required."}), 400
+    if data.get("kind") == "attraction":
+        photo = place_photos.attraction_photo(lat, lng, (data.get("name") or "")[:120])
+    else:
+        photo = mapillary_client.nearest_photo(lat, lng)
+    return jsonify({"status": "success" if photo else "none", "photo": photo})
 
 
 @app.route("/api/add_route_stop", methods=["POST"])

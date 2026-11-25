@@ -56,6 +56,71 @@ const ATTRACTION_PLACEHOLDER_URL = '/static/assets/attraction_placeholder.svg';
 window.CAMPING_PLACEHOLDER_URL = CAMPING_PLACEHOLDER_URL;
 window.ATTRACTION_PLACEHOLDER_URL = ATTRACTION_PLACEHOLDER_URL;
 
+// ── Free photos for attractions without one (Google photos are billed and off) ──
+// A placeholder <img> marked with _placePhotoAttrs gets a photo from /api/place_photo
+// (Wikimedia Commons, else Mapillary) once it is on screen; the credit goes in a small
+// label on the photo. Works for every list and info window, whenever they are drawn.
+const _placePhotoCache = new Map();   // "lat,lng" -> Promise<photo|null>
+const _placePhotoSeen = new WeakSet();
+
+function _placePhotoAttrs(lat, lng, name) {
+    if (lat == null || lng == null || isNaN(+lat) || isNaN(+lng)) return '';
+    const safe = String(name || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    return ` data-photo-lat="${+lat}" data-photo-lng="${+lng}" data-photo-name="${safe}"`;
+}
+
+function _placePhoto(lat, lng, name) {
+    const key = `${(+lat).toFixed(4)},${(+lng).toFixed(4)}`;
+    if (!_placePhotoCache.has(key)) {
+        _placePhotoCache.set(key, apiCall('place_photo', { lat: +lat, lng: +lng, name, kind: 'attraction' })
+            .then(res => (res && res.photo && res.photo.url) ? res.photo : null)
+            .catch(() => null));
+    }
+    return _placePhotoCache.get(key);
+}
+
+async function _fillPlacePhoto(img) {
+    const photo = await _placePhoto(img.dataset.photoLat, img.dataset.photoLng, img.dataset.photoName);
+    if (!photo || !img.isConnected) return;
+    img.src = photo.url;
+    img.title = photo.credit || '';
+    const wrap = img.parentElement;
+    if (!wrap) return;
+    const badge = wrap.querySelector('.photo-placeholder-badge');
+    if (badge) badge.remove();
+    if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    const credit = document.createElement('a');
+    credit.className = 'place-photo-credit';
+    credit.textContent = photo.credit || '';
+    if (photo.viewer_url) { credit.href = photo.viewer_url; credit.target = '_blank'; credit.rel = 'noopener'; }
+    credit.addEventListener('click', e => e.stopPropagation());
+    wrap.appendChild(credit);
+}
+
+const _placePhotoIO = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(entries => entries.forEach(e => {
+        if (e.isIntersecting) { _placePhotoIO.unobserve(e.target); _fillPlacePhoto(e.target); }
+    }), { rootMargin: '200px' })
+    : null;
+
+function _queuePlacePhotos(root) {
+    if (!root || !root.querySelectorAll) return;
+    const imgs = root.matches && root.matches('img[data-photo-lat]') ? [root]
+        : [...root.querySelectorAll('img[data-photo-lat]')];
+    imgs.forEach(img => {
+        if (_placePhotoSeen.has(img)) return;
+        _placePhotoSeen.add(img);
+        if (_placePhotoIO) _placePhotoIO.observe(img); else _fillPlacePhoto(img);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    _queuePlacePhotos(document.body);
+    new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => {
+        if (n.nodeType === 1) _queuePlacePhotos(n);
+    }))).observe(document.body, { childList: true, subtree: true });
+});
+
 async function apiCall(endpoint, data = {}) {
     try {
         const payload = {
@@ -282,7 +347,7 @@ function addMarker(lat, lng, title, icon, label, photoUrl = null, photoId = null
         const previewBadge = !hasReal ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const imgHtml = `
             <div style="position:relative; width:210px; height:130px; margin:0 auto 6px auto; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-                <img src="${photoSrc}" alt="${title}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${fallbackUrl}';">
+                <img src="${photoSrc}" alt="${title}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${fallbackUrl}';"${!hasReal && !isCamp ? _placePhotoAttrs(lat, lng, title) : ''}>
                 ${previewBadge}
             </div>
         `;
@@ -1190,7 +1255,7 @@ function renderTopAttractionsModalPage() {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="top-attraction-img-wrap">
-                <img src="${photoSrc}" alt="${attr.name}" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                <img src="${photoSrc}" alt="${attr.name}" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!hasRealPhoto ? _placePhotoAttrs(attr.lat, attr.lng, attr.name) : ''}>
                 ${previewBadge}
             </div>
         `;
@@ -1451,7 +1516,7 @@ function _createAttractionMarker(attr, dayIdx, seqIdx) {
             <div style="margin:-4px -4px 8px -4px; border-radius:4px 4px 0 0; overflow:hidden; height:125px; position:relative;">
                 <img src="${photoUrl || ATTRACTION_PLACEHOLDER_URL}" alt="${name}"
                      style="width:100%; height:125px; object-fit:cover; display:block;"
-                     onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                     onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!photoUrl ? _placePhotoAttrs(attr.lat, attr.lng, name) : ''}>
                 ${!photoUrl ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : ''}
             </div>
             <div style="padding: 0 2px 4px;">
@@ -3410,6 +3475,29 @@ function closeStopsPanel() {
     _clearStopMarkers();
 }
 
+// Street-level photo of a stop from Mapillary (free; server: /api/place_photo). Only when the
+// server has a MAPILLARY_TOKEN (result.photos); a place without a photo just has none.
+function _stopPhotoSlot(p, photos) {
+    return photos ? `<div class="stops-photo" data-lat="${+p.lat}" data-lng="${+p.lng}"></div>` : '';
+}
+
+async function _loadStopPhotos(container) {
+    const slots = [...container.querySelectorAll('.stops-photo[data-lat]')];
+    await Promise.all(slots.map(async slot => {
+        const lat = +slot.dataset.lat, lng = +slot.dataset.lng;
+        delete slot.dataset.lat;
+        const res = await apiCall('place_photo', { lat, lng });
+        const ph = res && res.photo;
+        if (!ph || !ph.url) { slot.remove(); return; }
+        const label = `${ph.credit}${ph.year ? ' · ' + ph.year : ''}`;
+        slot.innerHTML = `<a href="${escapeCampText(ph.viewer_url)}" target="_blank" rel="noopener" title="${escapeCampText(label)}">
+            <img src="${escapeCampText(ph.url)}" alt="" loading="lazy"></a>`;
+        slot.querySelector('img').addEventListener('error', () => slot.remove());
+        const credit = slot.parentElement && slot.parentElement.querySelector('.stops-photo-credit');
+        if (credit) credit.textContent = `📷 ${label}`;
+    }));
+}
+
 function _stopExtras(p) {
     const bits = [];
     if (p.kind === 'restaurant' && p.fast_food) bits.push('fast food');
@@ -3432,12 +3520,16 @@ function renderStops(result) {
                 <span>after ${escapeCampText(t.after_driving)} of driving · ${escapeCampText(t.reason)}</span></div>
             ${(t.candidates || []).length ? t.candidates.map((p, pi) => `
                 <div class="stops-place">
-                    <div><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
-                         <div class="stops-extra">${_stopExtras(p)}</div></div>
+                    ${_stopPhotoSlot(p, result.photos)}
+                    <div class="stops-text"><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div>
+                         ${result.photos ? '<div class="stops-photo-credit"></div>' : ''}</div>
                     ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}">Add</button>` : ''}
                 </div>`).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
         </div>`).join('') + (result.saved_trip ? '' :
         '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    _loadStopPhotos(box);
 
     box.querySelectorAll('.stops-add').forEach(btn => btn.addEventListener('click', () => {
         const t = targets[+btn.dataset.t];
@@ -3587,13 +3679,17 @@ async function loadDayStops(kind) {
                 const added = _dayStopAlreadyAdded(day, p);
                 return `
                 <div class="stops-place">
-                    <div><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
-                         <div class="stops-extra">${_stopExtras(p)}</div></div>
+                    ${_stopPhotoSlot(p, result.photos)}
+                    <div class="stops-text"><div class="stops-name">${STOP_EMOJI[p.kind] || ''} ${escapeCampText(p.name)}</div>
+                         <div class="stops-extra">${_stopExtras(p)}</div>
+                         ${result.photos ? '<div class="stops-photo-credit"></div>' : ''}</div>
                     ${result.saved_trip ? `<button type="button" class="stops-add" data-t="${ti}" data-p="${pi}" ${added ? 'disabled' : ''}>${added ? '✓ Added' : 'Add'}</button>` : ''}
                 </div>`;
             }).join('') : '<div class="stops-empty">Nothing found near this point.</div>'}
         </div>`).join('') + (result.saved_trip ? '' :
         '<div class="stops-empty">Log in to add stops to the route; until then ask Sniffer in the chat.</div>');
+
+    _loadStopPhotos(list);
 
     list.querySelectorAll('.stops-add:not([disabled])').forEach(btn => btn.addEventListener('click', async () => {
         const t = targets[+btn.dataset.t];
@@ -5902,7 +5998,7 @@ async function renderDayAttractionsForModal(tripData, dayNumber) {
         const previewBadge = !hasRealPhoto ? `<span class="photo-placeholder-badge" style="font-size:0.62rem; padding:1px 5px; bottom:4px; right:4px;">${window.t ? window.t('photo_preview_tag') : '📷 Podgląd'}</span>` : '';
         const photoHtml = `
             <div class="top-attraction-img-wrap" style="height:100px; border-radius:6px; overflow:hidden; margin-bottom:6px; position:relative;">
-                <img src="${photoSrc}" alt="${attr.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';">
+                <img src="${photoSrc}" alt="${attr.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src='${ATTRACTION_PLACEHOLDER_URL}';"${!hasRealPhoto ? _placePhotoAttrs(attr.lat, attr.lng, attr.name) : ''}>
                 ${previewBadge}
             </div>
         `;

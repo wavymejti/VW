@@ -93,6 +93,13 @@ charging when the battery reaches 20% (full each morning, fast charge to 80%; ID
 380 km), lunch where the clock reaches 12:45. Places come from Google Places API (New),
 Nearby Search with basic "Pro" fields only (`tools/google_stops.py`, one call per stop point,
 cached 24 h; no hours, ratings, EV/fuel options, which are billed as Enterprise/Atmosphere). A chosen
+place can show a street-level photo from Mapillary (`tools/mapillary_client.py`,
+`POST /api/place_photo`; free, CC BY-SA credit shown; only with `MAPILLARY_TOKEN`): a panorama or
+an image facing the place, nearer and newer first, within 60 m, then 150 m. Attractions
+without a photo get one the same way (`kind: "attraction"`, `tools/place_photos.py`): first a
+Wikimedia Commons photo with coordinates within 300 m (a file naming the place wins; unnamed
+ones only within 120 m; maps, logos, SVGs skipped), then Mapillary. The frontend marks
+placeholder images with `data-photo-lat/lng/name` and fills them once they are on screen. A chosen
 place is added as a `waypoint` with `service`, emoji and `planned_time` at its position on
 the day (`navigation/route_stop_add.py`); only that day is recalculated. Attractions are
 re-fetched only when the trip's shape changes (day ends, 10 km steps of day length), not
