@@ -528,6 +528,13 @@ def _run_tool(session, tc, tool_calls):
         if "trip_id" not in fn_args and session.get("active_trip_id"):
             fn_args["trip_id"] = session["active_trip_id"]
 
+    # Stops are planned for the user's van as remembered in long-term memory (RAG).
+    if fn_name == "find_route_stops" and not fn_args.get("vehicle") and _real_user_id(session):
+        from tools.user_memory import remembered_vehicle
+        vehicle = remembered_vehicle(_real_user_id(session))
+        if vehicle:
+            fn_args["vehicle"] = vehicle
+
     # Inject user_id into plan_route / modify_route so the trip
     # gets persisted in the DB (AI doesn't know the logged-in user).
     if fn_name in ("plan_route", "modify_route", "add_waypoint"):

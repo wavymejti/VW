@@ -1700,7 +1700,8 @@ OPENAI_TOOL_DEFINITIONS = [
             "description": (
                 "Where and when to stop along the planned route for fuel (kind 'fuel'), EV charging "
                 "('ev_charging') or lunch ('restaurant'). Times assume departure at 09:00 and the "
-                "vehicle's range (diesel T6.1 by default). Returns per day the planned time, the reason "
+                "vehicle's range. Leave vehicle out to use the van the user is remembered to travel in "
+                "(diesel T6.1 if unknown); set it only when the user names another one. Returns per day the planned time, the reason "
                 "and up to 3 places (Google Places) nearest to the route. Tell the user the time and "
                 "the best option per stop; add one only when the user wants it (add_route_stop)."
             ),

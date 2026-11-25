@@ -3441,6 +3441,24 @@ function _saveStopsPrefs(prefs) {
     try { localStorage.setItem('vw.stops', JSON.stringify(prefs)); } catch (e) { /* private mode */ }
 }
 
+// The van is kept in the user's long-term memory (RAG, /api/vehicle) so the panel, the
+// campsite window and Sniffer in the chat agree; the browser keeps a copy (anonymous users).
+async function _syncRememberedVehicle() {
+    const res = await apiCall('vehicle', {});
+    const vehicle = res && res.vehicle;
+    if (!vehicle) return null;
+    const prefs = _stopsPrefs();
+    if (prefs.vehicle !== vehicle) _saveStopsPrefs({ ...prefs, vehicle });
+    return vehicle;
+}
+
+function _applyStopsVehicle(vehicle) {
+    const sel = _drawEl('stops-vehicle');
+    if (sel && vehicle) sel.value = vehicle;
+    if (vehicle === 'ev' && stopsState.kind === 'fuel') setStopsKind('ev_charging');
+    if (vehicle !== 'ev' && stopsState.kind === 'ev_charging') setStopsKind('fuel');
+}
+
 function _clearStopMarkers() {
     stopsState.markers.forEach(m => m.setMap && m.setMap(null));
     stopsState.markers = [];
@@ -3467,6 +3485,9 @@ function openStopsPanel() {
     if (bar) bar.hidden = true;
     _drawEl('stops-panel').hidden = false;
     _drawEl('btn-route-stops').classList.add('active');
+    _syncRememberedVehicle().then(v => {
+        if (v && v !== _drawEl('stops-vehicle').value) _applyStopsVehicle(v);
+    });
 }
 
 function closeStopsPanel() {
@@ -3622,8 +3643,18 @@ function renderDayStopsForModal(tripData, daySchedule) {
     if (!driving) return;
     dayStopsState.day = daySchedule.day_number;
     dayStopsState.tripId = tripData && tripData.trip ? tripData.trip.id : null;
+    _renderDayStopsHeader(daySchedule.day_number);
+    _drawEl('day-stops-list').innerHTML =
+        '<div class="stops-empty">Pick a type to see places along this day, at the time you would get there.</div>';
+    const before = _dayStopsVehicle().vehicle;
+    _syncRememberedVehicle().then(v => {
+        if (v && v !== before && dayStopsState.day === daySchedule.day_number) _renderDayStopsHeader(daySchedule.day_number);
+    });
+}
+
+function _renderDayStopsHeader(day) {
     const v = _dayStopsVehicle();
-    _drawEl('day-stops-modal-title').textContent = `🛣️ Stops on the way — Day ${daySchedule.day_number}`;
+    _drawEl('day-stops-modal-title').textContent = `🛣️ Stops on the way — Day ${day}`;
     _drawEl('day-stops-note').textContent =
         `${v.label} · departure ${v.departure} · change both in ⛽ Stops on the map`;
     // An electric van charges, the others refuel.
@@ -3633,8 +3664,6 @@ function renderDayStopsForModal(tripData, daySchedule) {
         b.classList.remove('active');
         b.setAttribute('aria-checked', 'false');
     });
-    _drawEl('day-stops-list').innerHTML =
-        '<div class="stops-empty">Pick a type to see places along this day, at the time you would get there.</div>';
 }
 
 function _dayStopAlreadyAdded(day, place) {
@@ -3729,8 +3758,10 @@ function initRouteStops() {
     document.querySelectorAll('#day-stops-kinds .draw-mode-btn').forEach(b =>
         b.addEventListener('click', () => loadDayStops(b.dataset.kind)));
     _drawEl('stops-vehicle').addEventListener('change', e => {
-        if (e.target.value === 'ev' && stopsState.kind === 'fuel') setStopsKind('ev_charging');
-        if (e.target.value !== 'ev' && stopsState.kind === 'ev_charging') setStopsKind('fuel');
+        const vehicle = e.target.value;
+        _applyStopsVehicle(vehicle);
+        _saveStopsPrefs({ ..._stopsPrefs(), vehicle });
+        apiCall('vehicle', { vehicle });  // remembered for logged-in users (also by Sniffer)
     });
 }
 

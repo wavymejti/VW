@@ -979,12 +979,34 @@ def api_route_stops():
         schedules = schedules_from_rows(chat.get("last_trip_rows"))
     if not schedules:
         return jsonify({"status": "error", "message": "Plan a route first."}), 400
-    result = plan_route_stops(schedules, data.get("kind"), data.get("vehicle") or "diesel",
+    from tools.user_memory import remembered_vehicle
+    vehicle = data.get("vehicle") or remembered_vehicle(session.get("user_id")) or "diesel"
+    result = plan_route_stops(schedules, data.get("kind"), vehicle,
                               data.get("departure") or "09:00", data.get("day_number"))
     result["saved_trip"] = bool(trip)
     from tools import mapillary_client
     result["photos"] = mapillary_client.available()
     return jsonify(result), (200 if result.get("status") == "success" else 400)
+
+
+@app.route("/api/vehicle", methods=["POST"])
+def api_vehicle():
+    """
+    The van the user travels in, kept in long-term memory (RAG, category vehicle).
+    {"vehicle": "diesel" | "phev" | "ev"} remembers it (logged-in users); {} reads it.
+    -> {"status", "vehicle" (None if unknown), "remembered" (saved for this user)}
+    """
+    from tools.user_memory import remember_vehicle, remembered_vehicle
+
+    data = request.get_json() or {}
+    user_id = session.get("user_id")
+    wanted = data.get("vehicle")
+    if wanted is not None and wanted not in ("diesel", "phev", "ev"):
+        return jsonify({"status": "error", "message": "vehicle must be diesel, phev or ev."}), 400
+    if wanted:
+        ok = remember_vehicle(user_id, wanted)
+        return jsonify({"status": "success", "vehicle": wanted, "remembered": ok})
+    return jsonify({"status": "success", "vehicle": remembered_vehicle(user_id), "remembered": bool(user_id)})
 
 
 @app.route("/api/place_photo", methods=["POST"])

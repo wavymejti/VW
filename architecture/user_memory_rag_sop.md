@@ -74,3 +74,13 @@ For an individual user with $N \le 100$ preference records, calculating the dot 
 2. **Context vs. Long-term distinction**: One-time parameters (e.g. *"W tę środę chcę jechać do Berlina"*) belong to the current trip slots (`<slot_state>`), NOT to long-term memory. Long-term memory stores durable preferences.
 3. **Deduplication**: If a new memory has cosine similarity $> 0.85$ with an existing active memory for the same user, the existing memory is updated rather than duplicated.
 4. **User Control**: Users can inspect (`GET /api/memories`), add (`POST /api/memories`), or delete (`DELETE /api/memories/<id>`) memories in compliance with GDPR.
+
+---
+
+## 6. Remembered vehicle (Nov 2026)
+
+The van the user travels in is a `vehicle` memory like any other (e.g. *"Podróżuje VW ID. Buzz (elektryczny)"*), so it lives in the same RAG store, is visible in `GET /api/user_memories` and can be deleted there.
+
+- **Reading** — `tools/user_memory.py: remembered_vehicle(user_id)` takes the newest active `vehicle` memory that names a model and maps it to the stop planner's key (`vehicle_key_from_text`): `ev` (ID. Buzz, electric/elektryczny/elektrisch), `phev` (eHybrid, hybrid/hybryda, plug-in), `diesel` (T6.1, T7, TDI, diesel, a plain California). Checked in that order, so "California eHybrid" is `phev`. Memories about equipment (awning, bike rack) name no model and are skipped.
+- **Writing** — `remember_vehicle(user_id, key)` (choosing a vehicle in the ⛽ Stops panel, `POST /api/vehicle`): `vehicle` memories naming another model are deleted, then one canonical memory is saved unless one with the same model already exists. Vehicles mentioned in the chat are saved by the normal extraction (its prompt names the models).
+- **Using** — `find_route_stops` in the chat gets the remembered vehicle when the model passes none; `/api/route_stops` uses it when the request has no vehicle; the panel and the campsite window load it (`POST /api/vehicle` without a vehicle) and keep a copy in the browser for anonymous users.
